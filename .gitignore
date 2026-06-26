@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.venv/
+venv/
+
+# Eval outputs (large raw answer dumps live here; frozen labels are committed explicitly)
+/results/
+runs/
+
+# Secrets / credentials
+config.yml
+*.pem
+*.key
+.env
+.env.*
+.eval-secrets*
+
+# Downloaded data (MIMIC-IV demo is fetched by scripts/setup_data.sh)
+/data/
+mimic-iv-clinical-database-demo-*/
+*.zip
+
+# Scratch / temp
+*.tmp
+*.log
+
+# Local tooling / editor cruft (do not commit)
+.tool_cache/
+.gstack/
+.dunning-kruger/
+.obsidian/
+graphify-out/
+.DS_Store
+.idea/
+.vscode/
