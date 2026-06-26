@@ -1,0 +1,51 @@
+cff-version: 1.2.0
+message: >-
+  This repository (fhir-mcp-eval) is an experimental harness adapted from
+  FHIR-AgentBench. If you use it, please cite the original FHIR-AgentBench paper
+  (the "preferred-citation" below), which is the benchmark and dataset this work
+  builds on.
+title: "fhir-mcp-eval: does adding MCP tools make an LLM agent more accurate? An honest FHIR/Medplum agent eval"
+abstract: >-
+  An experimental harness for measuring whether exposing tools to an LLM agent
+  through an MCP server actually improves accuracy, worked through a FHIR / Medplum
+  clinical-QA case study on the open-access MIMIC-IV-on-FHIR demo. Adapted from
+  glee4810/FHIR-AgentBench (CC BY 4.0).
+type: software
+authors:
+  - name: CoralEHR
+repository-code: "https://github.com/coralehr/fhir-mcp-eval"
+license: CC-BY-4.0
+keywords:
+  - FHIR
+  - MCP
+  - LLM agents
+  - clinical question answering
+  - evaluation
+  - Medplum
+preferred-citation:
+  type: conference-paper
+  title: "FHIR-AgentBench: Benchmarking LLM Agents for Realistic Interoperable EHR Question Answering"
+  year: 2025
+  collection-title: "Proceedings of Machine Learning for Health (ML4H)"
+  url: "https://arxiv.org/abs/2509.19319"
+  authors:
+    - given-names: Gyubok
+      family-names: Lee
+    - given-names: Elea
+      family-names: Bach
+    - given-names: Eric
+      family-names: Yang
+    - given-names: Tom
+      family-names: Pollard
+    - given-names: Alistair
+      family-names: Johnson
+    - given-names: Edward
+      family-names: Choi
+    - given-names: Yugang
+      family-names: Jia
+    - given-names: Jong Ha
+      family-names: Lee
+  identifiers:
+    - type: other
+      value: "arXiv:2509.19319"
+      description: arXiv preprint
