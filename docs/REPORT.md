@@ -98,7 +98,7 @@ This is a **null result, and a clean one.** Across two frontier models, a catalo
 |---|---|---|---|---|
 | 1 (generic) | control | **0.80** | 0.80 | generic alone already near the top |
 | 2 | cat2 | 0.70 | 0.875 | 6/30 overflowed |
-| 4 | cat4 | 0.767 | 0.767 | |
+| 4 | cat4 | 0.80 | 0.80 | |
 | 5 | validated5 | 0.767 | 0.793 | 1 overflow |
 | 6 (+`resolve_references`) | arm_ref | **0.833** | 0.833 | |
 | 8 | arm_full8 | **INCOMPLETE** | — | OpenAI quota exhausted; 30/30 errored, agent never ran |
@@ -108,8 +108,8 @@ This is a **null result, and a clean one.** Across two frontier models, a catalo
 | step | Δ | p | verdict |
 |---|---|---|---|
 | 1 → 2 | -0.10 | 0.375 | NULL |
-| 2 → 4 | +0.067 | 0.625 | NULL |
-| 4 → 5 | 0.00 | 1.0 | NULL |
+| 2 → 4 | +0.10 | 0.375 | NULL |
+| 4 → 5 | -0.033 | 1.0 | NULL |
 | 5 → 6 | +0.067 | 0.625 | NULL |
 
 Curve is flat/noisy across 0.70–0.83 with no significant climb.
@@ -169,9 +169,9 @@ The only robust, significant lever in the entire experiment is the **context cap
 
 > *"Across two frontier models on single-patient FHIR retrieval, a catalog of purpose-built FHIR tools showed no statistically significant accuracy advantage over Medplum's single generic `fhir_request` tool. The only robust effect was the model's context budget — `_include`/reference-resolution tools actively hurt because they overflow the default cap. FHIR agent ergonomics are governed by token economics, not tool count."*
 
-That is true, specific, useful to a Medplum maintainer, and a strong hiring signal — "I disproved my own promising result and traced it to a context-budget confound" beats "I found tools help."
+That is true, specific, and useful to a Medplum maintainer — "I disproved my own promising result and traced it to a context-budget confound" beats "I found tools help."
 
-**Keep the broader thesis cleanly separate.** This eval tests the **narrowest slice**: single-patient retrieval. The founder's actual thesis — agent **aggregation/cohort** over FHIR (the second-badge / aggregate-ABAC cell) — is **explicitly out of scope of FHIR-AgentBench** (it excludes multi-patient questions). So a flat single-patient curve says **nothing** about the cohort/aggregate-ABAC angle. Don't let this null get over-generalized into "the agent-layer thesis is dead." It isn't tested here.
+**Keep scope cleanly separate.** This eval tests the **narrowest slice**: single-patient retrieval. Agent **aggregation/cohort** queries over FHIR — multi-patient analytics — are **explicitly out of scope of FHIR-AgentBench** (it excludes multi-patient questions). So a flat single-patient curve says **nothing** about the cohort/aggregate angle. Don't let this null get over-generalized into "tooling for FHIR agents doesn't matter." That broader question isn't tested here.
 
 ---
 
@@ -190,13 +190,13 @@ That is true, specific, useful to a Medplum maintainer, and a strong hiring sign
 - **No multiple-comparison correction in the headline numbers.** The per-comparison p-values in §3 are uncorrected. After Holm-Bonferroni over the full family (§9), **only the cap-on-arm_ref effect survives** (p_holm=0.005); the cap-on-control effect (p=0.039) does **not** (p_holm=0.35). Secondary findings beyond the context-cap effect should be treated as exploratory.
 - **No pre-registration.** Arms, slices, and the primary comparison were not pre-registered; the cap-factorial was added after RUN-0 surprised us. This is honest exploratory work, not a confirmatory trial.
 - **Opus raw data lost** with its torn-down box (reproducibility hole) — there is **no committed Opus data anywhere in the repo**, so every Opus number and the cap-factorial finding are reconstructed (see §1). This was a real data-stewardship failure: the raw per-question artifacts were never pulled off the ephemeral box before its dead-man timer terminated it.
-- **GPT-5.5 side recovered (2026-06-21).** The GPT-5.5 raw answers are committed; the judge correctness labels were *originally* lost (the scorer only wrote aggregates, and a re-run after the OpenAI judge died clobbered them with zeros). They have since been **regenerated** by re-judging the surviving committed answers with `gpt-5-mini` — per-question labels are now frozen in [`medplum-eval/results/*.judged.json`](medplum-eval/results/) and aggregates in `_scores.csv` / `_paired.json`, so the GPT curve + paired stats are recomputable from committed data. (Re-judging is mildly non-deterministic, ~±3pp run-to-run; the committed `*.judged.json` labels are the frozen record. The fixes that prevent recurrence — per-question label persistence + fail-closed scoring — are in `score_taxonomy.py`.)
+- **GPT-5.5 side recovered (2026-06-21).** The GPT-5.5 raw answers are committed; the judge correctness labels were *originally* lost (the scorer only wrote aggregates, and a re-run after the OpenAI judge died clobbered them with zeros). They have since been **regenerated** by re-judging the surviving committed answers with `gpt-5-mini` — per-question labels are now frozen in [`medplum-eval/results/*.judged.json`](../medplum-eval/results/) and aggregates in `_scores.csv` / `_paired.json`, so the GPT curve + paired stats are recomputable from committed data. (Re-judging is mildly non-deterministic, ~±3pp run-to-run; the committed `*.judged.json` labels are the frozen record. The fixes that prevent recurrence — per-question label persistence + fail-closed scoring — are in `score_taxonomy.py`.)
 
 ---
 
 ## 9. Robustness analysis (post-hoc, judge-free)
 
-Three of the §8 gaps can be closed with **no re-run and no extra spend**, using only the saved per-question answers + benchmark ground truth. Script: [`robustness_analysis.py`](robustness_analysis.py); full output: [`medplum-eval/ROBUSTNESS_ANALYSIS.txt`](medplum-eval/ROBUSTNESS_ANALYSIS.txt). All three **reinforce the null and sharpen the one real finding.**
+Three of the §8 gaps can be closed with **no re-run and no extra spend**, using only the saved per-question answers + benchmark ground truth. Script: [`robustness_analysis.py`](../robustness_analysis.py); full output: [`medplum-eval/ROBUSTNESS_ANALYSIS.txt`](../medplum-eval/ROBUSTNESS_ANALYSIS.txt). All three **reinforce the null and sharpen the one real finding.**
 
 **9.1 — Judge-free deterministic re-score.** Re-scored every GPT-5.5 answer with a strict string/number match against the ground truth (no LLM in the loop) to check the conclusion isn't an artifact of a small uncalibrated judge.
 
@@ -204,7 +204,7 @@ Three of the §8 gaps can be closed with **no re-run and no extra spend**, using
 |---|---|---|---|
 | 1 | control | 0.80 | 0.57 |
 | 2 | cat2 | 0.70 | 0.55 |
-| 4 | cat4 | 0.77 | 0.61 |
+| 4 | cat4 | 0.80 | 0.61 |
 | 5 | validated5 | 0.77 | 0.56 |
 | 6 | arm_ref | 0.83 | 0.57 |
 
@@ -219,7 +219,7 @@ Three of the §8 gaps can be closed with **no re-run and no extra spend**, using
 
 Under any plausible discordance-noise assumption the MDE is **~34–46pp**. The correct reading of the null is therefore **"no tool effect larger than ~the MDE,"** not "no effect." A commercially-decisive 5–10pp lift is far below this floor — **structurally invisible** to this design. This is the single most important honesty caveat: the experiment is badly underpowered for realistic effect sizes.
 
-**9.3 — Holm-Bonferroni (family-wise correction).** Corrected the full family of **10** paired p-values (the 6 Opus comparisons + the 4 GPT-5.5 curve steps; full table in [`ROBUSTNESS_ANALYSIS.txt`](medplum-eval/ROBUSTNESS_ANALYSIS.txt) §3). Representative rows:
+**9.3 — Holm-Bonferroni (family-wise correction).** Corrected the full family of **10** paired p-values (the 6 Opus comparisons + the 4 GPT-5.5 curve steps; full table in [`ROBUSTNESS_ANALYSIS.txt`](../medplum-eval/ROBUSTNESS_ANALYSIS.txt) §3). Representative rows:
 
 | comparison | p | p_holm | survives? |
 |---|---|---|---|

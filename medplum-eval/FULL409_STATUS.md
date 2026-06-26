@@ -32,7 +32,7 @@ run **completed its agent passes** but the LLM judge ran out of OpenAI quota mid
 - Both arms (`multi_turn_resource` vs `multi_turn_code_resource`), GPT-5.5, against MIMIC-IV-on-FHIR demo
   loaded into self-hosted Medplum, on `../final_dataset/full_test409.csv` (all 409 test questions).
 - **Agent passes finished:** resource **409/409** answered, code **390/409** answered.
-- **Agent cost ≈ $34.38** (resource $11.63 + code $22.75).
+- **Agent cost:** see the recomputed ledger in the [README](../README.md#cost-and-token-accounting-for-the-final-409-question-run) (resource $11.63 + code $35.31, recomputed from per-question `usage`).
 
 ## What's blocked
 

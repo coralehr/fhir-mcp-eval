@@ -37,7 +37,7 @@ win — if anything a slight, non-significant loss.
   evaporates.
 - **Resource-real (predefined) is significantly negative**, but decomposing the 11 questions code broke:
   **4 are code erroring/overflowing** where retrieval sufficed (reliability), **7 are buggy generated code**.
-- **Cost:** ~$34 total agent run (resource $11.63 + code $22.75); judge panels separate.
+- **Cost:** see the recomputed cost ledger in the [README](../README.md#cost-and-token-accounting-for-the-final-409-question-run) (A0 resource $11.63 + A5 code $35.31, recomputed from per-question `usage`); judge panels separate.
 
 ## Where the apparent lift comes from (mechanism)
 
@@ -77,12 +77,12 @@ Independent codex/GPT panel reproduces 3b (matched −3.6pp p=0.18, pooled +39.1
 ## Reproduce
 
 ```bash
-# substrate: docker compose up in medplum-eval-bundle/ + bash scripts/load_mimic.sh (incl. chartevents)
+# substrate: docker compose up in medplum-eval-bundle/ + bash medplum-eval-bundle/scripts/load_mimic.sh (incl. chartevents)
 export MEDPLUM_BASE_URL=http://localhost:8103 OPENAI_API_KEY=...
-bash run_409.sh                              # both arms, full 409-question test split (resumable)
+bash scripts/run_409.sh                              # both arms, full 409-question test split (resumable)
 python build_labels.py && python final_grade.py   # deterministic + Claude-panel trustworthy grading (boolean-fixed)
 python judge_leaderboard.py                  # judge accuracy vs non-LLM ground truth (numeric subset)
-bash codex_panel.sh && python codex_judge_compare.py   # independent GPT cross-check (judge-family independence)
+bash scripts/codex_panel.sh && python codex_judge_compare.py   # independent GPT cross-check (judge-family independence)
 ```
 
 Per-question outputs: `runs/full409/multi_turn_{resource,code_resource}.json` (large, gitignored; regenerate).

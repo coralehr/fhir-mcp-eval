@@ -24,14 +24,15 @@ apparent win is a context-overflow artifact (a null at matched budget), not a re
 - **Code interpreter → overflow-avoidance, not a reasoning win.** Under **trustworthy grading**
   (deterministic numeric + a 3-Claude-judge panel, cross-checked by an independent codex/GPT panel and
   validated against non-LLM ground truth), the code arm shows **no significant benefit where the no-code
-  agent can answer** — matched budget (both arms produced a real answer): **71.4% vs 67.9%, −3.6pp, 95% CI
-  −7.7…+0.6, McNemar p=0.18 → not significant** (slight negative point estimate). Its large pooled lift
+  agent can answer** — matched budget (n=140, both arms produced a real answer): **71.4% vs 67.9%, −3.6pp, 95% CI
+  −7.7…+0.6, McNemar p=0.18 → not significant** (slight negative point estimate; this matched-budget set is a
+  different, success-conditioned stratum from the resource-real n=147 stratum in the table below). Its large pooled lift
   (**+39.9pp**) is **entirely** the 262/409 (64%) questions where the no-code agent **overflows the 32k cap**
   and the code agent sidesteps it via a sandbox. **The bottleneck is *getting bounded data into context* —
   not tool design, payload, thinking time, or compute.** A code path helps only because sandboxing the
   payload dodges the overflow; payload projection plausibly pulls the same lever.
 - **⚠️ The benchmark's default judge is unreliable — and we quantified it.** Against **non-LLM ground truth**
-  on the 97 numeric questions, gpt-5-mini is **61% accurate** (43 false-negatives, a one-directional
+  on the 111 numeric arm-answers (97 numeric-gold questions), gpt-5-mini is **61% accurate** (43 false-negatives, a one-directional
   precision-punishing bias), while 3-vote panels score **98–99%** (Claude 98.2%, codex/GPT 99.1%). That bias
   manufactured an earlier spurious "code HURTS −8.6pp." Always audit your LLM judge against ground truth and
   use a panel. See [TRUSTWORTHY_REGRADE.md](docs/TRUSTWORTHY_REGRADE.md).
@@ -74,7 +75,8 @@ first-and-last values, and deduplicate repeated requests.
 The final three-arm control cost **$106.86 in tracked agent API spend** across **29.15M tokens**. These numbers
 come from the per-question `usage` objects in the raw answer dumps
 (`runs/full409/multi_turn_resource.json`, `runs/a0prime/multi_turn_projected_resource.json`,
-`runs/full409/multi_turn_code_resource.json`) and use the model-pricing table available to LiteLLM at run time.
+`runs/full409/multi_turn_code_resource.json` — these raw dumps are gitignored and not committed; see
+[Reproducibility status](#where-this-was-actually-run--reproducibility-status)) and use the model-pricing table available to LiteLLM at run time.
 They exclude EC2/Docker/Colima infrastructure and do **not** fully include the ad hoc judge-panel/red-team spend.
 
 | Arm | Questions | Prompt tokens | Completion tokens | Total tokens | LLM calls | Tracked cost | Cost / question |
@@ -169,7 +171,7 @@ plenty. Full write-up + tables + paired stats: **[REPORT.md](docs/REPORT.md)**.
 > Chroma's "context rot," and RAG-MCP (tool-selection collapses ~43%→<14% as the tool pool grows). The
 > parent paper itself reports **~3M-token full FHIR records** and that "naive loading consistently failed"
 > (arXiv 2509.19319). Community FHIR MCP servers are independently moving the same way — most
-> ([WSO2](https://github.com/wso2/fhir-mcp-server) ~121★ Apache-2.0, [Aidbox](https://docs.aidbox.app/modules/other-modules/mcp),
+> ([WSO2](https://github.com/wso2/fhir-mcp-server) Apache-2.0, [Aidbox](https://docs.aidbox.app/modules/other-modules/mcp),
 > Medplum) expose a generic request tool + CRUD rather than a purpose-built typed retrieval catalog, and
 > WSO2's answer to payload size is **FHIRPath response-*filtering*** (`response_filter_fhirpaths`, shipped
 > mid-2025) — i.e. the field is solving the bottleneck with projection, not tool count. Our FHIR-specific

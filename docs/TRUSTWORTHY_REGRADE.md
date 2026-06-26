@@ -58,7 +58,7 @@ gold is a known number; match within tolerance — no LLM needed), we scored eac
 
 gpt-5-mini is **61% accurate** against known truth, with a purely **one-directional** failure: it wrongly
 rejects correct, precise answers (43 false negatives) and essentially never accepts a gross miss (0 false
-positives). The [magnitude analysis](runs/full409/_magnitude_analysis.json) shows those 43 rejected answers
+positives). The [magnitude analysis](../runs/full409/_magnitude_analysis.json) shows those 43 rejected answers
 had a **median relative error of 0.0** — they were exactly right. That bias punishes the code arm (whose
 numeric answers are terse and exact), which is precisely how it manufactured a phantom "code hurts."
 
@@ -146,7 +146,7 @@ whichever trustworthy judge you believe.
 - `final_grade.py` — deterministic + Claude panel → stratified McNemar + CIs + gpt-5-mini disagreement.
 - `judge_leaderboard.py` — judge accuracy vs non-LLM ground truth on the numeric subset (the 61% vs 99% table).
 - `magnitude_analysis.py` — agent numeric-error magnitudes + gpt-5-mini's one-directional precision bias.
-- `codex_panel*.sh` + `codex_judge_compare.py` — the independent codex/GPT panels and the family-independence check.
+- `scripts/codex_panel*.sh` + `codex_judge_compare.py` — the independent codex/GPT panels and the family-independence check.
 - `runs/full409/_trustworthy_summary.json`, `_judge_leaderboard.json`, `_magnitude_analysis.json`,
   `_codex_triangulation.json` — the machine-readable results.
 - `runs/full409/human_review.{json,csv}` — all 409 questions, both arms' answers, every judge's label, for human audit.

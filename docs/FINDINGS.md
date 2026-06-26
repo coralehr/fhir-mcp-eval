@@ -31,10 +31,13 @@ overflow** (it hands the payload to a sandbox instead of the prompt), not by rea
 | **Reasoning effort** (medium → high) | **NULL** | **0/30** answer flips on a fixed retrieved context; ~1.6× cost for identical answers. |
 | **Code interpreter** (`+execute_python_code`) | **no benefit where the no-code agent can answer; helps only by avoiding overflow** | **Matched budget (both answer, n=140): −3.6pp, 95% CI −7.7…+0.6, p=0.18 → not significant.** Pooled +39.9pp is **entirely** the 262/409 (64%) questions where the no-code agent overflows the 32k cap. |
 
-The honest headline: **for FHIR-agent accuracy, the first-order lever is getting a bounded, projected slice
-of FHIR into context.** A code path helps because sandboxing the payload is *one way* to dodge the overflow;
-payload projection (`_elements`/views) plausibly targets the same lever. Compute is not the bottleneck — on
-questions both agents can fit, the interpreter adds nothing.
+The honest headline: **for FHIR-agent accuracy, the first-order lever is getting a bounded, *query-relevant*
+slice of FHIR into context.** A code path helps because sandboxing the payload is *one way* to dodge the
+overflow. The follow-up A0′ control (see [FINAL_REPORT.md](FINAL_REPORT.md)) tested whether a projection layer
+does the same: a blunt, query-*blind* recency-cap recovered only ~1/3 of the code arm's overflow accuracy
+(A0′ 22.1% vs A5 65.6% on the overflow stratum), so the lever is **query-aware selection**, not projection
+per se — a query-aware projection remains untested. Compute is not the bottleneck — on questions both agents
+can fit, the interpreter adds nothing.
 
 ---
 
@@ -107,7 +110,8 @@ Because we graded numerics against known ground truth, we could measure the judg
 - **The trustworthy conclusion is a null (matched budget) plus an overflow architecture effect — not a
   reasoning win, and not "code is broadly worse."** If you cite one line: *a code interpreter gives GPT-5.5 no
   significant FHIR-QA accuracy benefit at matched context budget (−3.6pp, p=0.18); its value is avoiding
-  context overflow on large patients, which payload projection plausibly also achieves.*
+  context overflow on large patients — a query-aware projection plausibly targets the same lever, though the
+  blunt A0′ projection tested so far recovers only ~1/3 of it (see [FINAL_REPORT.md](FINAL_REPORT.md)).*
 - **The strata are post-hoc** (defined by which arm overflowed/answered), not by pre-tokenized record size;
   the matched-budget stratum conditions on success, so it is a conservative read. **Questions cluster by
   patient** (~90 patients), which McNemar ignores — a clustered bootstrap leaves the matched-budget null and
@@ -137,4 +141,5 @@ Because we graded numerics against known ground truth, we could measure the judg
   four judges' labels (gpt-5-mini / deterministic / Claude panel / codex panel) and the final label, for human
   audit.
 - `runs/full409/_trustworthy_summary.json`, `_judge_leaderboard.json`, `_magnitude_analysis.json` — the final
-  numbers. Reproduce: `python build_labels.py && python final_grade.py`.
+  numbers. Reproduce (from the repo root): `python build_labels.py && python final_grade.py`. (All paths in
+  this file are relative to the repo root, not `docs/`.)
