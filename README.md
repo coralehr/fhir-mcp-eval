@@ -20,7 +20,7 @@ apparent win is a context-overflow artifact (a null at matched budget), not a re
   on either **Opus 4.8** or **GPT-5.5** (Opus structure-lift p=0.69; GPT-5.5 curve flat, 1 tool never
   beaten). The early **+11pp** (≈39%→50%) was a **context-budget confound**, not a tool win — and it
   replicates the parent paper's own ablation.
-- **Payload shaping → cost-only** (Δ0.00). **Reasoning effort medium→high → NULL** (0/30 answer flips).
+- **Payload shaping → cost-only** (Δ0.00). **Reasoning effort medium→high → NULL** (0/30 judged-label flips; literal answer strings can change without changing correctness).
 - **Code interpreter → overflow-avoidance, not a reasoning win.** Under **trustworthy grading**
   (deterministic numeric + a 3-Claude-judge panel, cross-checked by an independent codex/GPT panel and
   validated against non-LLM ground truth), the code arm shows **no significant benefit where the no-code
@@ -72,7 +72,8 @@ first-and-last values, and deduplicate repeated requests.
 
 ### Cost and token accounting for the final 409-question run
 
-The final three-arm control cost **$106.86 in tracked agent API spend** across **29.15M tokens**. These numbers
+The final three-arm control cost **$106.86 in tracked agent API spend** across **29.15M tokens** in the local
+raw-dump ledger. These numbers are not reproduced by the committed `full409_summary.json`; they
 come from the per-question `usage` objects in the raw answer dumps
 (`runs/full409/multi_turn_resource.json`, `runs/a0prime/multi_turn_projected_resource.json`,
 `runs/full409/multi_turn_code_resource.json` — these raw dumps are gitignored and not committed; see
@@ -95,6 +96,8 @@ future A6/A7 arms should report accuracy beside the same token/cost ledger, not 
 The repo is ready for GitHub issues. The issue-ready backlog lives in [ROADMAP.md](docs/ROADMAP.md):
 
 - Run the query-aware in-context projection arm.
+- Run the A8 skills-only falsification matrix.
+- Run the A9 Codex + MCP/tools matrix.
 - Publish a minimized reproducibility artifact package with checksums.
 - Rerun A0, A0', and A5 on one substrate.
 - Add cross-family or human adjudication for A0' non-numeric labels.
@@ -128,8 +131,14 @@ The reusable artifact is this methodology, not any one number.
 |---|---|
 | `agent/mcp_agent.py` | Agent that retrieves through an **MCP server** — the only variable across arms is the advertised tool surface. |
 | `agent/ai_agent.py` | Variant that routes completions through a server-side LLM proxy (here, Medplum's in-FHIR `$ai` op) — test the lift on the platform's *own* agentic surface, not just an external client. |
-| `treatment_mcp_server.py` | **Catalog-driven** FastMCP server: one server, `TOOL_SUBSET`-selectable arms. The baseline "generic" arm is a **local FastMCP re-implementation** whose *description string* is copied byte-for-byte from Medplum's shipped `fhir-request` tool, proxying the same FHIR REST surface — it is **not** the platform's production MCP tool path. (The smoke test confirms Medplum advertises a tool playing the same role — named `fhir-request` with a hyphen; our local control registers `fhir_request` with an underscore — so it's a description-matched reimplementation, not the identical tool.) Typed tools toggle in on top. |
+| `treatment_mcp_server.py` | **Catalog-driven** FastMCP server: one server, `TOOL_SUBSET`-selectable arms. The baseline "generic" arm is a **local FastMCP re-implementation** whose description mirrors Medplum's shipped `fhir-request` tool, proxying the same FHIR REST surface — it is **not** the platform's production MCP tool path. (The smoke test confirms Medplum advertises a tool playing the same role — named `fhir-request` with a hyphen; our local control registers `fhir_request` with an underscore — so it's a description-matched reimplementation, not the identical tool.) Typed tools toggle in on top. |
 | `run_matrix.py` | Parameterized ablation runner: per-cell tool subset, a **nested dose-response staircase** (1→2→4→… tools), the cap-factorial, and a **hard $-budget ledger** that stops cleanly instead of surprising you. |
+| `a6_packet_builder.py` | Query-aware packet builder for the next in-context projection arm: intent/resource/date planning, first/last preservation, no-gold frozen packets. |
+| `a7_packet_builder.py` | Bonfire read-layer probe: A6 selection plus deterministic reference resolution, code summaries, citations, read contracts, and insufficiency metadata. |
+| `codex_harness.py` | Codex CLI substrate for A6-A9 pilots: frozen-packet runs, live MCP/tool runs, schema-constrained answers, JSONL event logs, and versioned manifests. |
+| `run_a8_skill_matrix.py` | Skills-only falsification runner: base, neutral length pad, placebo, and FHIR playbook over identical frozen packets. |
+| `run_a9_mcp_matrix.py` | Codex + MCP/tools runner: generic MCP, generic+skill, Bonfire tools, and Bonfire+skill. |
+| `codex_collect_results.py` | Bridges Codex run directories back into the existing `score_taxonomy.py` result JSON shape. |
 | `score_taxonomy.py` | raw + **answerable-set** accuracy, by-cause failure taxonomy, **paired McNemar + bootstrap**. |
 | `robustness_analysis.py` | Judge-free post-hoc pass (no re-run, no spend): deterministic re-score, minimum-detectable-effect (MDE) power sim, Holm-Bonferroni. |
 | `eval_budget.py` | Token-cost ledger with a hard cap. |
@@ -144,7 +153,7 @@ ledger, cap-factorial, and scorer are domain-agnostic.
 statistically significant accuracy advantage** over the single generic tool. The early **+11pp** (generic
 ≈39% → 5-tool catalog ≈50%) **did not survive** the controls above — it folded in a
 context-budget/overflow artifact, has no paired statistics, and does not replicate on either model. The
-only robust, significant effect was the **context cap**: reference-resolution (`_include`) tools overflow
+strongest reconstructed effect was the **context cap**: reference-resolution (`_include`) tools overflow
 the default budget (e.g. one Opus arm overflowed 20/25 medication questions at the stock 32k cap;
 p=0.0005, the one comparison that survives Holm-Bonferroni). At least here, a well-designed single tool is
 plenty. Full write-up + tables + paired stats: **[REPORT.md](docs/REPORT.md)**.
@@ -186,7 +195,7 @@ self-hosted **Medplum** (server + Postgres + Redis, MCP enabled) loaded with the
 boot/auth/FHIR/MCP path below was **smoke-tested on macOS + Docker Desktop 28.4.0 on 2026-06-21**
 ([`medplum-eval-bundle/SMOKE_TEST.md`](medplum-eval-bundle/SMOKE_TEST.md)).
 
-**Prereqs:** Docker + Compose v2, Python 3.10+, **`wget`** (the MIMIC loader needs it — `brew install wget`
+**Prereqs:** Docker + Compose v2, Python 3.11+, **`wget`** (the MIMIC loader needs it — `brew install wget`
 on macOS), and an `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY`. The judge is OpenAI `gpt-5-mini`, so an
 OpenAI key is needed even for the opus arms. **Keys are read from environment variables only** (litellm) —
 the MCP ablation path does *not* read `config.yml` (that's only for the upstream GCP agents; copy the
@@ -218,10 +227,11 @@ bash scripts/load_mimic.sh
 #    sanity: curl -s "http://localhost:8103/fhir/R4/Patient?_summary=count" -H "Authorization: Bearer $(python3 scripts/get_token.py)"  # ~100
 cd ..
 
-# 4. [⚠️ NOT smoke-verified on this path] Project cost first (a real run is a decision, not a surprise),
+# 4. [⚠️ NOT smoke-verified on this path] Run a small paid pilot first (a real run is a decision, not a surprise),
 #    then run the full ablation matrix + score. Run from the REPO ROOT (steps 1–3 cd'd into the bundle).
-export ANTHROPIC_API_KEY=...   # opus arms      export OPENAI_API_KEY=...   # gpt arms + the judge
-EVAL_GPT_MODEL=gpt-5.5-2026-04-23 python run_matrix.py --pilot 3            # prints projected $, exits
+export ANTHROPIC_API_KEY=...   # opus arms
+export OPENAI_API_KEY=...      # gpt arms + the judge
+EVAL_GPT_MODEL=gpt-5.5-2026-04-23 python run_matrix.py --pilot 3            # runs 3 live questions, projects $, exits
 EVAL_GPT_MODEL=gpt-5.5-2026-04-23 python run_matrix.py --n 25 --n-med 40 --cap 100 --out-dir runs/tier1
 python score_taxonomy.py runs/tier1            # raw + answerable-set acc, by-cause taxonomy, paired McNemar
 python robustness_analysis.py medplum-eval/results   # judge-free re-score + MDE + Holm (no re-run, no spend)
@@ -265,7 +275,7 @@ since been torn down. Be precise about what survives:
   recomputation still needs the raw answer dumps when a script reads them directly.
 
 **NOT reproducible (lost with a torn-down box):**
-- **The entire Opus run** (including the cap-factorial and the headline "only robust effect,"
+- **The entire Opus run** (including the cap-factorial and the headline "strongest reconstructed effect,"
   cap-on-`arm_ref` p_holm=0.005). The raw per-question data was never pulled off the box before teardown —
   there is **no committed Opus data at all** — so the Opus numbers are reconstructed from console output.
 
@@ -290,8 +300,8 @@ open reproducibility item.
   strong "too many tools *hurt*" hypothesis is untested; the 1→6 curve is flat.
 - **Narrow scope**: one benchmark, single-patient retrieval only (MIMIC-IV-on-FHIR demo, 100 patients).
   Says nothing about multi-patient cohort/aggregate queries.
-- **Control is a faithful re-implementation**, not Medplum's production MCP tool path (description copied
-  byte-for-byte; see the harness table).
+- **Control is a faithful re-implementation**, not Medplum's production MCP tool path (description-matched to
+  the shipped generic role; see the harness table).
 - **Replication, not discovery**: the generic-vs-typed null was already reported by the parent paper
   (0.25 vs 0.22); "token economics dominate" is established context-bottleneck literature. The novelty is
   the method bundle + the manipulated-cap finding, not the headline number.
@@ -305,6 +315,12 @@ Full limitations + reproducibility status: [REPORT.md](docs/REPORT.md) §1 and �
 ```
 treatment_mcp_server.py      # catalog-driven FastMCP server (the arms)
 run_matrix.py                # ablation runner: staircase + cap-factorial + $-budget ledger
+a6_packet_builder.py         # query-aware frozen packet builder for A6
+a7_packet_builder.py         # Bonfire read-layer probe packet builder for A7
+codex_harness.py             # Codex exec substrate for packet and MCP/tool arms
+run_a8_skill_matrix.py       # A8 skills-only matrix runner
+run_a9_mcp_matrix.py         # A9 Codex + MCP/tool matrix runner
+codex_collect_results.py     # Codex run-dir -> score_taxonomy input JSON
 score_taxonomy.py            # answerable-set accuracy + by-cause taxonomy + paired McNemar/bootstrap
 robustness_analysis.py       # judge-free re-score + MDE power sim + Holm-Bonferroni
 eval_budget.py               # token-cost ledger with a hard cap
@@ -315,6 +331,7 @@ docs/                        # findings, reports, and figures
   ├── FINDINGS.md            # start here: the capstone conclusion
   ├── REPORT.md              # full honest synthesis (numbers, stats, limitations)
   ├── CODE_EXPERIMENT.md     # the code-interpreter result
+  ├── CODEX_SUBSTRATE.md     # running A6-A9 through Codex CLI/subscription
   ├── FINAL_REPORT.md        # red-teamed A0 / A0' / A5 three-arm control
   ├── TRUSTWORTHY_REGRADE.md # judge-reliability finding + trustworthy re-grade
   ├── RELATED_WORK.md, ROADMAP.md
@@ -328,6 +345,10 @@ medplum-eval-bundle/         # docker compose substrate + MIMIC loader + smoke t
   ├── scripts/{get_token,bulk_load,load_mimic}
   ├── README.md              # Docker runbook
   └── SMOKE_TEST.md          # verified boot path
+schemas/
+  └── codex_answer.schema.json # structured Codex answer contract
+eval_skills/
+  └── fhir_retrieval_playbook.md # first A8 skill/playbook arm
 medplum-eval/                # design docs, results data, robustness output
   ├── results/               # committed GPT-5.5 per-question answers + judge labels (*.judged.json) + _scores.csv/_paired.json
   └── ROBUSTNESS_ANALYSIS.txt

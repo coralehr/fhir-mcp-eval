@@ -1,17 +1,16 @@
 import os
-import yaml
 import sys
 sys.path.append("..")
 
-from google.auth import default
-from google.auth.transport import requests
 from typing import Any, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from utils import get_fhir_config
 
 JsonObject = list[dict[str, Any]]
 
 def get_auth_session_from_default():
+    from google.auth import default
+    from google.auth.transport import requests
+
     credentials, project_id = default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
     return requests.AuthorizedSession(credentials)
 
@@ -119,6 +118,8 @@ def get_fhir_client(
     if os.environ.get("MEDPLUM_BASE_URL"):
         from medplum_fhir_client import MedplumFHIRClient
         return MedplumFHIRClient()
+
+    from utils import get_fhir_config
 
     cfg = get_fhir_config()
     project_id = project_id or cfg.get("PROJECT_ID")

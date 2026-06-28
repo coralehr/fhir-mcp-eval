@@ -5,6 +5,10 @@ A one-command-ish substrate for the typed-FHIR-tool ablation eval: a self-hosted
 de-identified ICU patients, open-access, ODbL — the substrate FHIR-AgentBench uses). No PHI, no
 PhysioNet credentialing.
 
+> **Local-only security note:** the compose file seeds a default super admin and binds Medplum to
+> `localhost:8103`. Do not expose this container to a LAN or public interface without changing the seeded
+> credentials, origins, and deployment settings.
+
 > **Boot path verified on macOS + Docker Desktop 28.4.0 / Compose v2.39.2 (2026-06-21)** — see
 > [`SMOKE_TEST.md`](SMOKE_TEST.md). The full data-load + ablation **results** were produced on EC2,
 > not this laptop path (see "Where the results came from" below).
@@ -46,7 +50,7 @@ Then point the eval harness at `http://localhost:8103` (the repo `run_matrix.py`
 | `POST /fhir/R4/Patient` | `201` (server-assigned id) |
 | `PUT /fhir/R4/Patient/<uuid>` | `200` — the loader's path (preserves `true_fhir_ids`) |
 | `/mcp/stream` (no auth) | `401` — MCP is gated |
-| `/mcp/stream` `tools/list` (auth) | `200`, advertises **`fhir-request`** (+ `search`/`fetch` stubs) = the byte-for-byte generic baseline arm |
+| `/mcp/stream` `tools/list` (auth) | `200`, advertises **`fhir-request`** (+ `search`/`fetch` stubs) = the shipped generic role our local control description-matches |
 
 ## Notes / gotchas
 

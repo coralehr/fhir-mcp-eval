@@ -33,7 +33,8 @@ validated5  →  +resolve_references  →  +search_encounters  →  +search_proc
    floor          CORE jump              TAIL probe           designed-flat
 ```
 
-- **`control`** — Medplum's shipped single `fhir_request` tool (byte-for-byte). The honest floor; no reference resolution, no typed surface.
+- **`control`** — local FastMCP `fhir_request` control, description-matched to Medplum's shipped generic role
+  but not the production Medplum MCP path. The honest floor; no reference resolution, no typed surface.
 - **`validated5`** — current baseline (~55–60% expected floor).
 - **`+resolve_references`** — **biggest and likely sole non-baseline mover.** Closes the entire 17% medication slice. If accuracy on `{MedicationRequest, Medication}` jumps while single-resource questions stay flat, the gain is clean and attributable.
 - **`+search_encounters`** — modest lift bounded by the 13.4% slice and by how much the agent was losing to param-guessing on generic `search_fhir`.

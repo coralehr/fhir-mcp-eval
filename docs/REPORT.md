@@ -8,7 +8,7 @@
 
 ## 1. Bottom line
 
-This is a **null result, and a clean one.** Across two frontier models, a catalog of purpose-built FHIR tools showed **no statistically significant accuracy advantage** over Medplum's single generic `fhir_request` tool on single-patient retrieval. The original headline ("5 tools beat 1 by +11pp") was **confounded** — it folded in a context-budget/overflow artifact and had no paired statistics or controls, and it does not replicate on either model under rigorous testing. The **only robust, significant effect anywhere** is the context cap: `_include`/reference-resolution tools are token-hungry and overflow the default 32k budget, and fixing that — not adding tools — is what moved accuracy.
+This is a **null result, and a clean one.** Across two frontier models, a catalog of purpose-built FHIR tools showed **no statistically significant accuracy advantage** over Medplum's single generic `fhir_request` tool on single-patient retrieval. The original headline ("5 tools beat 1 by +11pp") was **confounded** — it folded in a context-budget/overflow artifact and had no paired statistics or controls, and it does not replicate on either model under rigorous testing. The strongest reconstructed effect is the context cap: `_include`/reference-resolution tools are token-hungry and overflow the default 32k budget, and fixing that — not adding tools — is what moved accuracy.
 
 > **⚠️ Reproducibility status (read before citing any number).** This is exploratory work, and the
 > runs were executed on ephemeral EC2 boxes that have been torn down. **Reproducible from committed
@@ -18,7 +18,8 @@ This is a **null result, and a clean one.** Across two frontier models, a catalo
 > and aggregates in `_scores.csv` / `_paired.json`. **Still NOT reproducible:** the **entire Opus run,
 > including the cap-factorial** — its raw per-question data was never pulled off the box before teardown,
 > so the headline "only robust effect" (cap-on-`arm_ref`, p=0.0005 → p_holm=0.005) is an *unreproduced
-> observation from a destroyed run*. Treat the null + the (now fully reproducible) GPT-5.5 flat curve as
+> observation from a destroyed run*. Treat the null + the GPT-5.5 flat curve (recomputable from committed
+> GPT artifacts) as
 > the load-bearing claims; treat the Opus cap finding as credible-but-unverifiable.
 
 ---
@@ -128,7 +129,7 @@ Curve is flat/noisy across 0.70–0.83 with no significant climb.
 
 ## 5. The one real finding: context budget / `_include` overflow
 
-The only robust, significant lever in the entire experiment is the **context cap**, isolated by the Opus cap-factorial. *(Caveat from §1: this is from the destroyed Opus run — credible, externally corroborated, but not recomputable from committed artifacts. The mechanism, not the exact p-value, is the takeaway.)*
+The strongest reconstructed lever in the experiment is the **context cap**, isolated by the Opus cap-factorial. *(Caveat from §1: this is from the destroyed Opus run — credible, externally corroborated, but not recomputable from committed artifacts. The mechanism, not the exact p-value, is the takeaway.)*
 
 - **control, 32k → 100k:** 0.36 → 0.64, Δ **+0.28**, **p=0.039** (significant; but does **not** survive Holm — see §9.3).
 - **arm_ref, 32k → 100k:** 0.16 → 0.72, Δ **+0.56**, **p=0.0005** (the one effect that survives Holm, p_holm=0.005).
@@ -167,7 +168,7 @@ The only robust, significant lever in the entire experiment is the **context cap
 
 **Instead, ship the methodology and the overflow finding as the contribution.** The accuracy result is null, but the *experiment* is the asset. You built a paired-McNemar + bootstrap + cap-factorial harness that **catches a confound a naive eval (RUN-0, and frankly most vendor eval blog posts) would have shipped as a win.** The reframed, defensible thesis:
 
-> *"Across two frontier models on single-patient FHIR retrieval, a catalog of purpose-built FHIR tools showed no statistically significant accuracy advantage over Medplum's single generic `fhir_request` tool. The only robust effect was the model's context budget — `_include`/reference-resolution tools actively hurt because they overflow the default cap. FHIR agent ergonomics are governed by token economics, not tool count."*
+> *"Across two frontier models on single-patient FHIR retrieval, a catalog of purpose-built FHIR tools showed no statistically significant accuracy advantage over Medplum's single generic `fhir_request` tool. The strongest reconstructed effect was the model's context budget — `_include`/reference-resolution tools actively hurt because they overflow the default cap. FHIR agent ergonomics are governed by token economics, not tool count."*
 
 That is true, specific, and useful to a Medplum maintainer — "I disproved my own promising result and traced it to a context-budget confound" beats "I found tools help."
 
@@ -177,7 +178,7 @@ That is true, specific, and useful to a Medplum maintainer — "I disproved my o
 
 ## 8. Limitations (state these loudly and first)
 
-- **Underpowered.** n=25–30/cell. An 8pp effect cannot be resolved at this sample size (MDE would need ~n≥150). The honest claim is "no effect *detectable at this power*; the effect, if any, is ≤8pp and dwarfed by the cap effect" — **not** "tools definitively don't help."
+- **Underpowered.** n=25–30/cell. An 8pp effect cannot be resolved at this sample size (MDE would need ~n≥150). The honest claim is "no effect *detectable at this power*; this design cannot rule out moderate effects below the 34–46pp MDE" — **not** "tools definitively don't help."
 - **8-tool endpoint incomplete.** All 30 arm_full8 records are quota errors; the 8-tool agent never ran. The strong form of the diminishing-returns hypothesis is untestable. Disclose this before anyone finds the RateLimitErrors.
 - **Single benchmark, single-patient.** FHIR-AgentBench only, MIMIC-IV-on-FHIR demo (100 patients), single-patient retrieval QA. No cohort/aggregate coverage.
 - **Single-attempt accuracy — no reliability metric.** Each question is scored once; we report no τ-bench-style `pass^k` reliability ([2406.12045](https://arxiv.org/abs/2406.12045)). With this n, run-to-run variance could rival the between-arm deltas we call null.

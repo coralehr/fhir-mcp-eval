@@ -8,7 +8,7 @@ __pycache__/
 .venv/
 venv/
 
-# Eval outputs (large raw answer dumps live here; frozen labels are committed explicitly)
+# Eval outputs (large raw answer dumps and generated judge panels live here)
 /results/
 runs/
 

@@ -58,7 +58,8 @@ gold is a known number; match within tolerance — no LLM needed), we scored eac
 
 gpt-5-mini is **61% accurate** against known truth, with a purely **one-directional** failure: it wrongly
 rejects correct, precise answers (43 false negatives) and essentially never accepts a gross miss (0 false
-positives). The [magnitude analysis](../runs/full409/_magnitude_analysis.json) shows those 43 rejected answers
+positives). The local magnitude analysis artifact (`runs/full409/_magnitude_analysis.json`, generated when the
+raw dumps are present) shows those 43 rejected answers
 had a **median relative error of 0.0** — they were exactly right. That bias punishes the code arm (whose
 numeric answers are terse and exact), which is precisely how it manufactured a phantom "code hurts."
 
@@ -91,13 +92,13 @@ arms' absolute accuracy.
 Final label for each (question, arm): **deterministic where genuinely unambiguous, else 3-Claude-judge panel
 majority.**
 
-- **Deterministic (`runs/full409/det_labels.json`, 402 labels):** failures → 0 (both arms); clean numeric
+- **Deterministic (`runs/full409/det_labels.json`, generated locally; 402 labels):** failures → 0 (both arms); clean numeric
   golds (not 0/1) → tolerance match against the known gold. This is the part that needs no LLM and is what
   exposed gpt-5-mini.
-- **Claude panel (`runs/full409/panel_votes*.json`):** the 188 categorical/"other" questions + the 112
+- **Claude panel (`runs/full409/panel_votes*.json`, generated locally):** the 188 categorical/"other" questions + the 112
   boolean questions with a real answer, each graded by **3 independent Claude judges, majority vote**,
   ignoring abstentions. 0 unresolved ties.
-- **Independent codex/GPT panel (`runs/full409/codex_votes*`):** the same questions, 3 codex passes,
+- **Independent codex/GPT panel (`runs/full409/codex_votes*`, generated locally):** the same questions, 3 codex passes,
   majority — used to show the result is judge-family-independent, not to set the final labels.
 
 `final_grade.py` merges these and re-runs the stratified McNemar with 95% CIs.
@@ -133,8 +134,8 @@ whichever trustworthy judge you believe.
   strata).
 - **Panel agreement is reproducibility, not ground truth** — except on the numeric subset, where we *do* have
   non-LLM truth and the panels score 98-99%. For the categorical/boolean questions, blinded human
-  adjudication on a sample remains the gold standard; the committed `runs/full409/human_review.csv` (every
-  question, both answers, all four judges' labels) exists so a human can do exactly that.
+  adjudication on a sample remains the gold standard; when generated locally, `runs/full409/human_review.csv`
+  contains every question, both answers, and all judge labels for that audit.
 - **The "architecture not compute" mechanism is not fully identified.** The code arm differs from the no-code
   arm in three ways at once — the interpreter, a code-tailored prompt, and pointer-based payload routing. We
   show the pooled win is overflow-driven and the matched-budget reasoning effect is null/negative; we have
@@ -147,6 +148,8 @@ whichever trustworthy judge you believe.
 - `judge_leaderboard.py` — judge accuracy vs non-LLM ground truth on the numeric subset (the 61% vs 99% table).
 - `magnitude_analysis.py` — agent numeric-error magnitudes + gpt-5-mini's one-directional precision bias.
 - `scripts/codex_panel*.sh` + `codex_judge_compare.py` — the independent codex/GPT panels and the family-independence check.
+- `medplum-eval/full409_summary.json` — committed corrected machine-readable summary for the A0 vs A5 result.
 - `runs/full409/_trustworthy_summary.json`, `_judge_leaderboard.json`, `_magnitude_analysis.json`,
-  `_codex_triangulation.json` — the machine-readable results.
-- `runs/full409/human_review.{json,csv}` — all 409 questions, both arms' answers, every judge's label, for human audit.
+  `_codex_triangulation.json` — generated local machine-readable results when raw dumps and panels are present.
+- `runs/full409/human_review.{json,csv}` — generated local human-audit table with all 409 questions, both arms'
+  answers, and every judge label.

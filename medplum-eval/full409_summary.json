@@ -49,5 +49,5 @@
     "note": "Two earlier headlines were SUPERSEDED and are kept for the audit trail (TRUSTWORTHY_REGRADE.md): (1) gpt-5-mini naive '+11pp code wins' = context-overflow + harness-bug artifact; (2) a deterministic-numeric-only pass mis-graded the 115 boolean Yes/No golds as numeric, inflating a '+1.4pp matched-budget null'. The boolean bug is fixed here (build_labels.py routes 0/1 golds to the semantic panel)."
   },
   "reproduce": "python build_labels.py && python final_grade.py ; python judge_leaderboard.py ; python magnitude_analysis.py ; bash codex_panel.sh && python codex_judge_compare.py",
-  "see": ["TRUSTWORTHY_REGRADE.md", "FINDINGS.md", "CODE_EXPERIMENT.md", "runs/full409/human_review.csv"]
+  "see": ["docs/TRUSTWORTHY_REGRADE.md", "docs/FINDINGS.md", "docs/CODE_EXPERIMENT.md", "medplum-eval/full409_summary.json"]
 }

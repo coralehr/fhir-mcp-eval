@@ -2,7 +2,7 @@
 
 > ⚠️ **SUPERSEDED — this is the pre-run DESIGN/hypothesis doc, not the result.** The "HEADLINE CLAIM"
 > below (that `resolve_references` produces a paired, CI-separated lift) did **NOT** hold: the actual
-> outcome was a **NULL** — no significant tool advantage on either model — with the only robust effect
+> outcome was a **NULL** — no significant tool advantage on either model — with the strongest reconstructed effect
 > being the context-cap/`_include` overflow. See **[../REPORT.md](../docs/REPORT.md)** for the real findings.
 > Kept only as a record of the planned design.
 
@@ -12,7 +12,7 @@ retrieval QA). Goal: contribution + hire at Medplum.
 
 CATALOG (8 purpose-built tools): get_patient_chart($everything), search_observations, search_fhir,
 read_resource, list_search_params, resolve_references(_include), search_encounters, search_procedures.
-BASELINES/ARMS: control=fhir_request (byte-for-byte Medplum), c0=fhir_request_frugal (coached _elements),
+BASELINES/ARMS: control=fhir_request (local description-matched generic control), c0=fhir_request_frugal (coached _elements),
 control_include=fhir_request_include (coached _include — the ATTRIBUTION control).
 
 REVISED MATRIX (~$88, hard $100 cap, opus=claude-opus-4-8, gpt=gpt-5.2):

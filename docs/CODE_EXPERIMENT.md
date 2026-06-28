@@ -86,8 +86,9 @@ bash scripts/codex_panel.sh && python codex_judge_compare.py   # independent GPT
 ```
 
 Per-question outputs: `runs/full409/multi_turn_{resource,code_resource}.json` (large, gitignored; regenerate).
-**Human-auditable**: `runs/full409/human_review.{json,csv}` — all 409 questions, both arms' final answers, all
-four judges' labels, final label. Durable answer backup: `medplum-eval/full409_answers.json`.
+Generated local audit files, when the raw dumps and judge panels are present: `runs/full409/human_review.{json,csv}`.
+Durable committed summary: `medplum-eval/full409_summary.json`; durable answer backup: `medplum-eval/full409_answers.json`
+(answers only, no usage ledger).
 
 ## How it fits the project
 

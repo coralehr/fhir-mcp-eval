@@ -39,7 +39,7 @@ def panel_label(key):
     return 1 if sum(vs) * 2 > len(vs) else (0 if sum(vs) * 2 < len(vs) else None)
 
 # FINAL trustworthy label: deterministic where present (failures + clean numerics), else panel majority
-final, unresolved = {}, 0
+final, unresolved = {}, []
 for q in ids:
     for arm in ("resource", "code"):
         key = f"{arm}|{q}"
@@ -48,9 +48,14 @@ for q in ids:
         else:
             lab = panel_label(key)
             if lab is None:
-                final[key] = 0; unresolved += 1
+                unresolved.append(key)
             else:
                 final[key] = lab
+if unresolved:
+    raise SystemExit(
+        f"[FATAL] missing/tied panel labels for {len(unresolved)} arm-question pairs; "
+        f"refusing to score them as incorrect. Examples: {unresolved[:10]}"
+    )
 
 FAIL = re.compile(r"Input tokens exceeded|Max retries|RateLimitError|exceeded your current quota|Expected .* tool call, but got|Traceback", re.I)
 def real(rec):
@@ -113,7 +118,7 @@ summary = dict(
     matched_budget_BOTH_real=matched,
     resource_real_PREDEFINED=resource_real,
     large_record=large,
-    panel_unresolved_ties=unresolved,
+    panel_unresolved_ties=0,
     gpt5mini_disagree_realanswers=dict(rate=round(disagree_realonly/compared_realonly, 4) if compared_realonly else 0,
                                        n=f"{disagree_realonly}/{compared_realonly}",
                                        note="genuine judge unreliability: gpt-5-mini vs trustworthy on answers that were REAL (not auto-failed)"),

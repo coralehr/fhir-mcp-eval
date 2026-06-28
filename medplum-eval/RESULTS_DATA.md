@@ -1,4 +1,9 @@
-# FHIR tool-ablation eval — ALL RESULTS (authoritative numbers)
+# FHIR tool-ablation eval — historical tool-curve results
+
+> **Status note.** This file is historical synthesis for the tool-catalog ablation, not the canonical final
+> A0/A0'/A5 result. Use `../README.md`, `../docs/FINDINGS.md`, and `../docs/FINAL_REPORT.md` for the current
+> headline. The committed GPT tool-curve aggregates live in `results/_scores.csv` and `results/_paired.json`;
+> if a number here disagrees with those files, treat the machine-readable results as canonical.
 
 Eval: does giving a clinical agent purpose-built FHIR tools beat Medplum's single generic
 `fhir_request` tool? Substrate: FHIR-AgentBench (MIMIC-IV-on-FHIR demo, single-patient retrieval QA),
@@ -7,8 +12,9 @@ paired bootstrap on per-question deltas (arms share question_ids per sample). Ac
 
 The catalog (8 purpose-built read-only FHIR tools): get_patient_chart($everything), search_observations,
 search_fhir, read_resource, list_search_params, resolve_references(_include), search_encounters,
-search_procedures. Baselines: control=fhir_request (Medplum's exact shipped generic), control_include=
-generic + _include coaching (description only), c0=fhir_request_frugal (generic + _elements coaching).
+search_procedures. Baselines: control=fhir_request (a local FastMCP reimplementation description-matched to
+Medplum's shipped generic role, not the production Medplum MCP path), control_include=generic + _include
+coaching (description only), c0=fhir_request_frugal (generic + _elements coaching).
 Presets: cat2=2 tools, cat4=4 tools, validated5=5 tools, arm_ref=6 (validated5+resolve_references),
 arm_full8=8 (all).
 
@@ -42,11 +48,11 @@ REPRESENTATIVE slice (n=25): control 0.72 -> arm_full8 (full 8-tool) 0.76, Δ +0
 |---|---|---|---|---|
 | 1 (generic) | control | **0.80** | 0.80 | generic alone already near the top |
 | 2 | cat2 | 0.70 | 0.875 | 6/30 overflowed |
-| 4 | cat4 | 0.767 | 0.767 | |
+| 4 | cat4 | 0.80 | 0.80 | |
 | 5 | validated5 | 0.767 | 0.793 | 1 overflow |
 | 6 (+resolve_references) | arm_ref | **0.833** | 0.833 | |
 | 8 | arm_full8 | **INCOMPLETE** | — | OpenAI quota exhausted mid-run; all 30 errored |
-Paired steps (ALL NULL): 1->2 Δ-0.10 (p=0.375); 2->4 Δ+0.067 (p=0.625); 4->5 Δ0.00 (p=1.0);
+Paired steps (ALL NULL): 1->2 Δ-0.10 (p=0.375); 2->4 Δ+0.10 (p=0.375); 4->5 Δ-0.033 (p=1.0);
 5->6 Δ+0.067 (p=0.625). Curve is FLAT/noisy 0.70-0.83 with no significant climb.
 
 ---

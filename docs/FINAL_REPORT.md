@@ -128,10 +128,11 @@ was isolated from its prompt/routing; that panel labels are human ground truth; 
 
 ## Reproducibility
 
-The branch commits the final reports, frozen summaries, A0′ panel votes, and `_strata.json`. Exact answer-level
+The branch commits the final reports and frozen summaries. Exact answer-level
 recomputation of the A0/A5/A0′ table still requires the local raw answer dumps
 (`runs/full409/multi_turn_{resource,code_resource}.json` and
-`runs/a0prime/multi_turn_projected_resource.json`), which are large and gitignored. `a0prime_verdict.py`
+`runs/a0prime/multi_turn_projected_resource.json`), plus local A0′ panel/strata artifacts, which are large
+or run-local and gitignored. `a0prime_verdict.py`
 recomputes the table when those dumps are present, but a fresh checkout currently verifies the committed
 summaries rather than regenerating them from raw answers. Agent reruns need the Medplum substrate
 (`medplum-eval-bundle/`) + a funded key.

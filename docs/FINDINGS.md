@@ -28,7 +28,7 @@ overflow** (it hands the payload to a sandbox instead of the prompt), not by rea
 |---|---|---|
 | **Purpose-built / typed tool catalog** (vs one generic `fhir-request`) | **NULL** | Opus structure-lift +0.08, 95% CI **[-0.12, +0.28]**, p=0.69; GPT-5.5 curve flat; the early +11pp was a context-overflow artifact. |
 | **Payload shaping** (`_elements`/`_summary` coaching) | **cost-only** | Δ0.00 (p=1.0); changes token spend, not accuracy. |
-| **Reasoning effort** (medium → high) | **NULL** | **0/30** answer flips on a fixed retrieved context; ~1.6× cost for identical answers. |
+| **Reasoning effort** (medium → high) | **NULL** | **0/30** judged-label flips on a fixed retrieved context; literal answer strings can change without changing correctness; ~1.6× cost. |
 | **Code interpreter** (`+execute_python_code`) | **no benefit where the no-code agent can answer; helps only by avoiding overflow** | **Matched budget (both answer, n=140): −3.6pp, 95% CI −7.7…+0.6, p=0.18 → not significant.** Pooled +39.9pp is **entirely** the 262/409 (64%) questions where the no-code agent overflows the 32k cap. |
 
 The honest headline: **for FHIR-agent accuracy, the first-order lever is getting a bounded, *query-relevant*
@@ -87,7 +87,7 @@ against ground truth, exposing the judge.
 
 The project *started* from a tempting result: a 5-tool catalog beat one generic tool by +11pp (≈39%→50%).
 Under controls — a context-cap factorial, paired McNemar/bootstrap, a coached-generic control — it
-**decomposed to nothing** on both Opus and GPT-5.5. The only robust effect was the **context budget**:
+**decomposed to nothing** on both Opus and GPT-5.5. The strongest reconstructed effect was the **context budget**:
 reference-resolution (`_include`) tools overflow the 32k cap (one Opus arm overflowed 20/25 questions at 32k
 → 0.16 accuracy; raising the cap fixed it, p=0.0005). The "tool benefit" was the catalog *dodging the
 overflow* — **the same mechanism that later masqueraded as a code-interpreter compute win.** Replicates the
@@ -126,10 +126,12 @@ Because we graded numerics against known ground truth, we could measure the judg
   not compute — the same confound faked the tool-catalog win); (2) the judge-reliability finding +
   deterministic/panel grading that caught a directionally biased judge and a boolean-grading bug; (3) the
   reusable standard-vs-standard harness on Medplum.
-- **Reproducibility is split.** The **trustworthy re-grade is fully reproducible** from committed artifacts
-  (`runs/full409/{det_labels,panel_votes*,human_review}.json` + `build_labels.py` + `final_grade.py`). The
-  **agent run** needs the Medplum substrate + a funded OpenAI key. The **Opus tool-ablation numbers are NOT**
-  reproducible (torn-down EC2; `REPORT.md` §1).
+- **Reproducibility is split.** The public checkout commits the harness, reports, GPT tool-curve artifacts under
+  `medplum-eval/results/`, and the corrected machine-readable code-vs-resource summary at
+  `medplum-eval/full409_summary.json`. Exact answer-level recomputation of the A0/A5/A0' final tables still
+  requires local raw dumps and generated panel artifacts under `runs/`, which are intentionally not committed.
+  Agent reruns need the Medplum substrate + a funded key. The **Opus tool-ablation numbers are NOT**
+  recomputable from committed raw data (torn-down EC2; `REPORT.md` §1).
 
 ## Map
 
@@ -137,9 +139,8 @@ Because we graded numerics against known ground truth, we could measure the judg
   bug in our own fix, the deterministic+panel grading, the codex/GPT cross-check, the judge leaderboard.
 - `REPORT.md` — the tool-ablation null in full (cap-factorial, paired stats, prior art).
 - `CODE_EXPERIMENT.md` — the code-interpreter result + mechanism.
-- `runs/full409/human_review.{json,csv}` — **every one of the 409 questions**, both arms' final answers, all
-  four judges' labels (gpt-5-mini / deterministic / Claude panel / codex panel) and the final label, for human
-  audit.
-- `runs/full409/_trustworthy_summary.json`, `_judge_leaderboard.json`, `_magnitude_analysis.json` — the final
-  numbers. Reproduce (from the repo root): `python build_labels.py && python final_grade.py`. (All paths in
+- `medplum-eval/full409_summary.json` — committed corrected machine-readable summary for A0 vs A5. It supersedes
+  earlier `FULL409_STATUS.md` headlines.
+- `runs/full409/human_review.{json,csv}` and `runs/full409/_trustworthy_summary.json` — generated local audit
+  artifacts when the raw dumps and panels are present; these are not in a fresh public checkout. (All paths in
   this file are relative to the repo root, not `docs/`.)

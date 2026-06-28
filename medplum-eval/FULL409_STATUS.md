@@ -1,4 +1,11 @@
-# Full 409-question test-set run — COMPLETE
+# Full 409-question test-set run — SUPERSEDED AUDIT TRAIL
+
+> **Superseded by the trustworthy re-grade.** This file preserves the 2026-06-23 recovery record for the
+> original gpt-5-mini-judged pass. Its headline (`resource 27.6% -> code 38.6%`, "code interpreter is the
+> lever") is **not** the final result. The canonical corrected result is `../docs/FINAL_REPORT.md` and
+> `full409_summary.json`: matched-budget A0 vs A5 is a null (71.4% vs 67.9%, p=0.18), resource-real code is
+> worse (70.7% vs 64.6%), and the pooled code lift is context-overflow avoidance, not a reasoning or compute
+> gain.
 
 *2026-06-23. The full-test-set extension of the n=200 code-vs-resource experiment (`../CODE_EXPERIMENT.md`).*
 
@@ -8,7 +15,8 @@
 McNemar exact p = 1.6e-5 (highly significant). Code fixed 76, broke 31 (net +45).** The code arm only
 *answered* 390/409 (19 errored on heavy patients, scored wrong), so the lift is conservative. This is
 *stronger* than the n=200 preview (+6.5pp, p=0.0106) — the extra 209 questions skew more compute-heavy.
-Final summary: `full409_summary.json`. The conclusion holds and strengthens: a code interpreter is the lever.
+Superseded summary: `full409_summary.json` now carries the trustworthy re-grade. The old conclusion below is
+preserved only as audit history and is not the final claim.
 
 ### How it got here (recovery record)
 

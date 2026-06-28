@@ -75,7 +75,9 @@ def final_codex(arm, q):
     if k in det:
         return det[k]
     lab = codex_label.get(k)
-    return 0 if lab is None else lab
+    if lab is None:
+        raise SystemExit(f"[FATAL] missing/tied codex panel label for {k}; refusing to score it as incorrect")
+    return lab
 
 FAIL = re.compile(r"Input tokens exceeded|Max retries|RateLimitError|exceeded your current quota|Expected .* tool call, but got|Traceback", re.I)
 def real(rec):
