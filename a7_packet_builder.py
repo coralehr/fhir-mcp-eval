@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build A7 Bonfire-complete frozen packets.
+"""Build A7 read-layer proxy frozen packets.
 
 A7 starts from the A6 query-aware selection layer, then adds the product-shaped
 pieces the roadmap cares about: reference resolution, code summaries, source
@@ -204,7 +204,7 @@ def build_packet_record(
     resource_ids = sorted(rid for rid in (_resource_id(resource) for resource in all_resources) if rid)
 
     packet = {
-        "kind": "a7_bonfire_complete_packet",
+        "kind": "a7_read_layer_proxy_packet",
         "plan_only": plan_only,
         "read_contract": _read_contract(safe, intent),
         "resources": [] if plan_only else all_resources,
@@ -243,7 +243,7 @@ def fetch_complete_resources(primary_plan: list[dict[str, Any]]) -> tuple[dict[s
 def write_manifest(path: Path, *, input_path: Path, output_path: Path, args: argparse.Namespace, records: list[dict[str, Any]]) -> None:
     manifest = {
         "created_at": dt.datetime.now(dt.UTC).isoformat(),
-        "kind": "a7_bonfire_complete_packet_manifest",
+        "kind": "a7_read_layer_proxy_packet_manifest",
         "input": {"path": str(input_path), "sha256": a6.sha256_file(input_path)},
         "output": {"path": str(output_path), "sha256": a6.sha256_file(output_path)},
         "config": {
@@ -260,7 +260,7 @@ def write_manifest(path: Path, *, input_path: Path, output_path: Path, args: arg
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build A7 Bonfire-complete frozen packets.")
+    parser = argparse.ArgumentParser(description="Build A7 read-layer proxy frozen packets.")
     parser.add_argument("--input", type=Path, default=Path("final_dataset/full_test409.csv"))
     parser.add_argument("--output", type=Path, default=Path("runs/a7_bonfire_packets.jsonl"))
     parser.add_argument("--manifest", type=Path, default=Path("runs/a7_bonfire_manifest.json"))

@@ -52,7 +52,7 @@ class A7PacketBuilderTests(unittest.TestCase):
         )
 
         packet = record["packet"]
-        self.assertEqual(packet["kind"], "a7_bonfire_complete_packet")
+        self.assertEqual(packet["kind"], "a7_read_layer_proxy_packet")
         self.assertEqual(packet["source_resource_ids"], ["Medication/med1", "MedicationRequest/mr1"])
         self.assertEqual(packet["reference_resolution"]["resolved"], ["Medication/med1"])
         self.assertTrue(any(c["resource_id"] == "Medication/med1" for c in packet["citations"]))
