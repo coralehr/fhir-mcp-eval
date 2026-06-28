@@ -96,8 +96,12 @@ future A6/A7 arms should report accuracy beside the same token/cost ledger, not 
 The repo is ready for GitHub issues. The issue-ready backlog lives in [ROADMAP.md](docs/ROADMAP.md):
 
 - Run the query-aware in-context projection arm.
+- Run the governed read-layer proxy arm.
+- Run structured clinical operators: query planner, Observation/code normalization, deterministic reducers, citation verifier, and evidence-card views.
+- Run hybrid clinical memory for notes and fuzzy long-text questions, with hard filters before vector retrieval.
 - Run the A8 skills-only falsification matrix.
 - Run the A9 Codex + MCP/tools matrix.
+- Run graph/timeline retrieval for long-horizon, multi-call clinical tasks.
 - Publish a minimized reproducibility artifact package with checksums.
 - Rerun A0, A0', and A5 on one substrate.
 - Add cross-family or human adjudication for A0' non-numeric labels.
@@ -134,10 +138,10 @@ The reusable artifact is this methodology, not any one number.
 | `treatment_mcp_server.py` | **Catalog-driven** FastMCP server: one server, `TOOL_SUBSET`-selectable arms. The baseline "generic" arm is a **local FastMCP re-implementation** whose description mirrors Medplum's shipped `fhir-request` tool, proxying the same FHIR REST surface — it is **not** the platform's production MCP tool path. (The smoke test confirms Medplum advertises a tool playing the same role — named `fhir-request` with a hyphen; our local control registers `fhir_request` with an underscore — so it's a description-matched reimplementation, not the identical tool.) Typed tools toggle in on top. |
 | `run_matrix.py` | Parameterized ablation runner: per-cell tool subset, a **nested dose-response staircase** (1→2→4→… tools), the cap-factorial, and a **hard $-budget ledger** that stops cleanly instead of surprising you. |
 | `a6_packet_builder.py` | Query-aware packet builder for the next in-context projection arm: intent/resource/date planning, first/last preservation, no-gold frozen packets. |
-| `a7_packet_builder.py` | Bonfire read-layer probe: A6 selection plus deterministic reference resolution, code summaries, citations, read contracts, and insufficiency metadata. |
+| `a7_packet_builder.py` | Governed read-layer proxy: A6 selection plus deterministic reference resolution, code summaries, citations, read contracts, and insufficiency metadata. |
 | `codex_harness.py` | Codex CLI substrate for A6-A9 pilots: frozen-packet runs, live MCP/tool runs, schema-constrained answers, JSONL event logs, and versioned manifests. |
 | `run_a8_skill_matrix.py` | Skills-only falsification runner: base, neutral length pad, placebo, and FHIR playbook over identical frozen packets. |
-| `run_a9_mcp_matrix.py` | Codex + MCP/tools runner: generic MCP, generic+skill, Bonfire tools, and Bonfire+skill. |
+| `run_a9_mcp_matrix.py` | Codex + MCP/tools runner: generic MCP, generic+skill, expanded read-tool catalog proxy, and proxy+skill. |
 | `codex_collect_results.py` | Bridges Codex run directories back into the existing `score_taxonomy.py` result JSON shape. |
 | `score_taxonomy.py` | raw + **answerable-set** accuracy, by-cause failure taxonomy, **paired McNemar + bootstrap**. |
 | `robustness_analysis.py` | Judge-free post-hoc pass (no re-run, no spend): deterministic re-score, minimum-detectable-effect (MDE) power sim, Holm-Bonferroni. |
@@ -316,7 +320,7 @@ Full limitations + reproducibility status: [REPORT.md](docs/REPORT.md) §1 and �
 treatment_mcp_server.py      # catalog-driven FastMCP server (the arms)
 run_matrix.py                # ablation runner: staircase + cap-factorial + $-budget ledger
 a6_packet_builder.py         # query-aware frozen packet builder for A6
-a7_packet_builder.py         # Bonfire read-layer probe packet builder for A7
+a7_packet_builder.py         # governed read-layer proxy packet builder for A7
 codex_harness.py             # Codex exec substrate for packet and MCP/tool arms
 run_a8_skill_matrix.py       # A8 skills-only matrix runner
 run_a9_mcp_matrix.py         # A9 Codex + MCP/tool matrix runner

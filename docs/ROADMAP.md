@@ -1,6 +1,7 @@
 # Roadmap / issue backlog
 
 Issue-ready follow-ups for turning this fork from a strong artifact into a cleaner public benchmark.
+The A-labels are historical arm IDs; this file is ordered by what would change the conclusion most, soonest.
 
 ## 1. A6: run the query-aware in-context projection arm
 
@@ -21,14 +22,14 @@ Issue-ready follow-ups for turning this fork from a strong artifact into a clean
 - Commit or publish packet manifests with source query paths, resource IDs, and packet hashes.
 - Publish hashes/manifests and redacted scorer inputs for Codex-substrate runs; keep raw prompts/events under ignored `runs/` or a reviewed artifact package.
 
-## 2. A7: run the Bonfire read-layer probe
+## 2. A7: run the governed read-layer proxy
 
-**Question:** Does a Bonfire-style read-layer probe beat the sandbox proxy without arbitrary code?
+**Question:** Does a governed Bonfire-style read-layer proxy match or beat the sandbox proxy without arbitrary code?
 
 **Scope:**
 - Build frozen packets from Bonfire-style reads: query-aware selection, reference resolution, code resolution, date-window handling, first/last preservation, source citations, and denial/insufficiency metadata.
 - Use `a7_packet_builder.py` to generate those packets from the A6 primary search plan plus deterministic reference expansion.
-- Treat this as a probe until it has product guarantees such as policy gates, audit trail, FHIRPath/field projection, capability negotiation, and explicit access-denial semantics.
+- Treat this as a proxy until it has product guarantees such as policy gates, audit trail, FHIRPath/field projection, capability negotiation, and explicit access-denial semantics.
 - Keep the answering substrate fixed while comparing A6 vs A7 packets.
 - Report packet size, source-resource count, overflow rate, and cost/token footprint next to accuracy.
 - Use `codex_harness.py --mode packet` for a Codex-substrate pilot before any expensive API-key full run.
@@ -38,7 +39,39 @@ Issue-ready follow-ups for turning this fork from a strong artifact into a clean
 - Include packet-level SHA-256 hashes, source query paths, reference-resolution manifests, citations, terminology summaries, and resource-ID manifests.
 - Show whether A7 improves accuracy by better evidence or merely by changing answer instructions.
 
-## 3. A8: skills-only falsification
+## 3. A10: structured clinical operators
+
+**Question:** Which deterministic clinical operators actually move accuracy beyond query-aware packet selection?
+
+**Scope:**
+- Add typed query planning (`A10-QP`) that maps question intent to resource type, code/date filters, and evidence shape before retrieval.
+- Add Observation/code normalization (`A10-OBS`) so display strings, LOINC/SNOMED/RxNorm codes, and source table aliases converge before the model sees evidence.
+- Add deterministic reducers (`A10-AGG`) for first/latest/min/max/count/nearest/date-window operations instead of asking the model to infer them from long lists.
+- Add citation verification (`A10-CITE`) that rejects answers whose cited source IDs do not support the final claim.
+- Add SQL-on-FHIR / evidence-card projection (`A10-VIEW`) where a ViewDefinition/FHIRPath-like plan can produce compact tabular evidence.
+- Keep each operator independently togglable; do not ship a bundled "A10" headline until ablations show which pieces matter.
+
+**Acceptance:**
+- Report A6 vs A7 vs each A10 component using identical answer substrate and grading.
+- Publish per-question operator traces: plan, selected resources, reducer output, evidence cards, citations, and insufficiency flags.
+- Separate token/cost gains from accuracy gains; a token win alone is not a product claim.
+
+## 4. A10-VEC: hybrid clinical memory for notes and long text
+
+**Question:** Does hybrid retrieval help on fuzzy note/long-text questions without harming exact structured questions?
+
+**Scope:**
+- Build a BM25 + vector + rerank sidecar over notes, long DocumentReferences, narrative fields, and other longer clinical text.
+- Apply hard filters first: patient, tenant, encounter/date window, resource type, code where available, and permission boundary.
+- Return cited chunks/snippets as evidence cards with source-resource IDs and freshness metadata.
+- Run only on question classes that need text/fuzzy concepts; structured Observation/medication/count/date questions should prefer deterministic operators.
+
+**Acceptance:**
+- Report text/fuzzy strata separately from structured strata.
+- Track retrieval precision/recall, citation support rate, PHI boundary checks, chunk count, and token/cost footprint.
+- Report whether vector memory improves recall without silently replacing structured evidence.
+
+## 5. A8: skills-only falsification
 
 **Question:** Does a FHIR skill help when the returned clinical packet is byte-identical?
 
@@ -54,7 +87,7 @@ Issue-ready follow-ups for turning this fork from a strong artifact into a clean
 - If the skill only beats the short baseline, label it as prompt-length/placebo sensitive.
 - If the skill survives controls, keep it as a thin task-playbook layer over the Bonfire read layer.
 
-## 4. A9: Codex + MCP/tools substrate
+## 6. A9: Codex + MCP/tools substrate
 
 **Question:** Do skills compound with an MCP tool surface in the actual agent interface?
 
@@ -75,7 +108,21 @@ Issue-ready follow-ups for turning this fork from a strong artifact into a clean
   - Expanded read-tool catalog proxy + skill vs expanded read-tool catalog proxy.
 - Report retrieval precision/recall, actual MCP-returned resource IDs, payload bytes/tokens, repeated-call rate, failure taxonomy, and answer accuracy.
 
-## 5. Publish a reproducibility artifact package
+## 7. A11: graph and timeline retrieval
+
+**Question:** Do explicit temporal/reference graphs improve long-horizon, multi-call clinical tasks beyond flat packets?
+
+**Scope:**
+- Build a patient-scoped event timeline with typed edges: Encounter -> Observation, MedicationRequest -> Medication, Procedure -> Encounter, Condition -> evidence.
+- Add graph/path retrieval for questions that need chains, sequencing, or "around this event" context.
+- Test on FHIR-AgentBench-style questions first, then extend to long-horizon tasks where multi-turn accumulation dominates.
+
+**Acceptance:**
+- Report whether graph/timeline retrieval reduces repeated calls, residual overflow, and date-order errors.
+- Include path citations, not just resource citations.
+- Keep graph retrieval separate from vector memory so failures can be attributed.
+
+## 8. Publish a reproducibility artifact package
 
 **Question:** How can a fresh checkout recompute the final table without committing giant raw dumps?
 
@@ -88,7 +135,7 @@ Issue-ready follow-ups for turning this fork from a strong artifact into a clean
 - `python a0prime_verdict.py` runs from a clean checkout after fetching the artifact package.
 - `FINAL_REPORT.md` links to artifact checksums and commands.
 
-## 6. Rerun A0, A0', and A5 on one substrate
+## 9. Rerun A0, A0', and A5 on one substrate
 
 **Question:** Does the A0' conclusion survive when all three arms run against the same Medplum instance?
 
@@ -101,7 +148,7 @@ Issue-ready follow-ups for turning this fork from a strong artifact into a clean
 - Replace cross-substrate caveat with same-instance evidence.
 - Recompute UUID/Jaccard parity as a sanity check, not the main proof.
 
-## 7. Add cross-family or human adjudication for A0' non-numeric labels
+## 10. Add cross-family or human adjudication for A0' non-numeric labels
 
 **Question:** Are A0' non-numeric labels stable outside the codex-only panel?
 
@@ -113,7 +160,7 @@ Issue-ready follow-ups for turning this fork from a strong artifact into a clean
 - Add an A0' judge-family agreement table.
 - Update the A0' conservative-lower-bound caveat.
 
-## 8. Run a projection cap sweep
+## 11. Run a projection cap sweep
 
 **Question:** How sensitive is blunt projection to the recency cap?
 
@@ -125,7 +172,7 @@ Issue-ready follow-ups for turning this fork from a strong artifact into a clean
 - Add a cap curve: accuracy, residual overflow, and fit-but-wrong counts.
 - Replace cap=50-only language with measured cap sensitivity.
 
-## 9. Add a tracked failure-decomposition script
+## 12. Add a tracked failure-decomposition script
 
 **Question:** Can every A0' decomposition number be regenerated by one command?
 

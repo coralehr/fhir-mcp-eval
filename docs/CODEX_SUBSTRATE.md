@@ -60,7 +60,7 @@ python3 a6_packet_builder.py \
   --manifest runs/a6_query_aware_manifest.json
 ```
 
-For A7, inspect the Bonfire read-layer probe first. This is a research approximation of Bonfire-style
+For A7, inspect the governed read-layer proxy first. This is a research approximation of Bonfire-style
 selection/citation behavior, not a complete governed product contract:
 
 ```bash
@@ -106,7 +106,7 @@ python3 codex_harness.py \
   --live
 ```
 
-Use A6 for metadata-assisted query-aware in-context projection and A7 for the Bonfire read-layer probe. The scoring code should treat Codex as an answering substrate, not as the selection layer; selection is frozen before the prompt.
+Use A6 for metadata-assisted query-aware in-context projection and A7 for the governed read-layer proxy. The scoring code should treat Codex as an answering substrate, not as the selection layer; selection is frozen before the prompt.
 
 ## A8: skills-only falsification
 
