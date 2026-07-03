@@ -29,7 +29,7 @@ overflow** (it hands the payload to a sandbox instead of the prompt), not by rea
 |---|---|---|
 | **Purpose-built / typed tool catalog** (vs one generic `fhir-request`) | **NULL** | Opus structure-lift +0.08, 95% CI **[-0.12, +0.28]**, p=0.69; GPT-5.5 curve flat; the early +11pp was a context-overflow artifact. (Underpowered for small effects: MDE ~34–46pp at n=25–30/cell.) |
 | **Payload shaping** (`_elements`/`_summary` coaching) | **cost-only** | Δ0.00 (p=1.0); changes token spend, not accuracy. |
-| **Reasoning effort** (medium → high) | **NULL** | **0/30** answer flips on a fixed retrieved context (95% upper bound ≈12% flip rate); ~1.6× cost for identical answers. |
+| **Reasoning effort** (medium → high) | **NULL** | **0/30** judged-correctness flips on a fixed retrieved context (95% upper bound ≈12% flip rate); ~1.6× cost with no judged-correctness change (answer *strings* differ on 20/30). |
 | **Code interpreter** (`+execute_python_code`) | **no benefit where the no-code agent can answer; helps only by avoiding overflow** | **Matched budget (both answer, n=140): −3.6pp, 95% CI −7.7…+0.6, p=0.18 → not significant.** Pooled +39.9pp is **entirely** the 262/409 (64%) questions where the no-code agent overflows the 32k cap. |
 
 The honest headline: **for FHIR-agent accuracy, the first-order lever is getting a bounded, *query-relevant*

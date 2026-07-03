@@ -1,5 +1,12 @@
 # Full 409-question test-set run — COMPLETE
 
+> ⚠️ **SUPERSEDED (2026-06-26).** The +11.0pp result below was graded by the single
+> gpt-5-mini judge later shown unreliable (61% vs ground truth) and is kept as a
+> historical record only. The trustworthy re-grade supersedes it: matched-budget
+> 71.4% vs 67.9%, p=0.18 (not significant); the pooled lift is overflow-driven.
+> See [`full409_summary.json`](full409_summary.json) and
+> [`../docs/TRUSTWORTHY_REGRADE.md`](../docs/TRUSTWORTHY_REGRADE.md).
+
 *2026-06-23. The full-test-set extension of the n=200 code-vs-resource experiment (`../docs/CODE_EXPERIMENT.md`).*
 
 ## TL;DR — DONE (2026-06-23)

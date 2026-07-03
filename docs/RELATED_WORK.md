@@ -30,8 +30,8 @@ navigates the graph itself.
   [13]. **MedAgentBench** (Stanford, NEJM AI 2025) is the canonical benchmark of this pattern: 300
   clinician-authored tasks against a live HAPI server [2].
 - **Against.** This is the pattern this fork's eval breaks: raw FHIR overflowed a 32k window on **64%
-  (262/409)** of single-patient questions ([FINDINGS.md](FINDINGS.md)). FHIR-AgentBench's best agent ceilings
-  at **50%**, attributed to "difficulty parsing the intricate, graph-like structure of FHIR even when the
+  (262/409)** of single-patient questions ([FINDINGS.md](FINDINGS.md)). FHIR-AgentBench's best agent — its multi-turn retriever + code-interpreter arm — ceilings
+  at **50%** (the single-turn code arm reaches 33%), attributed to "difficulty parsing the intricate, graph-like structure of FHIR even when the
   information is available" [1][19]. MedAgentBench v2 found model-authored raw HTTP FHIR "produced malformed
   requests" [3].
 

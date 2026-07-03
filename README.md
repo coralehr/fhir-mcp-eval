@@ -24,7 +24,7 @@ apparent win is a context-overflow artifact (a null at matched budget), not a re
   significantly beaten; underpowered for small effects — MDE ~34–46pp at n=25–30/cell). The early **+11pp**
   (≈39%→50%) was a **context-budget confound**, not a tool win — and it
   replicates the parent paper's own ablation.
-- **Payload shaping → cost-only** (Δ0.00). **Reasoning effort medium→high → NULL** (0/30 answer flips;
+- **Payload shaping → cost-only** (Δ0.00). **Reasoning effort medium→high → NULL** (0/30 judged-correctness flips;
   95% upper bound ≈12% flip rate).
 - **Code interpreter → overflow-avoidance, not a reasoning win.** Under **trustworthy grading**
   (deterministic numeric + a 3-Claude-judge panel, cross-checked by an independent codex/GPT panel and

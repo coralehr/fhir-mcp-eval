@@ -64,5 +64,6 @@ verified against the PhysioNet page, 2026-07-03):
 ## Not for clinical use
 
 The demo data is de-identified and intended for education, evaluation, and
-software development. Nothing in this repository is real, identifiable patient
-data, and nothing here is suitable for clinical decision-making.
+software development. Nothing in this repository is identifiable patient data — the redistributed
+records are de-identified demo records derived from real ICU EHR data — and
+nothing here is suitable for clinical decision-making.

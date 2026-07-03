@@ -80,7 +80,7 @@ passes it to the judge), while the panel judges received the question *plus* an 
 instruction mirroring the ground-truth rule — so 61% measures *our configuration* of a single small judge,
 and a fair re-measurement (question included, coaching equalized) could move it. (2) The panel judges graded
 **both arms side-by-side in one prompt**, unlike the single-answer judging they are compared against;
-comparative context can anchor labels and correlate the paired errors McNemar assumes independent. The
+comparative context can anchor the two labels toward each other — a judge-bias concern for the per-arm accuracies (not a McNemar violation; McNemar is a paired test and does not assume within-pair independence). The
 benchmark's shipped default judge (o4-mini) was never measured; see the judge re-measurement item in
 [ROADMAP.md](ROADMAP.md) before re-asserting a judge-reliability headline.
 

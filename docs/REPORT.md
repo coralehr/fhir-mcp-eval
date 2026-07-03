@@ -182,7 +182,7 @@ That is true, specific, and useful to a Medplum maintainer — "I disproved my o
 
 ## 8. Limitations (state these loudly and first)
 
-- **Underpowered.** n=25–30/cell. An 8pp effect cannot be resolved at this sample size (MDE would need ~n≥150). The honest claim is "no effect *detectable at this power*; the effect, if any, is ≤8pp and dwarfed by the cap effect" — **not** "tools definitively don't help."
+- **Underpowered.** n=25–30/cell. An 8pp effect cannot be resolved at this sample size (MDE would need ~n≥150). The honest claim is "no effect *detectable at this power*; the observed estimate is +8pp (95% CI −12…+28pp); effects below the MDE are unresolved" — **not** "tools definitively don't help."
 - **8-tool endpoint incomplete.** All 30 arm_full8 records are quota errors; the 8-tool agent never ran. The strong form of the diminishing-returns hypothesis is untestable. Disclose this before anyone finds the RateLimitErrors.
 - **Single benchmark, single-patient.** FHIR-AgentBench only, MIMIC-IV-on-FHIR demo (100 patients), single-patient retrieval QA. No cohort/aggregate coverage.
 - **Single-attempt accuracy — no reliability metric.** Each question is scored once; we report no τ-bench-style `pass^k` reliability ([2406.12045](https://arxiv.org/abs/2406.12045)). With this n, run-to-run variance could rival the between-arm deltas we call null.
