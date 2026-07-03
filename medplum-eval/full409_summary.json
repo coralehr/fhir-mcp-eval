@@ -35,6 +35,7 @@
   "judge_reliability": {
     "accuracy_vs_nonLLM_ground_truth_numeric_subset": {
       "n_arm_answers": 111,
+      "note": "key name 'gpt5mini_benchmark_default' kept for identifier stability; it denotes the small judge we ran with the benchmark's judge prompt (gpt-5-mini). The benchmark's shipped default judge is o4-mini, which we did not measure.",
       "gpt5mini_benchmark_default": {"accuracy": 0.6126, "false_neg_precision_punished": 43, "false_pos_miss_rewarded": 0},
       "codex_GPT_panel_3vote": {"accuracy": 0.991, "false_neg": 1, "false_pos": 0},
       "claude_panel_3vote": {"accuracy": 0.982, "false_neg": 1, "false_pos": 1}
@@ -48,6 +49,6 @@
   "superseded_passes": {
     "note": "Two earlier headlines were SUPERSEDED and are kept for the audit trail (TRUSTWORTHY_REGRADE.md): (1) gpt-5-mini naive '+11pp code wins' = context-overflow + harness-bug artifact; (2) a deterministic-numeric-only pass mis-graded the 115 boolean Yes/No golds as numeric, inflating a '+1.4pp matched-budget null'. The boolean bug is fixed here (build_labels.py routes 0/1 golds to the semantic panel)."
   },
-  "reproduce": "python build_labels.py && python final_grade.py ; python judge_leaderboard.py ; python magnitude_analysis.py ; bash codex_panel.sh && python codex_judge_compare.py",
+  "reproduce": "python build_labels.py && python final_grade.py ; python judge_leaderboard.py ; python magnitude_analysis.py ; bash scripts/codex_panel.sh && python codex_judge_compare.py",
   "see": ["TRUSTWORTHY_REGRADE.md", "FINDINGS.md", "CODE_EXPERIMENT.md", "runs/full409/human_review.csv"]
 }

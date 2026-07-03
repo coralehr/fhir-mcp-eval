@@ -12,7 +12,7 @@ import json, re, glob, os
 from collections import defaultdict
 
 R = "runs/full409"
-A0P_FILE = "runs/a0prime/multi_turn_projected_resource.json"  # scp'd from the mini
+A0P_FILE = "runs/a0prime/multi_turn_projected_resource.json"  # copied from the run host (raw dumps are gitignored)
 
 def load_json(path):
     if not os.path.exists(path):

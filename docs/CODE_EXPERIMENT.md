@@ -13,13 +13,15 @@ win — if anything a slight, non-significant loss.
   code) vs `multi_turn_code_resource` (retrieve → `execute_python_code` → answer). The code arm differs in
   three ways at once — the interpreter, a code-tailored prompt, **and** data plumbing: the resource arm
   serializes retrieved FHIR JSON into the prompt; the code arm passes a *pointer* to the payload into a Python
-  sandbox (`retrieved_resources` global) and never serializes it into context. That plumbing difference is the
+  sandbox (`retrieved_resources` global; implemented as the benchmark harness's in-process exec — an execution
+  surface, not an isolated sandbox) and never serializes it into context. That plumbing difference is the
   result.
 - **Model:** GPT-5.5 (`gpt-5.5-2026-04-23`), both arms. **Data:** full 409-question held-out test split,
   MIMIC-IV-on-FHIR demo loaded into a self-hosted **Medplum**.
 - **Grading:** **deterministic numeric + a 3-Claude-judge panel**, cross-checked by an independent codex/GPT
-  judge panel and validated against non-LLM ground truth on numerics. The benchmark's default gpt-5-mini judge
-  is **not** trustworthy here (61% accurate vs numeric ground truth — see
+  judge panel and validated against non-LLM ground truth on numerics. The small judge we ran with the
+  benchmark's judge prompt (gpt-5-mini; the benchmark's shipped default is o4-mini, which we did not measure)
+  is **not** trustworthy here (61% accurate vs numeric ground truth as we invoked it — see
   [TRUSTWORTHY_REGRADE.md](TRUSTWORTHY_REGRADE.md)). **Stats:** paired McNemar with 95% CIs.
 
 ## Result — stratified (the honest primary result)
@@ -27,9 +29,12 @@ win — if anything a slight, non-significant loss.
 | Stratum | n | resource | code | Δ (95% CI) | McNemar | reading |
 |---|---|---|---|---|---|---|
 | **Matched budget** (both arms answered) | 140 | 71.4% | 67.9% | **−3.6pp** (−7.7…+0.6) | **p=0.18 → not significant** | no reasoning benefit when both can fit the data |
-| **Resource-real** (predefined by resource success) | 147 | 70.8% | 64.6% | **−6.1pp** (−10.8…−1.4) | p=0.022 → significant | code worse on answerable Qs (≈⅓ is code's higher error rate) |
+| **Resource-real** (predefined by resource success) | 147 | 70.7% | 64.6% | **−6.1pp** (−10.8…−1.4) | p=0.022 → significant† | code worse on answerable Qs (≈⅓ is code's higher error rate) |
 | **Large records** (resource overflows 32k) | 262 | 0% | 65.6% | — | by construction | code answers what the no-code agent can't fit — architectural |
 | Pooled (mix) | 409 | 25.4% | 65.3% | +39.9pp (+34.6…+45.1) | p≈0 | the overflow stratum; not a reasoning gain |
+
+† fragile: Holm correction over the 3 predefined pairs and leave-one-patient-out both push p past 0.05
+(see [TRUSTWORTHY_REGRADE.md](TRUSTWORTHY_REGRADE.md)).
 
 - **Matched budget is the controlled comparison, and it is not a win** (code fixed 2, broke 7; −3.6pp, p=0.18).
 - **The pooled gap is overflow, not compute.** The resource arm hits `Input tokens exceeded` on **262/409
@@ -87,7 +92,8 @@ bash scripts/codex_panel.sh && python codex_judge_compare.py   # independent GPT
 
 Per-question outputs: `runs/full409/multi_turn_{resource,code_resource}.json` (large, gitignored; regenerate).
 **Human-auditable**: `runs/full409/human_review.{json,csv}` — all 409 questions, both arms' final answers, all
-four judges' labels, final label. Durable answer backup: `medplum-eval/full409_answers.json`.
+four judges' labels, final label (generated locally under gitignored `runs/`; not committed). Durable
+committed answer backup: `medplum-eval/full409_answers.json`.
 
 ## How it fits the project
 

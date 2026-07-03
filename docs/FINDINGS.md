@@ -5,7 +5,8 @@
 single-patient retrieval QA — loaded into a self-hosted [Medplum](https://www.medplum.com) R4 server.
 Headline numbers are the **trustworthy re-grade** (deterministic numeric + a 3-Claude-judge panel,
 cross-checked by an independent codex/GPT panel and validated against non-LLM ground truth on numerics);
-see [TRUSTWORTHY_REGRADE.md](TRUSTWORTHY_REGRADE.md) for why the benchmark's default gpt-5-mini judge could
+see [TRUSTWORTHY_REGRADE.md](TRUSTWORTHY_REGRADE.md) for why the small gpt-5-mini judge we ran with the
+benchmark's judge prompt (the benchmark's shipped default is o4-mini, which we did not measure) could
 not be trusted and how a boolean-grading bug in our own first fix was caught and corrected.*
 
 ---
@@ -26,9 +27,9 @@ overflow** (it hands the payload to a sandbox instead of the prompt), not by rea
 
 | Lever tested | Effect on accuracy | Evidence |
 |---|---|---|
-| **Purpose-built / typed tool catalog** (vs one generic `fhir-request`) | **NULL** | Opus structure-lift +0.08, 95% CI **[-0.12, +0.28]**, p=0.69; GPT-5.5 curve flat; the early +11pp was a context-overflow artifact. |
+| **Purpose-built / typed tool catalog** (vs one generic `fhir-request`) | **NULL** | Opus structure-lift +0.08, 95% CI **[-0.12, +0.28]**, p=0.69; GPT-5.5 curve flat; the early +11pp was a context-overflow artifact. (Underpowered for small effects: MDE ~34–46pp at n=25–30/cell.) |
 | **Payload shaping** (`_elements`/`_summary` coaching) | **cost-only** | Δ0.00 (p=1.0); changes token spend, not accuracy. |
-| **Reasoning effort** (medium → high) | **NULL** | **0/30** answer flips on a fixed retrieved context; ~1.6× cost for identical answers. |
+| **Reasoning effort** (medium → high) | **NULL** | **0/30** answer flips on a fixed retrieved context (95% upper bound ≈12% flip rate); ~1.6× cost for identical answers. |
 | **Code interpreter** (`+execute_python_code`) | **no benefit where the no-code agent can answer; helps only by avoiding overflow** | **Matched budget (both answer, n=140): −3.6pp, 95% CI −7.7…+0.6, p=0.18 → not significant.** Pooled +39.9pp is **entirely** the 262/409 (64%) questions where the no-code agent overflows the 32k cap. |
 
 The honest headline: **for FHIR-agent accuracy, the first-order lever is getting a bounded, *query-relevant*
@@ -50,9 +51,12 @@ answer). GPT-5.5 both arms, full 409-question held-out test split. Trustworthy g
 | Stratum | n | resource | code | Δ (95% CI) | McNemar | what it means |
 |---|---|---|---|---|---|---|
 | **Matched budget** (both arms answered) | 140 | 71.4% | 67.9% | **−3.6pp** (−7.7…+0.6) | **p=0.18 → not significant** | when both can fit the data, the interpreter gives no significant benefit (slight negative point estimate) |
-| **Resource-real** (predefined by resource success) | 147 | 70.8% | 64.6% | **−6.1pp** (−10.8…−1.4) | p=0.022 → significant | on answerable questions code is *worse* — but ~⅓ of that is code's higher **error** rate, not reasoning |
+| **Resource-real** (predefined by resource success) | 147 | 70.7% | 64.6% | **−6.1pp** (−10.8…−1.4) | p=0.022 → significant† | on answerable questions code is *worse* — but ~⅓ of that is code's higher **error** rate, not reasoning |
 | **Large records** (resource overflows 32k) | 262 | 0% | 65.6% | — | by construction | code answers a class the no-code agent **structurally cannot fit** — the one real, large effect, and it is **architectural** |
 | Pooled (mixes the strata) | 409 | 25.4% | 65.3% | +39.9pp (+34.6…+45.1) | p≈0 | a valid *deployed-architecture* comparison, **not** a reasoning gain |
+
+† fragile: Holm correction over the 3 predefined pairs and leave-one-patient-out both push p past 0.05
+(see [TRUSTWORTHY_REGRADE.md](TRUSTWORTHY_REGRADE.md)).
 
 - The no-code arm **overflows on 262/409 = 64%** of questions. That single fact is the entire pooled gap.
 - In the controlled **matched-budget** stratum, code **fixed 2, broke 7**: a slight, non-significant deficit.
@@ -66,8 +70,9 @@ answer). GPT-5.5 both arms, full 409-question held-out test split. Trustworthy g
 
 This number moved three times under adversarial review; each move corrected a real defect:
 
-1. **+11pp "code is the lever."** Naive pooled accuracy with gpt-5-mini, plus a harness bug (overflow/error
-   answers fed to the judge instead of auto-scored 0). → context-overflow artifact.
+1. **+11pp "code is the lever"** (a different +11pp from the RUN-0 tool-catalog artifact — coincidentally
+   equal numbers from different experiments). Naive pooled accuracy with gpt-5-mini, plus a harness bug
+   (overflow/error answers fed to the judge instead of auto-scored 0). → context-overflow artifact.
 2. **−8.6pp "code HURTS at matched budget."** After fixing the pre-filter, canonical gpt-5-mini said code
    *significantly hurt* (p=0.02). A **judge artifact**: gpt-5-mini is **61% accurate** against non-LLM numeric
    ground truth and wrongly rejects exact answers (43 false negatives, median error 0.0; 0 false positives) —
@@ -97,13 +102,16 @@ parent paper's ablation (o4-mini: generic 0.25 ≥ specialized 0.22). Full decom
 
 Because we graded numerics against known ground truth, we could measure the judges themselves:
 
-- The benchmark's **default judge (gpt-5-mini) is 61% accurate** on numeric clinical-QA grading, with a
+- The **small judge we ran with the benchmark's judge prompt (gpt-5-mini; the benchmark's shipped default is
+  o4-mini, which we did not measure) is 61% accurate** on numeric clinical-QA grading, with a
   one-directional **precision-punishing** bias (rejects exact answers; never rewards a gross miss).
 - A **3-vote panel recovers it** — Claude 98.2%, codex/GPT 99.1% — and the two families agree with each other
-  97.1%.
-- Consequence for anyone running FHIR-AgentBench (or similar) with an LLM judge: **audit the judge against
-  ground truth on a deterministic slice, and use a multi-vote panel.** A single small judge can invert a real
-  effect's sign.
+  97.1%. Measurement caveat: our gpt-5-mini invocation omitted the question text while the panels received
+  the question plus a numeric-tolerance instruction and judged both arms side-by-side, so 61% measures *our
+  configuration* of a single small judge (see [TRUSTWORTHY_REGRADE.md](TRUSTWORTHY_REGRADE.md)).
+- Consequence for anyone grading FHIR-AgentBench (or similar) with a single small LLM judge: **audit the judge
+  against ground truth on a deterministic slice, and use a multi-vote panel.** A single small judge can invert
+  a real effect's sign.
 
 ## Honest caveats (read before citing)
 
@@ -126,8 +134,12 @@ Because we graded numerics against known ground truth, we could measure the judg
   not compute — the same confound faked the tool-catalog win); (2) the judge-reliability finding +
   deterministic/panel grading that caught a directionally biased judge and a boolean-grading bug; (3) the
   reusable standard-vs-standard harness on Medplum.
-- **Reproducibility is split.** The **trustworthy re-grade is fully reproducible** from committed artifacts
-  (`runs/full409/{det_labels,panel_votes*,human_review}.json` + `build_labels.py` + `final_grade.py`). The
+- **Reproducibility is split.** The trustworthy re-grade's **aggregate numbers are committed**
+  (`medplum-eval/full409_summary.json`) along with a durable per-question answer backup
+  (`medplum-eval/full409_answers.json`); the **per-question labels**
+  (`runs/full409/{det_labels,panel_votes*,human_review}.json`) live under gitignored `runs/` and are **not**
+  committed — regenerating them (`build_labels.py` + `final_grade.py`) requires the large gitignored raw
+  answer dumps plus judge-panel LLM calls. The
   **agent run** needs the Medplum substrate + a funded OpenAI key. The **Opus tool-ablation numbers are NOT**
   reproducible (torn-down EC2; `REPORT.md` §1).
 
@@ -139,7 +151,9 @@ Because we graded numerics against known ground truth, we could measure the judg
 - `CODE_EXPERIMENT.md` — the code-interpreter result + mechanism.
 - `runs/full409/human_review.{json,csv}` — **every one of the 409 questions**, both arms' final answers, all
   four judges' labels (gpt-5-mini / deterministic / Claude panel / codex panel) and the final label, for human
-  audit.
+  audit. (Generated locally under gitignored `runs/`; not committed.)
 - `runs/full409/_trustworthy_summary.json`, `_judge_leaderboard.json`, `_magnitude_analysis.json` — the final
-  numbers. Reproduce (from the repo root): `python build_labels.py && python final_grade.py`. (All paths in
+  numbers (also generated locally under gitignored `runs/`; the committed aggregate is
+  `medplum-eval/full409_summary.json`). Reproduce (from the repo root, with the raw answer dumps present):
+  `python build_labels.py && python final_grade.py`. (All paths in
   this file are relative to the repo root, not `docs/`.)

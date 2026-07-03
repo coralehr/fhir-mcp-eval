@@ -78,7 +78,7 @@ def score(judge_labels, name):
     return dict(judge=name, scored=n, accuracy=round(correct/n, 4) if n else None,
                 false_neg_precision_punished=fn, false_pos_miss_rewarded=fp)
 
-board = [score(gpt, "gpt-5-mini (benchmark default)"),
+board = [score(gpt, "gpt-5-mini (our run of the benchmark judge prompt)"),
          score(codex_num, "codex/GPT panel (3-vote)")]
 if claude_num:
     board.append(score(claude_num, "Claude panel (3-vote)"))

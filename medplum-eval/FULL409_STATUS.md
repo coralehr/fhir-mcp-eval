@@ -1,6 +1,6 @@
 # Full 409-question test-set run — COMPLETE
 
-*2026-06-23. The full-test-set extension of the n=200 code-vs-resource experiment (`../CODE_EXPERIMENT.md`).*
+*2026-06-23. The full-test-set extension of the n=200 code-vs-resource experiment (`../docs/CODE_EXPERIMENT.md`).*
 
 ## TL;DR — DONE (2026-06-23)
 
@@ -50,7 +50,7 @@ true_answer for both arms, 409×2). This survives `runs/` being cleared. To fini
 billing is restored (or with a funded key):
 
 ```bash
-cd ..            # FHIR-AgentBench/
+cd ..            # repo root
 export OPENAI_API_KEY=sk-...   # or: set -a; . .env; set +a
 python3 rejudge_409.py
 ```
@@ -68,6 +68,6 @@ With 409 paired questions the result will land **very close to n=200** — the c
 
 - `full409_answers.json` — durable agent-answer backup (the re-judge input)
 - `../rejudge_409.py` — the recovery scorer (judge-only, resumable)
-- `../run_409.sh` — the run launcher (resume hardened: skip-check counts answered rows, not total)
-- `../progress409.sh` — progress checker (`bash progress409.sh`)
+- `../scripts/run_409.sh` — the run launcher (resume hardened: skip-check counts answered rows, not total)
+- `../scripts/progress409.sh` — progress checker (`bash scripts/progress409.sh` from the repo root)
 - `runs/full409/_summary.json` — **stale** (n=200 mislabeled); overwritten by `rejudge_409.py`

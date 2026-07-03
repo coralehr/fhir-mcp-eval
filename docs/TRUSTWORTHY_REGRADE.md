@@ -23,9 +23,12 @@ The final, trustworthy, judge-family-independent result:
 | stratum | n | resource | code | Δ (95% CI) | McNemar |
 |---|---|---|---|---|---|
 | **matched budget** (both arms answered) | 140 | 71.4% | 67.9% | **−3.6pp** (−7.7…+0.6) | p=0.18 → not significant |
-| **resource-real** (predefined by resource success) | 147 | 70.8% | 64.6% | **−6.1pp** (−10.8…−1.4) | p=0.022 → significant |
+| **resource-real** (predefined by resource success) | 147 | 70.7% | 64.6% | **−6.1pp** (−10.8…−1.4) | p=0.022 → significant† |
 | **large records** (resource overflows 32k) | 262 | 0% | 65.6% | — | by construction |
 | pooled (mixes the strata) | 409 | 25.4% | 65.3% | +39.9pp (+34.6…+45.1) | p≈0 |
+
+† fragile: Holm correction over the 3 predefined pairs and leave-one-patient-out both push p past 0.05
+(see [The strata, and their honest limits](#the-strata-and-their-honest-limits)).
 
 **The +11pp was never a reasoning/compute win.** On questions the no-code agent can answer, the code
 interpreter gives no significant benefit and a slightly *negative* point estimate. Its entire positive value
@@ -41,10 +44,12 @@ Our scoring scripts called the LLM judge *directly*, skipping the benchmark's ow
 the judge sees it). Overflow garbage was reaching the judge, which sometimes credited it — inflating the
 no-code arm and muddying the comparison. Fixed: failures are deterministically 0 for both arms.
 
-## Defect 2 — the benchmark's default judge (gpt-5-mini) is unreliable (pass 2)
+## Defect 2 — the small judge we ran with the benchmark's judge prompt (gpt-5-mini) is unreliable (pass 2)
 
 After the pre-filter, a *canonical gpt-5-mini* pass said the code arm significantly **hurt** at matched
-budget (−8.6pp, p=0.02), claiming code "broke 18" questions. This was a **judge artifact**. We proved it two
+budget (−8.6pp, p=0.02), claiming code "broke 18" questions. This was a **judge artifact**. (Attribution
+note: gpt-5-mini is *this fork's* judge choice, run with the benchmark's judge prompt; the benchmark's
+shipped default judge is o4-mini, which we did not measure.) We proved it two
 ways:
 
 **(a) Against non-LLM ground truth.** On the 97 numeric-gold questions we can grade deterministically (the
@@ -52,13 +57,14 @@ gold is a known number; match within tolerance — no LLM needed), we scored eac
 
 | judge | accuracy vs ground truth (111 arm-answers) | false negatives (correct→"wrong") | false positives (wrong→"correct") |
 |---|---|---|---|
-| **gpt-5-mini** (benchmark default) | **61.3%** | **43** | 0 |
+| **gpt-5-mini** (our single-judge run of the benchmark's judge prompt; the shipped default, o4-mini, was not measured) | **61.3%** | **43** | 0 |
 | codex / GPT panel (3-vote) | **99.1%** | 1 | 0 |
 | Claude panel (3-vote) | **98.2%** | 1 | 1 |
 
 gpt-5-mini is **61% accurate** against known truth, with a purely **one-directional** failure: it wrongly
 rejects correct, precise answers (43 false negatives) and essentially never accepts a gross miss (0 false
-positives). The [magnitude analysis](../runs/full409/_magnitude_analysis.json) shows those 43 rejected answers
+positives). The magnitude analysis (`runs/full409/_magnitude_analysis.json`, generated locally by
+`magnitude_analysis.py`; `runs/` is gitignored) shows those 43 rejected answers
 had a **median relative error of 0.0** — they were exactly right. That bias punishes the code arm (whose
 numeric answers are terse and exact), which is precisely how it manufactured a phantom "code hurts."
 
@@ -67,6 +73,16 @@ re-judging the non-numeric questions — agree with **each other on 408/420 = 97
 agrees with gpt-5-mini only ~65-67%. The outlier is gpt-5-mini, confirmed from two directions.
 
 Overall, gpt-5-mini disagreed with the trustworthy labels on **34.3% (181/527)** of real-answer judgments.
+
+**Measurement caveats (read before citing 61% vs 98–99%).** Two invocation asymmetries confound the
+head-to-head: (1) our gpt-5-mini invocation **omitted the question text** (the benchmark's own pipeline
+passes it to the judge), while the panel judges received the question *plus* an explicit numeric-tolerance
+instruction mirroring the ground-truth rule — so 61% measures *our configuration* of a single small judge,
+and a fair re-measurement (question included, coaching equalized) could move it. (2) The panel judges graded
+**both arms side-by-side in one prompt**, unlike the single-answer judging they are compared against;
+comparative context can anchor labels and correlate the paired errors McNemar assumes independent. The
+benchmark's shipped default judge (o4-mini) was never measured; see the judge re-measurement item in
+[ROADMAP.md](ROADMAP.md) before re-asserting a judge-reliability headline.
 
 ## Defect 3 — our own fix had a grading bug (pass 3a → 3b)
 
@@ -133,14 +149,19 @@ whichever trustworthy judge you believe.
   strata).
 - **Panel agreement is reproducibility, not ground truth** — except on the numeric subset, where we *do* have
   non-LLM truth and the panels score 98-99%. For the categorical/boolean questions, blinded human
-  adjudication on a sample remains the gold standard; the committed `runs/full409/human_review.csv` (every
-  question, both answers, all four judges' labels) exists so a human can do exactly that.
+  adjudication on a sample remains the gold standard; the locally generated `runs/full409/human_review.csv`
+  (every question, both answers, all four judges' labels — under gitignored `runs/`, not committed) exists so
+  a human can do exactly that.
 - **The "architecture not compute" mechanism is not fully identified.** The code arm differs from the no-code
   arm in three ways at once — the interpreter, a code-tailored prompt, and pointer-based payload routing. We
   show the pooled win is overflow-driven and the matched-budget reasoning effect is null/negative; we have
   *not* isolated interpreter-compute from prompt and routing (that needs a same-payload, no-execution control).
 
 ## Files
+
+*Note: `runs/` is gitignored — the `runs/full409/*` files below are generated locally by these scripts (from
+the large gitignored raw answer dumps) and are not committed. The committed durable artifacts are
+`medplum-eval/full409_summary.json` (aggregates) and `medplum-eval/full409_answers.json` (per-question answers).*
 
 - `build_labels.py` — rebuilds the deterministic layer (the boolean-bug fix) and emits panel batches.
 - `final_grade.py` — deterministic + Claude panel → stratified McNemar + CIs + gpt-5-mini disagreement.
