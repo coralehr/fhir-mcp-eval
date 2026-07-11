@@ -12,7 +12,7 @@ eval was re-run locally (see the honesty caveat in the repo README §"Where this
 | FHIR create — `POST /fhir/R4/Patient` | `201` |
 | FHIR upsert — `PUT /fhir/R4/Patient/<uuid>` (the loader's path; ids must be UUIDs) | `200`, read-back `200` |
 | MCP `/mcp/stream` unauthenticated | `401` (gated, as designed) |
-| MCP `/mcp/stream` authenticated `tools/list` | `200`, advertises **`fhir-request`** (+ `search`/`fetch` stubs) — i.e. the byte-for-byte generic baseline arm |
+| MCP `/mcp/stream` authenticated `tools/list` | `200`, advertises **`fhir-request`** (+ `search`/`fetch` stubs) — the shipped generic role our local control description-matches |
 
 **Gotcha surfaced by the smoke test:** Medplum rejects non-UUID client-assigned ids with
 `400 "Invalid id"` on `PUT`. The MIMIC-IV-on-FHIR demo ids *are* UUIDs, so `scripts/bulk_load.py`

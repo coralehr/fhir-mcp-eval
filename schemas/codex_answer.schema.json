@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Codex FHIR Agent Answer",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "answer",
+    "source_resource_ids",
+    "evidence_summary",
+    "insufficiency_reason"
+  ],
+  "properties": {
+    "answer": {
+      "type": "string",
+      "description": "Final answer to the clinical question, using only supplied or tool-returned evidence."
+    },
+    "source_resource_ids": {
+      "type": "array",
+      "description": "FHIR source resources used for the answer, formatted as ResourceType/id when available.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "evidence_summary": {
+      "type": "string",
+      "description": "Brief audit note describing the evidence used and any important assumptions."
+    },
+    "insufficiency_reason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Why the question could not be answered from available evidence, or null when answered."
+    }
+  }
+}
