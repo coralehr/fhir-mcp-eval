@@ -1,0 +1,707 @@
+#!/usr/bin/env python3
+"""Build A6 query-aware frozen packets for Codex/API answering arms.
+
+A6 tests whether an in-context projection can match the sandbox by selecting the
+right FHIR slice before the model reads it. This script deliberately excludes
+gold answer fields and can run in `--plan-only` mode without a live Medplum
+server, so the intent layer is inspectable before spend.
+"""
+
+from __future__ import annotations
+
+import argparse
+import ast
+import csv
+import datetime as dt
+import hashlib
+import json
+import math
+import re
+import urllib.parse
+from pathlib import Path
+from typing import Any
+
+
+GOLD_FIELDS = {"true_answer", "true_fhir_ids", "sql_query", "proc_query"}
+
+# A6a (question-only) planner: the ONLY row fields the planner may read.
+# Everything else in the CSV (main_table_name, val_dict, template, ...) is
+# benchmark-construction metadata that does not exist for a real user query
+# (adversarial review 2026-07-11, finding 1). Whitelist, not blacklist.
+QUESTION_ONLY_FIELDS = {"split", "question_id", "question", "assumption", "patient_fhir_id"}
+
+QO_PLANNER_VERSION = "qo-v1"
+
+# Deterministic question-text -> resource-type mapping. Order matters only for
+# reporting; multiple groups may fire and are unioned.
+QO_TYPE_KEYWORDS: list[tuple[tuple[str, ...], tuple[str, ...]]] = [
+    (("prescri", "medication", "drug", "dose", "tablet", "capsule", " mg ", "infusion"), ("MedicationRequest",)),
+    (("procedure", "surgery", "surgical", "operation", "ventilation", "intubat", "dialysis", "catheter", "undergo", "underwent"), ("Procedure",)),
+    (("diagnos", "condition", "disease", "disorder"), ("Condition",)),
+    (
+        ("admit", "admission", "discharge", "hospital", "icu", "intensive care", "careunit", "care unit", "ward", "transfer", "visit", "encounter", "stay"),
+        ("Encounter",),
+    ),
+    (
+        (
+            "lab", "test", "level", "value", "measure", "microbiolog", "culture", "specimen", "organism",
+            "weight", "height", "temperature", "heart rate", "blood pressure", "respiratory", "oxygen", "o2",
+            "sao2", "spo2", "glucose", "sodium", "potassium", "creatinine", "hemoglobin", "hematocrit",
+            "platelet", "urine", "output", "input", "intake", "drain", "stool", "emesis",
+        ),
+        ("Observation",),
+    ),
+    (("gender", "sex", "age", "born", "birth", "male", "female", "race", "ethnic", "marital", "language"), ("Patient",)),
+]
+
+# Fallback when no keyword group fires: the two types that dominate the gold
+# distribution. Bounds (not breadth) keep this safe.
+QO_FALLBACK_TYPES = ("Observation", "Encounter")
+
+# Question-scaffold vocabulary stripped before clinical-term extraction.
+QO_SCAFFOLD_WORDS = {
+    "a", "an", "and", "any", "been", "calculate", "compared", "count", "current", "date", "day", "days",
+    "did", "do", "does", "during", "first", "for", "from", "get", "give", "given", "had", "has", "have",
+    "his", "her", "how", "in", "is", "it", "last", "many", "me", "month", "months", "much", "number",
+    "of", "on", "or", "patient", "receive", "received", "same", "second", "show", "since", "tell",
+    "than", "the", "their", "there", "this", "time", "times", "to", "today", "total", "until", "was",
+    "were", "what", "when", "where", "which", "who", "whose", "with", "year", "years", "yesterday",
+    "change", "difference", "list", "all", "ever", "earliest", "latest", "previous", "prescribed",
+    "prescription", "prescriptions", "medication", "medications", "drug", "drugs", "procedure",
+    "procedures", "lab", "labs", "value", "values", "measured", "measurement", "measurements",
+    "hospital", "encounter", "visit", "admitted", "admission", "care", "unit", "route", "via",
+}
+
+# Top-level keys stripped from every resource before it enters a bounded
+# packet (mirrors the A0' strip set, adding `contained`).
+PROJECTION_DROP_KEYS = ("text", "meta", "extension", "modifierExtension", "contained")
+
+TABLE_TO_RESOURCES = {
+    "admissions": ["Encounter"],
+    "chartevents": ["Observation"],
+    "diagnoses_icd": ["Condition"],
+    "icustays": ["Encounter"],
+    "labevents": ["Observation"],
+    "microbiologyevents": ["Observation"],
+    "outputevents": ["Observation"],
+    "patients": ["Patient"],
+    "prescriptions": ["MedicationRequest"],
+    "procedures_icd": ["Procedure"],
+    "transfers": ["Encounter"],
+}
+
+RESOURCE_DATE_PARAM = {
+    "Encounter": "date",
+    "MedicationRequest": "authoredon",
+    "Observation": "date",
+    "Procedure": "date",
+}
+
+TEXT_KEYS = {
+    "careunit",
+    "drug_name",
+    "drug_name1",
+    "drug_name2",
+    "drug_name3",
+    "drug_route",
+    "lab_name",
+    "output_name",
+    "procedure_name",
+    "spec_name",
+    "vital_name",
+}
+
+
+def sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def parse_val_dict(raw: Any) -> dict[str, Any]:
+    if raw is None:
+        return {}
+    if isinstance(raw, float) and math.isnan(raw):
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    text = str(raw).strip()
+    if not text or text.lower() == "nan":
+        return {}
+    try:
+        return ast.literal_eval(text)
+    except Exception:
+        try:
+            return json.loads(text)
+        except Exception:
+            return {}
+
+
+def current_date_from_assumption(text: Any) -> dt.date | None:
+    match = re.search(r"current time is (\d{4})-(\d{2})-(\d{2})", str(text or ""))
+    if not match:
+        return None
+    return dt.date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+
+
+def _month_end(year: int, month: int) -> int:
+    if month == 12:
+        return 31
+    return (dt.date(year, month + 1, 1) - dt.timedelta(days=1)).day
+
+
+def parse_nlq_window(nlq: str, current_date: dt.date | None) -> dict[str, str] | None:
+    n = (nlq or "").lower().strip()
+    if not n:
+        return None
+
+    m = re.search(r"\b(?:in|since|on|during)\s+(\d{1,2})/(\d{4})\b", n)
+    if m:
+        month, year = int(m.group(1)), int(m.group(2))
+        if "since" in n:
+            return {"start": f"{year:04d}-{month:02d}-01", "end": None, "source": nlq}
+        return {
+            "start": f"{year:04d}-{month:02d}-01",
+            "end": f"{year:04d}-{month:02d}-{_month_end(year, month):02d}",
+            "source": nlq,
+        }
+
+    m = re.search(r"\bon\s+(\d{1,2})/(\d{1,2})/(?:this year|the current year)\b", n)
+    if m and current_date:
+        month, day = int(m.group(1)), int(m.group(2))
+        value = f"{current_date.year:04d}-{month:02d}-{day:02d}"
+        return {"start": value, "end": value, "source": nlq}
+
+    m = re.search(r"\b(?:in|since|during)\s+(\d{1,2})/(?:this year|the current year)\b", n)
+    if m and current_date:
+        month, year = int(m.group(1)), current_date.year
+        if "since" in n:
+            return {"start": f"{year:04d}-{month:02d}-01", "end": None, "source": nlq}
+        return {
+            "start": f"{year:04d}-{month:02d}-01",
+            "end": f"{year:04d}-{month:02d}-{_month_end(year, month):02d}",
+            "source": nlq,
+        }
+
+    m = re.search(r"\b(?:in|during)\s+(\d{4})\b", n)
+    if m:
+        year = int(m.group(1))
+        return {"start": f"{year:04d}-01-01", "end": f"{year:04d}-12-31", "source": nlq}
+
+    m = re.search(r"\bsince\s+(\d{4})\b", n)
+    if m:
+        year = int(m.group(1))
+        return {"start": f"{year:04d}-01-01", "end": None, "source": nlq}
+
+    if current_date and ("last year" in n or "previous year" in n):
+        year = current_date.year - 1
+        return {"start": f"{year:04d}-01-01", "end": f"{year:04d}-12-31", "source": nlq}
+
+    m = re.search(r"\bin\s+(\d{1,2})/last year\b", n)
+    if m and current_date:
+        month, year = int(m.group(1)), current_date.year - 1
+        return {
+            "start": f"{year:04d}-{month:02d}-01",
+            "end": f"{year:04d}-{month:02d}-{_month_end(year, month):02d}",
+            "source": nlq,
+        }
+
+    return None
+
+
+def infer_resource_types(row: dict[str, Any]) -> list[str]:
+    table = str(row.get("main_table_name") or "").strip()
+    resources = TABLE_TO_RESOURCES.get(table, [])
+    if resources:
+        return resources
+    q = str(row.get("question") or "").lower()
+    if any(w in q for w in ("lab", "blood pressure", "heart rate", "weight", "height", "output", "microbiology")):
+        return ["Observation"]
+    if any(w in q for w in ("medication", "prescribed", "drug")):
+        return ["MedicationRequest"]
+    if "procedure" in q:
+        return ["Procedure"]
+    if any(w in q for w in ("admission", "discharge", "hospital", "icu", "careunit", "visit")):
+        return ["Encounter"]
+    return ["Patient"]
+
+
+def _sorted_terms(val_dict: dict[str, Any]) -> list[str]:
+    val = val_dict.get("val_placeholder") or {}
+    terms = []
+    for key in sorted(TEXT_KEYS):
+        value = val.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text and not text.isdigit():
+            terms.append(text.lower())
+    return sorted(set(terms))
+
+
+def _date_windows(val_dict: dict[str, Any], current_date: dt.date | None) -> list[dict[str, Any]]:
+    windows = []
+    for item in (val_dict.get("time_placeholder") or {}).values():
+        if not isinstance(item, dict):
+            continue
+        window = parse_nlq_window(str(item.get("nlq") or ""), current_date)
+        if window and window not in windows:
+            windows.append(window)
+    return windows
+
+
+def _temporal_policy(row: dict[str, Any], val_dict: dict[str, Any]) -> str:
+    q = str(row.get("question") or "").lower()
+    time_values = " ".join(str(v.get("nlq", "")) for v in (val_dict.get("time_placeholder") or {}).values() if isinstance(v, dict)).lower()
+    combined = q + " " + time_values
+    combined = re.sub(r"\b(?:last|previous)\s+(?:year|month|week)\b", "", combined)
+    if any(word in combined for word in ("first", "earliest", "initial", "second", "last", "latest", "change in")):
+        return "first_last"
+    return "recent"
+
+
+def infer_intent(row: dict[str, Any]) -> dict[str, Any]:
+    val_dict = parse_val_dict(row.get("val_dict"))
+    current_date = current_date_from_assumption(row.get("assumption"))
+    return {
+        "planner": "metadata-oracle",
+        "resource_types": infer_resource_types(row),
+        "search_terms": _sorted_terms(val_dict),
+        "date_windows": _date_windows(val_dict, current_date),
+        "temporal_policy": _temporal_policy(row, val_dict),
+        "current_date": current_date.isoformat() if current_date else None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# A6a question-only planner: reads QUESTION_ONLY_FIELDS and nothing else.
+# ---------------------------------------------------------------------------
+
+
+def qo_infer_resource_types(question: str) -> list[str]:
+    q = f" {str(question or '').lower()} "
+    types: list[str] = []
+    for keywords, resources in QO_TYPE_KEYWORDS:
+        if any(k in q for k in keywords):
+            for r in resources:
+                if r not in types:
+                    types.append(r)
+    return types or list(QO_FALLBACK_TYPES)
+
+
+def qo_extract_terms(question: str) -> list[str]:
+    """Longest contiguous runs of non-scaffold tokens, as candidate clinical terms.
+
+    Deterministic and deliberately dumb: template questions embed the clinical
+    entity as a contiguous span ("... last <heart rate> value of patient ...").
+    """
+    q = str(question or "").lower()
+    q = re.sub(r"\bpatient\s+\S+", " ", q)  # drop "patient 10014729"
+    q = re.sub(r"\b\d{1,2}/\d{4}\b|\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}/\d{1,2}\b|\b\d{4}\b", " ", q)
+    tokens = [t for t in re.findall(r"[a-z0-9][a-z0-9%.\-]*", q)]
+    runs: list[list[str]] = []
+    current: list[str] = []
+    for i, tok in enumerate(tokens):
+        # "of" is a connector inside clinical names ("milk of magnesia"),
+        # not a run breaker, when flanked by non-scaffold tokens.
+        if tok == "of" and current and i + 1 < len(tokens) and tokens[i + 1] not in QO_SCAFFOLD_WORDS and not tokens[i + 1].isdigit():
+            current.append(tok)
+            continue
+        if tok in QO_SCAFFOLD_WORDS or tok.isdigit():
+            if current:
+                runs.append(current)
+                current = []
+            continue
+        current.append(tok)
+    if current:
+        runs.append(current)
+    terms = []
+    for run in sorted(runs, key=len, reverse=True):
+        term = " ".join(run).strip(" .-")
+        if len(term) >= 3 and term not in terms:
+            terms.append(term)
+        if len(terms) >= 3:
+            break
+    return terms
+
+
+def qo_temporal_policy(question: str) -> str:
+    q = str(question or "").lower()
+    q = re.sub(r"\b(?:last|previous)\s+(?:year|month|week)\b", "", q)
+    if any(word in q for word in ("first", "earliest", "initial", "second", "last", "latest", "change in")):
+        return "first_last"
+    return "recent"
+
+
+def qo_infer_intent(row: dict[str, Any]) -> dict[str, Any]:
+    qrow = {k: row.get(k) for k in QUESTION_ONLY_FIELDS}
+    question = str(qrow.get("question") or "")
+    current_date = current_date_from_assumption(qrow.get("assumption"))
+    window = parse_nlq_window(question, current_date)
+    return {
+        "planner": QO_PLANNER_VERSION,
+        "resource_types": qo_infer_resource_types(question),
+        "search_terms": qo_extract_terms(question),
+        "date_windows": [window] if window else [],
+        "temporal_policy": qo_temporal_policy(question),
+        "current_date": current_date.isoformat() if current_date else None,
+    }
+
+
+def _patient_id(row: dict[str, Any]) -> str:
+    value = str(row.get("patient_fhir_id") or "").strip()
+    if value.startswith("Patient/"):
+        return value.split("/", 1)[1]
+    return value
+
+
+def _add_date_params(parts: list[str], resource_type: str, window: dict[str, Any] | None) -> None:
+    param = RESOURCE_DATE_PARAM.get(resource_type)
+    if not param or not window:
+        return
+    if window.get("start"):
+        parts.append(f"{param}=ge{window['start']}")
+    if window.get("end"):
+        parts.append(f"{param}=le{window['end']}")
+
+
+def _observation_code_text(term: str) -> str | None:
+    # Avoid using route/careunit words as Observation code text.
+    if term in {"iv", "po", "sc", "im", "oral"}:
+        return None
+    return term
+
+
+def _query_for(resource_type: str, row: dict[str, Any], intent: dict[str, Any], *, count: int, sort: str | None) -> str:
+    patient_id = _patient_id(row)
+    if resource_type == "Patient":
+        return f"Patient?_id={urllib.parse.quote(patient_id)}&_count=1"
+
+    parts = [f"patient={urllib.parse.quote(patient_id)}", f"_count={count}"]
+    if sort:
+        parts.append(f"_sort={urllib.parse.quote(sort)}")
+
+    window = intent.get("date_windows", [None])[0] if intent.get("date_windows") else None
+    _add_date_params(parts, resource_type, window)
+
+    terms = intent.get("search_terms") or []
+    if resource_type == "Observation" and terms:
+        code_text = _observation_code_text(terms[0])
+        if code_text:
+            parts.append(f"code:text={urllib.parse.quote(code_text)}")
+    if resource_type == "Procedure" and terms:
+        parts.append(f"code:text={urllib.parse.quote(terms[0])}")
+    if resource_type == "MedicationRequest":
+        parts.append("_include=MedicationRequest:medication")
+    if resource_type == "Encounter" and any(t for t in terms if "icu" in t):
+        parts.append("class=IMP")
+
+    return f"{resource_type}?" + "&".join(parts)
+
+
+def build_search_plan(row: dict[str, Any], intent: dict[str, Any] | None = None, *, count: int = 100) -> list[dict[str, Any]]:
+    intent = intent or infer_intent(row)
+    plan = []
+    for resource_type in intent["resource_types"]:
+        if intent["temporal_policy"] == "first_last" and resource_type != "Patient":
+            sorts = ["date", "-date"]
+        else:
+            sorts = ["-date"] if resource_type in RESOURCE_DATE_PARAM else [None]
+        for sort in sorts:
+            path = _query_for(resource_type, row, intent, count=count, sort=sort)
+            item = {
+                "resource_type": resource_type,
+                "path": path,
+                "reason": (
+                    "question-only selection (whitelisted fields: question, patient, assumption)"
+                    if intent.get("planner") == QO_PLANNER_VERSION
+                    else "query-aware selection from benchmark-construction metadata (oracle ceiling)"
+                ),
+            }
+            if item not in plan:
+                plan.append(item)
+    return plan
+
+
+def _resource_id(resource: dict[str, Any]) -> str | None:
+    rtype, rid = resource.get("resourceType"), resource.get("id")
+    if rtype and rid:
+        return f"{rtype}/{rid}"
+    return None
+
+
+def _dedupe_resources(resources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen = set()
+    out = []
+    for resource in resources:
+        rid = _resource_id(resource)
+        key = rid or sha256_text(_json(resource))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(resource)
+    return out
+
+
+def _resource_clinical_date(resource: dict[str, Any]) -> str:
+    """Best-effort clinical timestamp for ordering; empty string sorts first."""
+    for key in ("effectiveDateTime", "authoredOn", "performedDateTime", "occurrenceDateTime", "recordedDate", "issued", "date"):
+        value = resource.get(key)
+        if isinstance(value, str) and value:
+            return value
+    for key in ("effectivePeriod", "period", "performedPeriod"):
+        period = resource.get(key)
+        if isinstance(period, dict) and isinstance(period.get("start"), str):
+            return period["start"]
+    return ""
+
+
+def project_resource(resource: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in resource.items() if k not in PROJECTION_DROP_KEYS}
+
+
+def bound_resources(
+    resources: list[dict[str, Any]],
+    *,
+    temporal_policy: str,
+    max_total_resources: int,
+    max_packet_chars: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Enforce hard resource-count and char ceilings (review finding 2).
+
+    Patient resources always survive. Per-type selection honors the temporal
+    policy: `first_last` interleaves earliest/latest; `recent` keeps newest.
+    Types are drained round-robin so one noisy type cannot evict the others.
+    """
+    projected = [project_resource(r) for r in resources]
+    patients = [r for r in projected if r.get("resourceType") == "Patient"]
+    rest = [r for r in projected if r.get("resourceType") != "Patient"]
+
+    by_type: dict[str, list[dict[str, Any]]] = {}
+    for r in rest:
+        by_type.setdefault(str(r.get("resourceType") or "Unknown"), []).append(r)
+
+    ordered_by_type: dict[str, list[dict[str, Any]]] = {}
+    for rtype, items in by_type.items():
+        items = sorted(items, key=_resource_clinical_date)
+        if temporal_policy == "first_last":
+            head, tail = 0, len(items) - 1
+            order = []
+            while head <= tail:
+                order.append(items[head])
+                head += 1
+                if head <= tail:
+                    order.append(items[tail])
+                    tail -= 1
+        else:
+            order = list(reversed(items))  # newest first
+        ordered_by_type[rtype] = order
+
+    selected: list[dict[str, Any]] = list(patients)
+    chars = sum(len(_json(r)) for r in selected)
+    budget_hit = False
+    cursors = {rtype: 0 for rtype in sorted(ordered_by_type)}
+    while len(selected) < max_total_resources and any(
+        cursors[t] < len(ordered_by_type[t]) for t in cursors
+    ):
+        progressed = False
+        for rtype in sorted(cursors):
+            if len(selected) >= max_total_resources:
+                break
+            i = cursors[rtype]
+            if i >= len(ordered_by_type[rtype]):
+                continue
+            candidate = ordered_by_type[rtype][i]
+            candidate_chars = len(_json(candidate))
+            if chars + candidate_chars > max_packet_chars and selected:
+                budget_hit = True
+                cursors[rtype] = len(ordered_by_type[rtype])  # this type is done
+                continue
+            selected.append(candidate)
+            chars += candidate_chars
+            cursors[rtype] = i + 1
+            progressed = True
+        if not progressed:
+            break
+
+    stats = {
+        "input_count": len(resources),
+        "kept_count": len(selected),
+        "dropped_count": len(resources) - len(selected),
+        "char_count": chars,
+        "char_budget_hit": budget_hit or len(selected) < len(projected) and chars >= max_packet_chars,
+        "max_total_resources": max_total_resources,
+        "max_packet_chars": max_packet_chars,
+        "temporal_policy": temporal_policy,
+    }
+    return selected, stats
+
+
+def fetch_resources(plan: list[dict[str, Any]], *, per_query_cap: int | None = None) -> dict[str, list[dict[str, Any]]]:
+    from fhir_client import get_fhir_client
+
+    client = get_fhir_client()
+    out = {}
+    for item in plan:
+        try:
+            resources = client.search_with_pagination(item["path"])
+            if per_query_cap is not None and len(resources) > per_query_cap:
+                # `_sort` on the query makes this a meaningful prefix, not a random slice.
+                resources = resources[:per_query_cap]
+            out[item["path"]] = resources
+        except Exception as exc:
+            out[item["path"]] = [{"resourceType": "OperationOutcome", "issue": [{"diagnostics": str(exc)}]}]
+    return out
+
+
+def build_packet_record(
+    row: dict[str, Any],
+    *,
+    plan_only: bool,
+    resources_by_query: dict[str, list[dict[str, Any]]] | None,
+    count: int = 100,
+    planner: str = "metadata-oracle",
+    max_total_resources: int | None = None,
+    max_packet_chars: int | None = None,
+) -> dict[str, Any]:
+    if planner == "question-only":
+        safe = {k: row.get(k) for k in QUESTION_ONLY_FIELDS}
+        intent = qo_infer_intent(safe)
+        kind = "a6a_question_only_packet"
+    else:
+        safe = {k: v for k, v in row.items() if k not in GOLD_FIELDS}
+        intent = infer_intent(safe)
+        kind = "a6_metadata_oracle_packet"
+    plan = build_search_plan(safe, intent, count=count)
+    resources_by_query = resources_by_query or {}
+    resources = []
+    for item in plan:
+        resources.extend(resources_by_query.get(item["path"], []))
+    resources = _dedupe_resources(resources)
+    bounds_stats: dict[str, Any] | None = None
+    if not plan_only and max_total_resources is not None and max_packet_chars is not None:
+        resources, bounds_stats = bound_resources(
+            resources,
+            temporal_policy=intent["temporal_policy"],
+            max_total_resources=max_total_resources,
+            max_packet_chars=max_packet_chars,
+        )
+    resource_ids = [rid for rid in (_resource_id(r) for r in resources) if rid]
+    packet = {
+        "kind": kind,
+        "planner": intent.get("planner"),
+        "plan_only": plan_only,
+        "resources": [] if plan_only else resources,
+        "resource_count": 0 if plan_only else len(resources),
+        "source_resource_ids": [] if plan_only else sorted(resource_ids),
+        "source_queries": plan,
+        "bounds": bounds_stats,
+    }
+    packet["sha256"] = sha256_text(_json(packet))
+    return {
+        "question_id": safe.get("question_id"),
+        "question": safe.get("question"),
+        "patient_fhir_id": safe.get("patient_fhir_id"),
+        "assumption": safe.get("assumption"),
+        "intent": intent,
+        "packet": packet,
+    }
+
+
+def load_rows(input_path: Path, *, limit: int | None = None, split: str | None = "test") -> list[dict[str, Any]]:
+    with input_path.open(newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
+    if split:
+        rows = [r for r in rows if r.get("split") == split]
+    if limit is not None:
+        rows = rows[:limit]
+    return rows
+
+
+def write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        for record in records:
+            f.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def write_manifest(path: Path, *, input_path: Path, output_path: Path, args: argparse.Namespace, records: list[dict[str, Any]]) -> None:
+    manifest = {
+        "created_at": dt.datetime.now(dt.UTC).isoformat(),
+        "kind": "a6_query_aware_packet_manifest",
+        "input": {"path": str(input_path), "sha256": sha256_file(input_path)},
+        "output": {"path": str(output_path), "sha256": sha256_file(output_path)},
+        "config": {
+            "limit": args.limit,
+            "count": args.count,
+            "plan_only": args.plan_only,
+            "split": args.split,
+            "planner": getattr(args, "planner", "metadata-oracle"),
+            "planner_version": QO_PLANNER_VERSION if getattr(args, "planner", "") == "question-only" else "metadata-v1",
+            "max_total_resources": getattr(args, "max_total_resources", None),
+            "max_packet_chars": getattr(args, "max_packet_chars", None),
+        },
+        "questions": len(records),
+        "packet_hashes": {str(r["question_id"]): r["packet"]["sha256"] for r in records},
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Build A6 query-aware frozen packets.")
+    parser.add_argument("--input", type=Path, default=Path("final_dataset/full_test409.csv"))
+    parser.add_argument("--output", type=Path, default=Path("runs/a6_query_aware_packets.jsonl"))
+    parser.add_argument("--manifest", type=Path, default=Path("runs/a6_query_aware_manifest.json"))
+    parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--split", default="test")
+    parser.add_argument("--count", type=int, default=100)
+    parser.add_argument("--plan-only", action="store_true")
+    parser.add_argument(
+        "--planner",
+        choices=["question-only", "metadata-oracle"],
+        default="question-only",
+        help="question-only = A6a primary arm (whitelist: question/patient/assumption); metadata-oracle = ceiling arm using benchmark-construction metadata",
+    )
+    parser.add_argument("--max-total-resources", type=int, default=120)
+    parser.add_argument("--max-packet-chars", type=int, default=100_000)
+    args = parser.parse_args()
+
+    rows = load_rows(args.input, limit=args.limit, split=args.split)
+    records = []
+    for row in rows:
+        if args.planner == "question-only":
+            qrow = {k: row.get(k) for k in QUESTION_ONLY_FIELDS}
+            plan = build_search_plan(qrow, qo_infer_intent(qrow), count=args.count)
+        else:
+            plan = build_search_plan(row, count=args.count)
+        resources = {} if args.plan_only else fetch_resources(plan, per_query_cap=4 * args.max_total_resources)
+        records.append(
+            build_packet_record(
+                row,
+                plan_only=args.plan_only,
+                resources_by_query=resources,
+                count=args.count,
+                planner=args.planner,
+                max_total_resources=args.max_total_resources,
+                max_packet_chars=args.max_packet_chars,
+            )
+        )
+    write_jsonl(args.output, records)
+    write_manifest(args.manifest, input_path=args.input, output_path=args.output, args=args, records=records)
+    print(json.dumps({"output": str(args.output), "manifest": str(args.manifest), "records": len(records), "plan_only": args.plan_only}, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

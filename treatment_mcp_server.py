@@ -287,7 +287,7 @@ CATALOG = {
 # (closes the 17% MedicationRequest->Medication slice; novel — no surveyed FHIR MCP server ships it).
 _V5 = ["get_patient_chart", "search_observations", "search_fhir", "read_resource", "list_search_params"]
 PRESETS = {
-    "control": ["fhir_request"],                       # Medplum's exact shipped generic (floor)
+    "control": ["fhir_request"],                       # local description-matched generic control (floor)
     "control_include": ["fhir_request_include"],       # generic + _include coaching (attribution arm)
     "c0": ["fhir_request_frugal"],                     # orthogonal efficiency arm (vs control, head-to-head)
     "cat2": _V5[:2],                                   # 2 tools (curve point) — nested subset of validated5
