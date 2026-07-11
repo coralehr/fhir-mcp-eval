@@ -14,7 +14,9 @@ abstract: >-
   glee4810/FHIR-AgentBench (CC BY 4.0).
 type: software
 authors:
-  - name: CoralEHR
+  - given-names: Aanish
+    family-names: Sachdev
+    affiliation: "bonfireDB / CoralEHR"
 repository-code: "https://github.com/coralehr/fhir-mcp-eval"
 license: CC-BY-4.0
 keywords:
