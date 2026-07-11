@@ -30,7 +30,7 @@ GOLD_FIELDS = {"true_answer", "true_fhir_ids", "sql_query", "proc_query"}
 # (adversarial review 2026-07-11, finding 1). Whitelist, not blacklist.
 QUESTION_ONLY_FIELDS = {"split", "question_id", "question", "assumption", "patient_fhir_id"}
 
-QO_PLANNER_VERSION = "qo-v1"
+QO_PLANNER_VERSION = "qo-v2"
 
 # Deterministic question-text -> resource-type mapping. Order matters only for
 # reporting; multiple groups may fire and are unioned.
@@ -70,6 +70,8 @@ QO_SCAFFOLD_WORDS = {
     "prescription", "prescriptions", "medication", "medications", "drug", "drugs", "procedure",
     "procedures", "lab", "labs", "value", "values", "measured", "measurement", "measurements",
     "hospital", "encounter", "visit", "admitted", "admission", "care", "unit", "route", "via",
+    "can", "could", "you", "please", "show", "compute", "duration", "minimum", "maximum",
+    "min", "max", "average", "mean", "take", "took", "taken",
 }
 
 # Top-level keys stripped from every resource before it enters a bounded
@@ -403,8 +405,9 @@ def _query_for(resource_type: str, row: dict[str, Any], intent: dict[str, Any], 
         parts.append(f"code:text={urllib.parse.quote(terms[0])}")
     if resource_type == "MedicationRequest":
         parts.append("_include=MedicationRequest:medication")
-    if resource_type == "Encounter" and any(t for t in terms if "icu" in t):
-        parts.append("class=IMP")
+    # NOTE: no Encounter class filter. Measured on the MIMIC-IV-on-FHIR demo
+    # (2026-07-11 dev pilot): encounters are not coded class=IMP, so the old
+    # `class=IMP` ICU heuristic zeroed out every ICU-phrased Encounter query.
 
     return f"{resource_type}?" + "&".join(parts)
 
@@ -547,20 +550,56 @@ def bound_resources(
     return selected, stats
 
 
+def relax_query(path: str) -> str | None:
+    """One deterministic relaxation step for a zero-result query, or None.
+
+    Order: drop `code:text` (the most speculative filter — a term extracted
+    from question text may not match the store's display vocabulary), then
+    drop date-range params. Bare patient+type queries are safe because
+    `bound_resources` caps the packet regardless of fetch size.
+    """
+    if "?" not in path:
+        return None
+    base, query = path.split("?", 1)
+    params = query.split("&")
+    for prefix in ("code:text=",):
+        kept = [p for p in params if not p.startswith(prefix)]
+        if len(kept) != len(params):
+            return f"{base}?" + "&".join(kept)
+    date_prefixes = tuple(f"{p}=ge" for p in set(RESOURCE_DATE_PARAM.values())) + tuple(
+        f"{p}=le" for p in set(RESOURCE_DATE_PARAM.values())
+    )
+    kept = [p for p in params if not p.startswith(date_prefixes)]
+    if len(kept) != len(params):
+        return f"{base}?" + "&".join(kept)
+    return None
+
+
 def fetch_resources(plan: list[dict[str, Any]], *, per_query_cap: int | None = None) -> dict[str, list[dict[str, Any]]]:
     from fhir_client import get_fhir_client
 
     client = get_fhir_client()
     out = {}
     for item in plan:
+        path = item["path"]
+        attempts = []
+        resources: list[dict[str, Any]] = []
         try:
-            resources = client.search_with_pagination(item["path"])
+            current: str | None = path
+            while current is not None:
+                attempts.append(current)
+                resources = client.search_with_pagination(current)
+                if resources:
+                    break
+                current = relax_query(current)
             if per_query_cap is not None and len(resources) > per_query_cap:
                 # `_sort` on the query makes this a meaningful prefix, not a random slice.
                 resources = resources[:per_query_cap]
-            out[item["path"]] = resources
+            out[path] = resources
         except Exception as exc:
-            out[item["path"]] = [{"resourceType": "OperationOutcome", "issue": [{"diagnostics": str(exc)}]}]
+            out[path] = [{"resourceType": "OperationOutcome", "issue": [{"diagnostics": str(exc)}]}]
+        if len(attempts) > 1:
+            item["relaxation_attempts"] = attempts[1:]
     return out
 
 
@@ -573,6 +612,7 @@ def build_packet_record(
     planner: str = "metadata-oracle",
     max_total_resources: int | None = None,
     max_packet_chars: int | None = None,
+    plan: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if planner == "question-only":
         safe = {k: row.get(k) for k in QUESTION_ONLY_FIELDS}
@@ -582,7 +622,9 @@ def build_packet_record(
         safe = {k: v for k, v in row.items() if k not in GOLD_FIELDS}
         intent = infer_intent(safe)
         kind = "a6_metadata_oracle_packet"
-    plan = build_search_plan(safe, intent, count=count)
+    # Accept the caller's (possibly relaxation-annotated) plan so fetch-time
+    # metadata survives into the packet; rebuild only if none was given.
+    plan = plan if plan is not None else build_search_plan(safe, intent, count=count)
     resources_by_query = resources_by_query or {}
     resources = []
     for item in plan:
@@ -695,6 +737,7 @@ def main() -> int:
                 planner=args.planner,
                 max_total_resources=args.max_total_resources,
                 max_packet_chars=args.max_packet_chars,
+                plan=plan,
             )
         )
     write_jsonl(args.output, records)
