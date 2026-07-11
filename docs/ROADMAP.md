@@ -21,13 +21,37 @@ axis — call it the **substrate legibility ladder**:
 5. Governed read layer with handles, citations, and policy (A7+ — the substrate does selection *and* enforcement)
 
 Plus one orthogonal axis: **inference-time scaling** (A13) — more steps, smaller reads, verifier loops,
-loop-until-goal — which can be layered on any rung. We do not currently know which rung (or which
-combination of rung + harness) is the right bet, and external evidence cuts both ways: MedAgentBench v2's
-only cleanly isolated gain (+7pp) is corrective memory — a feedback mechanism, rung 2; the RL paper
-(arXiv:2605.14126) learns rung-4 selection into model weights; ACIE's hospital deployment (arXiv:2606.19602)
-is rungs 4–5 with iterative preview. These arms are designed so the benchmark can adjudicate between rungs
-instead of assuming one. Run cheap and decisive first; report every arm on the same token/cost/failure ledger
-so accuracy gains are never conflated with budget gains.
+loop-until-goal — which can be layered on any rung. The ladder is a *narrative device, not an experimental
+variable*: its rungs are separate factors (error diagnostics, catalogs, compiled selection, handles,
+authorization), neither nested nor monotonic, and each must be manipulated independently — "moving up a rung"
+is never itself a measured treatment. We do not currently know which factor (or which combination of factor +
+harness) is the right bet, and external evidence cuts both ways: MedAgentBench v2's only cleanly isolated
+gain (+7pp) is *cross-episode corrective memory* — evidence that learned corrective instructions help, which
+is adjacent to but mechanistically distinct from A12's same-request server error fidelity; the RL paper
+(arXiv:2605.14126) learns selection into model weights; ACIE's hospital deployment (arXiv:2606.19602) is
+deployment-existence evidence for compiled evidence + previews. These arms are designed so the benchmark can
+adjudicate between factors instead of assuming one. Report every arm on the same token/cost/failure ledger so
+accuracy gains are never conflated with budget gains.
+
+**Statistical policy (family-level, binding on every item below):** one primary confirmatory hypothesis for
+the program (A6a question-only selection vs A0′, paired, patient-clustered); everything else is exploratory
+until promoted through a pre-registered confirmatory run on an untouched holdout. Development/debugging uses a
+dev slice; the 409-question test set is never reused for arm selection. All paired contrasts report
+patient-cluster-aware intervals; multiplicity is controlled within each item's declared contrast family; and
+post-hoc strata (overflow/resource-real, defined by A0's observed outcome) are descriptive only — acceptance
+criteria use pre-treatment strata (independently tokenized record size, question class).
+
+**Ordering gate:** credibility repairs (items 13–16: reproducibility artifact, same-instance rerun,
+cross-family adjudication, judge re-measurement) gate any *published headline* from new arms — a new arm may
+be piloted first, but no accuracy claim ships while those four remain open.
+
+**Design-review debt:** an independent adversarial review (2026-07-11, gpt-5.6-sol xhigh) filed 37 findings
+against this file — bundle/confound splits per arm (A6a–d, A12's four-way split, A7's incremental sequence,
+A13's selector controls), oracle-metadata and unboundedness defects in the current A6 builder, and
+un-runnable acceptance criteria (A10-VEC has no note-grounded gold; the re-grade and judge scripts are
+hard-coded to this fork's shapes). **Every arm's pre-registration must address its findings in
+[docs/reviews/2026-07-11-adversarial-roadmap-review.md](reviews/2026-07-11-adversarial-roadmap-review.md)
+before it runs.**
 
 ## 1. A6: run the query-aware in-context projection arm
 
@@ -72,7 +96,8 @@ error-driven self-correction.
   3. **Strict + corrective:** `Prefer: handling=strict` honored — unknown params and unsupported modifiers return 400 + OperationOutcome listing the supported parameter set for that resource type, with *semantically safe* suggestions only (never alias `date` → `_lastUpdated`; say honestly that clinical-date search is unsupported and what `_lastUpdated` actually filters).
 - Implement as a toggle on `treatment_mcp_server.py` so A9's matrix can carry it; no new substrate needed.
 - Measure the *mechanism*, not just the outcome: rejected-call recovery rate (does the next call fix the problem?), wasted-call rate, same-type re-request rate, turns-to-first-useful-payload, and the fraction of wrong answers attributable to silently dropped filters.
-- This arm doubles as the empirical companion to the HealthClaw error-fidelity issue set (umbrella + sub-issues A–G drafted in `medplum/.scratch/healthclaw-issues/`, grown out of medplum/medplum#9616): those issues argue the guardrail layer should preserve truth on the failure path; this arm measures what that truth-preservation is worth in agent accuracy. If the effect is real, the issue set carries its own evidence.
+- This arm doubles as the empirical companion to an error-fidelity issue set we are preparing for the HealthClaw Guardrails project (grown out of the discussion on medplum/medplum#9616): those issues argue the guardrail layer should preserve truth on the failure path; this arm measures what that truth-preservation is worth in agent accuracy. The issue set will be public when filed; if the effect is real, it carries its own evidence.
+- **Scoping constraints from adversarial review:** (a) the mechanism must match the population — restrict the primary contrast to questions with *observed* malformed/ignored/unsupported queries; same-type re-requests are dedup failures and cap-drops are projection failures, neither recoverable by error fidelity, so do not score A12 against all packet-solved failures. (b) Strictness and coaching are separate treatments — split into: silent vs explicit error with identical diagnostic content; explicit error vs +supported-parameter list; +list vs +semantic suggestions; unknown-parameter handling separate from upstream/transport failures. (c) Verify the actual baseline behavior of `treatment_mcp_server.py` at the proxy boundary before labeling any condition the "status quo."
 
 **Acceptance:**
 - Paired three-condition table on a pre-registered slice before any full run.
@@ -203,7 +228,9 @@ unmatched budget, as a cost–accuracy frontier rather than a single number.
 asked by different principals, and can the layer enforce that difference without wrecking utility?
 
 No published FHIR-agent benchmark measures this: MedAgentBench, FHIR-AgentBench, PhysicianBench, and
-HealthAgentBench are all single-identity with effectively admin credentials (as are our own runs to date).
+HealthAgentBench report no principal-varying authorization evaluation (and our own runs to date use admin
+credentials). Scoped claim: we found no published FHIR-agent benchmark that varies the acting principal —
+not that every environment is admin-equivalent.
 Yet every production deployment pattern (Epic/Oracle embedded assistants, SMART scopes, HealthClaw's
 step-up model) is identity-first. This is the eval's most defensible unclaimed territory.
 
@@ -264,7 +291,7 @@ approval mechanics — before any model spends a token?
 
 Two zero-model-token artifacts that double as benchmark design inputs and standalone publishable pages:
 - **Conformance map:** for Medplum, HAPI, AWS HealthLake, Epic (public sandbox), Oracle (public docs): supported search params/operations, CapabilityStatement truthfulness (does /metadata match behavior?), error-handling behavior under unknown params/strict mode (the A12 conditions, probed per server), authz model, bulk/export paths. National context from ASTP briefs 75/81 (FHIR is the sanctioned app layer, not the dominant integration mechanism) frames why per-endpoint variance matters — there is no single "FHIR" any agent targets.
-- **Enforcement-surface audit:** code-level comparison of AWS HealthLake MCP (11 tools, IAM-delegated, one read-only boolean, no capability contract), HealthClaw Guardrails (29 tools, step-up writes, HITL, redaction), Medplum MCP (3 tools inheriting AccessPolicy via ctx.repo), and the four surveyed OSS servers (jcafazzo/momentum/wso2/xSoVx — wso2's per-resource `get_capabilities` is the closest existing describe()). Most of this audit already exists from the 2026-07-10/11 reviews; every claim carries a primary-source citation.
+- **Enforcement-surface audit:** code-level comparison of AWS HealthLake MCP (11 tools, IAM-delegated, one read-only boolean, no capability contract), HealthClaw Guardrails (29 tools, step-up writes, HITL, redaction), Medplum MCP (3 tools inheriting AccessPolicy via ctx.repo), and the four surveyed OSS servers (jcafazzo/momentum/wso2/xSoVx — wso2's per-resource `get_capabilities` is the closest existing describe()). Every claim carries a primary-source citation; probe scripts and per-claim sources ship with the artifact. Note the product/deployment split: unknown-parameter behavior and CapabilityStatement truthfulness are version- and configuration-specific, so publish separate "observed deployment" (live probes, with version + config + timestamp + raw artifacts) and "documented product" (docs-only: Epic/Oracle) tables rather than one comparable-looking matrix.
 - A later **two-plane arm** (same questions over live FHIR vs bulk `$export` → SQL) is the honest first step toward multi-plane realism — real substrates, deterministic ground truth. A five-plane synthetic estate (HL7v2/C-CDA/claims/OMOP) is explicitly deferred: hand-authored data + self-authored gold is the self-graded criticism squared.
 - **Representation-variance research (new):** document how the *same clinical fact* is stored differently across real implementations — local codes vs LOINC/SNOMED (the FHIR-AgentBench `220210` respiratory-rate failure), discrete Observation vs narrative-only DocumentReference, choice-type divergence (`valueQuantity` vs `valueString`), extension use where base fields exist, profile variance (base R4 vs US Core vs none), and unit non-uniformity. This is why US Core/IPS profiles exist and why a CapabilityStatement alone is not a truthful contract. Survey the published evidence + probe the public sandboxes; the output feeds A10-CAT (what the catalog must learn per deployment) and bounds what any "FHIR-aware" agent can promise. An agent that is *aware of these limits* — and says "this server may store X in Y" or "not findable in discrete data" — is itself a testable condition (fold into A12's honest-substrate framing: honesty about representation, not just about errors).
 
