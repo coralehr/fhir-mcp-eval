@@ -202,5 +202,44 @@ class RelaxationTests(unittest.TestCase):
             self.assertNotIn("class=", item["path"])
 
 
+class BluntProjectionTests(unittest.TestCase):
+    ROW = {
+        "question_id": "q30",
+        "split": "valid",
+        "question": "what was the last heart rate value of patient 1 since 12/2100?",
+        "assumption": "assume that the current time is 2100-12-31 23:59:00",
+        "patient_fhir_id": "p30",
+        "main_table_name": "chartevents",
+        "true_answer": "[[88]]",
+    }
+
+    def test_blunt_intent_is_query_blind(self):
+        intent = a6.blunt_infer_intent(self.ROW)
+        self.assertEqual(intent["search_terms"], [])
+        self.assertEqual(intent["date_windows"], [])
+        self.assertEqual(intent["resource_types"], list(a6.BLUNT_RESOURCE_TYPES))
+        plan = a6.build_search_plan(self.ROW, intent, count=100)
+        for item in plan:
+            self.assertNotIn("code:text", item["path"])
+            self.assertNotIn("date=ge", item["path"])
+
+    def test_blunt_bound_caps_per_type_and_projects(self):
+        resources = [
+            {"resourceType": "Observation", "id": f"o{i}", "effectiveDateTime": f"2100-02-{(i % 27) + 1:02d}", "meta": {"v": 1}}
+            for i in range(80)
+        ] + [{"resourceType": "Encounter", "id": f"e{i}", "period": {"start": f"2100-01-{(i % 27) + 1:02d}"}} for i in range(10)]
+        kept, stats = a6.blunt_bound(resources, per_type_cap=50)
+        obs = [r for r in kept if r["resourceType"] == "Observation"]
+        enc = [r for r in kept if r["resourceType"] == "Encounter"]
+        self.assertEqual(len(obs), 50)
+        self.assertEqual(len(enc), 10)
+        self.assertTrue(all("meta" not in r for r in kept))
+        self.assertEqual(stats["per_type_cap"], 50)
+
+    def test_blunt_packet_kind(self):
+        record = a6.build_packet_record(self.ROW, plan_only=True, resources_by_query={}, planner="blunt-projection")
+        self.assertEqual(record["packet"]["kind"], "a0prime_blunt_packet")
+
+
 if __name__ == "__main__":
     unittest.main()
