@@ -24,6 +24,58 @@ from typing import Any
 
 GOLD_FIELDS = {"true_answer", "true_fhir_ids", "sql_query", "proc_query"}
 
+# A6a (question-only) planner: the ONLY row fields the planner may read.
+# Everything else in the CSV (main_table_name, val_dict, template, ...) is
+# benchmark-construction metadata that does not exist for a real user query
+# (adversarial review 2026-07-11, finding 1). Whitelist, not blacklist.
+QUESTION_ONLY_FIELDS = {"split", "question_id", "question", "assumption", "patient_fhir_id"}
+
+QO_PLANNER_VERSION = "qo-v1"
+
+# Deterministic question-text -> resource-type mapping. Order matters only for
+# reporting; multiple groups may fire and are unioned.
+QO_TYPE_KEYWORDS: list[tuple[tuple[str, ...], tuple[str, ...]]] = [
+    (("prescri", "medication", "drug", "dose", "tablet", "capsule", " mg ", "infusion"), ("MedicationRequest",)),
+    (("procedure", "surgery", "surgical", "operation", "ventilation", "intubat", "dialysis", "catheter", "undergo", "underwent"), ("Procedure",)),
+    (("diagnos", "condition", "disease", "disorder"), ("Condition",)),
+    (
+        ("admit", "admission", "discharge", "hospital", "icu", "intensive care", "careunit", "care unit", "ward", "transfer", "visit", "encounter", "stay"),
+        ("Encounter",),
+    ),
+    (
+        (
+            "lab", "test", "level", "value", "measure", "microbiolog", "culture", "specimen", "organism",
+            "weight", "height", "temperature", "heart rate", "blood pressure", "respiratory", "oxygen", "o2",
+            "sao2", "spo2", "glucose", "sodium", "potassium", "creatinine", "hemoglobin", "hematocrit",
+            "platelet", "urine", "output", "input", "intake", "drain", "stool", "emesis",
+        ),
+        ("Observation",),
+    ),
+    (("gender", "sex", "age", "born", "birth", "male", "female", "race", "ethnic", "marital", "language"), ("Patient",)),
+]
+
+# Fallback when no keyword group fires: the two types that dominate the gold
+# distribution. Bounds (not breadth) keep this safe.
+QO_FALLBACK_TYPES = ("Observation", "Encounter")
+
+# Question-scaffold vocabulary stripped before clinical-term extraction.
+QO_SCAFFOLD_WORDS = {
+    "a", "an", "and", "any", "been", "calculate", "compared", "count", "current", "date", "day", "days",
+    "did", "do", "does", "during", "first", "for", "from", "get", "give", "given", "had", "has", "have",
+    "his", "her", "how", "in", "is", "it", "last", "many", "me", "month", "months", "much", "number",
+    "of", "on", "or", "patient", "receive", "received", "same", "second", "show", "since", "tell",
+    "than", "the", "their", "there", "this", "time", "times", "to", "today", "total", "until", "was",
+    "were", "what", "when", "where", "which", "who", "whose", "with", "year", "years", "yesterday",
+    "change", "difference", "list", "all", "ever", "earliest", "latest", "previous", "prescribed",
+    "prescription", "prescriptions", "medication", "medications", "drug", "drugs", "procedure",
+    "procedures", "lab", "labs", "value", "values", "measured", "measurement", "measurements",
+    "hospital", "encounter", "visit", "admitted", "admission", "care", "unit", "route", "via",
+}
+
+# Top-level keys stripped from every resource before it enters a bounded
+# packet (mirrors the A0' strip set, adding `contained`).
+PROJECTION_DROP_KEYS = ("text", "meta", "extension", "modifierExtension", "contained")
+
 TABLE_TO_RESOURCES = {
     "admissions": ["Encounter"],
     "chartevents": ["Observation"],
@@ -130,6 +182,17 @@ def parse_nlq_window(nlq: str, current_date: dt.date | None) -> dict[str, str] |
         value = f"{current_date.year:04d}-{month:02d}-{day:02d}"
         return {"start": value, "end": value, "source": nlq}
 
+    m = re.search(r"\b(?:in|since|during)\s+(\d{1,2})/(?:this year|the current year)\b", n)
+    if m and current_date:
+        month, year = int(m.group(1)), current_date.year
+        if "since" in n:
+            return {"start": f"{year:04d}-{month:02d}-01", "end": None, "source": nlq}
+        return {
+            "start": f"{year:04d}-{month:02d}-01",
+            "end": f"{year:04d}-{month:02d}-{_month_end(year, month):02d}",
+            "source": nlq,
+        }
+
     m = re.search(r"\b(?:in|during)\s+(\d{4})\b", n)
     if m:
         year = int(m.group(1))
@@ -211,10 +274,86 @@ def infer_intent(row: dict[str, Any]) -> dict[str, Any]:
     val_dict = parse_val_dict(row.get("val_dict"))
     current_date = current_date_from_assumption(row.get("assumption"))
     return {
+        "planner": "metadata-oracle",
         "resource_types": infer_resource_types(row),
         "search_terms": _sorted_terms(val_dict),
         "date_windows": _date_windows(val_dict, current_date),
         "temporal_policy": _temporal_policy(row, val_dict),
+        "current_date": current_date.isoformat() if current_date else None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# A6a question-only planner: reads QUESTION_ONLY_FIELDS and nothing else.
+# ---------------------------------------------------------------------------
+
+
+def qo_infer_resource_types(question: str) -> list[str]:
+    q = f" {str(question or '').lower()} "
+    types: list[str] = []
+    for keywords, resources in QO_TYPE_KEYWORDS:
+        if any(k in q for k in keywords):
+            for r in resources:
+                if r not in types:
+                    types.append(r)
+    return types or list(QO_FALLBACK_TYPES)
+
+
+def qo_extract_terms(question: str) -> list[str]:
+    """Longest contiguous runs of non-scaffold tokens, as candidate clinical terms.
+
+    Deterministic and deliberately dumb: template questions embed the clinical
+    entity as a contiguous span ("... last <heart rate> value of patient ...").
+    """
+    q = str(question or "").lower()
+    q = re.sub(r"\bpatient\s+\S+", " ", q)  # drop "patient 10014729"
+    q = re.sub(r"\b\d{1,2}/\d{4}\b|\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}/\d{1,2}\b|\b\d{4}\b", " ", q)
+    tokens = [t for t in re.findall(r"[a-z0-9][a-z0-9%.\-]*", q)]
+    runs: list[list[str]] = []
+    current: list[str] = []
+    for i, tok in enumerate(tokens):
+        # "of" is a connector inside clinical names ("milk of magnesia"),
+        # not a run breaker, when flanked by non-scaffold tokens.
+        if tok == "of" and current and i + 1 < len(tokens) and tokens[i + 1] not in QO_SCAFFOLD_WORDS and not tokens[i + 1].isdigit():
+            current.append(tok)
+            continue
+        if tok in QO_SCAFFOLD_WORDS or tok.isdigit():
+            if current:
+                runs.append(current)
+                current = []
+            continue
+        current.append(tok)
+    if current:
+        runs.append(current)
+    terms = []
+    for run in sorted(runs, key=len, reverse=True):
+        term = " ".join(run).strip(" .-")
+        if len(term) >= 3 and term not in terms:
+            terms.append(term)
+        if len(terms) >= 3:
+            break
+    return terms
+
+
+def qo_temporal_policy(question: str) -> str:
+    q = str(question or "").lower()
+    q = re.sub(r"\b(?:last|previous)\s+(?:year|month|week)\b", "", q)
+    if any(word in q for word in ("first", "earliest", "initial", "second", "last", "latest", "change in")):
+        return "first_last"
+    return "recent"
+
+
+def qo_infer_intent(row: dict[str, Any]) -> dict[str, Any]:
+    qrow = {k: row.get(k) for k in QUESTION_ONLY_FIELDS}
+    question = str(qrow.get("question") or "")
+    current_date = current_date_from_assumption(qrow.get("assumption"))
+    window = parse_nlq_window(question, current_date)
+    return {
+        "planner": QO_PLANNER_VERSION,
+        "resource_types": qo_infer_resource_types(question),
+        "search_terms": qo_extract_terms(question),
+        "date_windows": [window] if window else [],
+        "temporal_policy": qo_temporal_policy(question),
         "current_date": current_date.isoformat() if current_date else None,
     }
 
@@ -283,7 +422,11 @@ def build_search_plan(row: dict[str, Any], intent: dict[str, Any] | None = None,
             item = {
                 "resource_type": resource_type,
                 "path": path,
-                "reason": "query-aware selection from non-gold question metadata",
+                "reason": (
+                    "question-only selection (whitelisted fields: question, patient, assumption)"
+                    if intent.get("planner") == QO_PLANNER_VERSION
+                    else "query-aware selection from benchmark-construction metadata (oracle ceiling)"
+                ),
             }
             if item not in plan:
                 plan.append(item)
@@ -310,14 +453,112 @@ def _dedupe_resources(resources: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
-def fetch_resources(plan: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+def _resource_clinical_date(resource: dict[str, Any]) -> str:
+    """Best-effort clinical timestamp for ordering; empty string sorts first."""
+    for key in ("effectiveDateTime", "authoredOn", "performedDateTime", "occurrenceDateTime", "recordedDate", "issued", "date"):
+        value = resource.get(key)
+        if isinstance(value, str) and value:
+            return value
+    for key in ("effectivePeriod", "period", "performedPeriod"):
+        period = resource.get(key)
+        if isinstance(period, dict) and isinstance(period.get("start"), str):
+            return period["start"]
+    return ""
+
+
+def project_resource(resource: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in resource.items() if k not in PROJECTION_DROP_KEYS}
+
+
+def bound_resources(
+    resources: list[dict[str, Any]],
+    *,
+    temporal_policy: str,
+    max_total_resources: int,
+    max_packet_chars: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Enforce hard resource-count and char ceilings (review finding 2).
+
+    Patient resources always survive. Per-type selection honors the temporal
+    policy: `first_last` interleaves earliest/latest; `recent` keeps newest.
+    Types are drained round-robin so one noisy type cannot evict the others.
+    """
+    projected = [project_resource(r) for r in resources]
+    patients = [r for r in projected if r.get("resourceType") == "Patient"]
+    rest = [r for r in projected if r.get("resourceType") != "Patient"]
+
+    by_type: dict[str, list[dict[str, Any]]] = {}
+    for r in rest:
+        by_type.setdefault(str(r.get("resourceType") or "Unknown"), []).append(r)
+
+    ordered_by_type: dict[str, list[dict[str, Any]]] = {}
+    for rtype, items in by_type.items():
+        items = sorted(items, key=_resource_clinical_date)
+        if temporal_policy == "first_last":
+            head, tail = 0, len(items) - 1
+            order = []
+            while head <= tail:
+                order.append(items[head])
+                head += 1
+                if head <= tail:
+                    order.append(items[tail])
+                    tail -= 1
+        else:
+            order = list(reversed(items))  # newest first
+        ordered_by_type[rtype] = order
+
+    selected: list[dict[str, Any]] = list(patients)
+    chars = sum(len(_json(r)) for r in selected)
+    budget_hit = False
+    cursors = {rtype: 0 for rtype in sorted(ordered_by_type)}
+    while len(selected) < max_total_resources and any(
+        cursors[t] < len(ordered_by_type[t]) for t in cursors
+    ):
+        progressed = False
+        for rtype in sorted(cursors):
+            if len(selected) >= max_total_resources:
+                break
+            i = cursors[rtype]
+            if i >= len(ordered_by_type[rtype]):
+                continue
+            candidate = ordered_by_type[rtype][i]
+            candidate_chars = len(_json(candidate))
+            if chars + candidate_chars > max_packet_chars and selected:
+                budget_hit = True
+                cursors[rtype] = len(ordered_by_type[rtype])  # this type is done
+                continue
+            selected.append(candidate)
+            chars += candidate_chars
+            cursors[rtype] = i + 1
+            progressed = True
+        if not progressed:
+            break
+
+    stats = {
+        "input_count": len(resources),
+        "kept_count": len(selected),
+        "dropped_count": len(resources) - len(selected),
+        "char_count": chars,
+        "char_budget_hit": budget_hit or len(selected) < len(projected) and chars >= max_packet_chars,
+        "max_total_resources": max_total_resources,
+        "max_packet_chars": max_packet_chars,
+        "temporal_policy": temporal_policy,
+    }
+    return selected, stats
+
+
+def fetch_resources(plan: list[dict[str, Any]], *, per_query_cap: int | None = None) -> dict[str, list[dict[str, Any]]]:
     from fhir_client import get_fhir_client
 
     client = get_fhir_client()
     out = {}
     for item in plan:
         try:
-            out[item["path"]] = client.search_with_pagination(item["path"])
+            resources = client.search_with_pagination(item["path"])
+            if per_query_cap is not None and len(resources) > per_query_cap:
+                # `_sort` on the query makes this a meaningful prefix, not a random slice.
+                resources = resources[:per_query_cap]
+            out[item["path"]] = resources
         except Exception as exc:
             out[item["path"]] = [{"resourceType": "OperationOutcome", "issue": [{"diagnostics": str(exc)}]}]
     return out
@@ -329,23 +570,42 @@ def build_packet_record(
     plan_only: bool,
     resources_by_query: dict[str, list[dict[str, Any]]] | None,
     count: int = 100,
+    planner: str = "metadata-oracle",
+    max_total_resources: int | None = None,
+    max_packet_chars: int | None = None,
 ) -> dict[str, Any]:
-    safe = {k: v for k, v in row.items() if k not in GOLD_FIELDS}
-    intent = infer_intent(safe)
+    if planner == "question-only":
+        safe = {k: row.get(k) for k in QUESTION_ONLY_FIELDS}
+        intent = qo_infer_intent(safe)
+        kind = "a6a_question_only_packet"
+    else:
+        safe = {k: v for k, v in row.items() if k not in GOLD_FIELDS}
+        intent = infer_intent(safe)
+        kind = "a6_metadata_oracle_packet"
     plan = build_search_plan(safe, intent, count=count)
     resources_by_query = resources_by_query or {}
     resources = []
     for item in plan:
         resources.extend(resources_by_query.get(item["path"], []))
     resources = _dedupe_resources(resources)
+    bounds_stats: dict[str, Any] | None = None
+    if not plan_only and max_total_resources is not None and max_packet_chars is not None:
+        resources, bounds_stats = bound_resources(
+            resources,
+            temporal_policy=intent["temporal_policy"],
+            max_total_resources=max_total_resources,
+            max_packet_chars=max_packet_chars,
+        )
     resource_ids = [rid for rid in (_resource_id(r) for r in resources) if rid]
     packet = {
-        "kind": "a6_query_aware_packet",
+        "kind": kind,
+        "planner": intent.get("planner"),
         "plan_only": plan_only,
         "resources": [] if plan_only else resources,
         "resource_count": 0 if plan_only else len(resources),
         "source_resource_ids": [] if plan_only else sorted(resource_ids),
         "source_queries": plan,
+        "bounds": bounds_stats,
     }
     packet["sha256"] = sha256_text(_json(packet))
     return {
@@ -386,6 +646,10 @@ def write_manifest(path: Path, *, input_path: Path, output_path: Path, args: arg
             "count": args.count,
             "plan_only": args.plan_only,
             "split": args.split,
+            "planner": getattr(args, "planner", "metadata-oracle"),
+            "planner_version": QO_PLANNER_VERSION if getattr(args, "planner", "") == "question-only" else "metadata-v1",
+            "max_total_resources": getattr(args, "max_total_resources", None),
+            "max_packet_chars": getattr(args, "max_packet_chars", None),
         },
         "questions": len(records),
         "packet_hashes": {str(r["question_id"]): r["packet"]["sha256"] for r in records},
@@ -403,14 +667,36 @@ def main() -> int:
     parser.add_argument("--split", default="test")
     parser.add_argument("--count", type=int, default=100)
     parser.add_argument("--plan-only", action="store_true")
+    parser.add_argument(
+        "--planner",
+        choices=["question-only", "metadata-oracle"],
+        default="question-only",
+        help="question-only = A6a primary arm (whitelist: question/patient/assumption); metadata-oracle = ceiling arm using benchmark-construction metadata",
+    )
+    parser.add_argument("--max-total-resources", type=int, default=120)
+    parser.add_argument("--max-packet-chars", type=int, default=100_000)
     args = parser.parse_args()
 
     rows = load_rows(args.input, limit=args.limit, split=args.split)
     records = []
     for row in rows:
-        plan = build_search_plan(row, count=args.count)
-        resources = {} if args.plan_only else fetch_resources(plan)
-        records.append(build_packet_record(row, plan_only=args.plan_only, resources_by_query=resources, count=args.count))
+        if args.planner == "question-only":
+            qrow = {k: row.get(k) for k in QUESTION_ONLY_FIELDS}
+            plan = build_search_plan(qrow, qo_infer_intent(qrow), count=args.count)
+        else:
+            plan = build_search_plan(row, count=args.count)
+        resources = {} if args.plan_only else fetch_resources(plan, per_query_cap=4 * args.max_total_resources)
+        records.append(
+            build_packet_record(
+                row,
+                plan_only=args.plan_only,
+                resources_by_query=resources,
+                count=args.count,
+                planner=args.planner,
+                max_total_resources=args.max_total_resources,
+                max_packet_chars=args.max_packet_chars,
+            )
+        )
     write_jsonl(args.output, records)
     write_manifest(args.manifest, input_path=args.input, output_path=args.output, args=args, records=records)
     print(json.dumps({"output": str(args.output), "manifest": str(args.manifest), "records": len(records), "plan_only": args.plan_only}, indent=2))
