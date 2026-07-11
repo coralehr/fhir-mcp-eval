@@ -3,7 +3,9 @@ message: >-
   This repository (fhir-mcp-eval) is an experimental harness adapted from
   FHIR-AgentBench. If you use it, please cite the original FHIR-AgentBench paper
   (the "preferred-citation" below), which is the benchmark and dataset this work
-  builds on.
+  builds on. Code and documentation are CC-BY-4.0 (matching upstream); the
+  redistributed dataset CSVs derive from the MIMIC-IV Clinical Database Demo on
+  FHIR under ODbL v1.0 — see NOTICE-DATA.md.
 title: "fhir-mcp-eval: does adding MCP tools make an LLM agent more accurate? An honest FHIR/Medplum agent eval"
 abstract: >-
   An experimental harness for measuring whether exposing tools to an LLM agent

@@ -4,7 +4,7 @@
 ([FINDINGS.md](FINDINGS.md), [CODE_EXPERIMENT.md](CODE_EXPERIMENT.md),
 [TRUSTWORTHY_REGRADE.md](TRUSTWORTHY_REGRADE.md)) in the broader field. Scope: single-patient and cohort
 reads of clinical data, FHIR-centric. Sources were each fetched and fact-checked; star counts and venues are
-as of 2026-06-23 and worth re-verifying before citing externally.*
+as of 2026-06-23 (entries [35]–[43] verified 2026-07-03) and worth re-verifying before citing externally.*
 
 ---
 
@@ -30,8 +30,8 @@ navigates the graph itself.
   [13]. **MedAgentBench** (Stanford, NEJM AI 2025) is the canonical benchmark of this pattern: 300
   clinician-authored tasks against a live HAPI server [2].
 - **Against.** This is the pattern this fork's eval breaks: raw FHIR overflowed a 32k window on **64%
-  (262/409)** of single-patient questions ([FINDINGS.md](FINDINGS.md)). FHIR-AgentBench's best agent ceilings
-  at **50%**, attributed to "difficulty parsing the intricate, graph-like structure of FHIR even when the
+  (262/409)** of single-patient questions ([FINDINGS.md](FINDINGS.md)). FHIR-AgentBench's best agent — its multi-turn retriever + code-interpreter arm — ceilings
+  at **50%** (the single-turn code arm reaches 33%), attributed to "difficulty parsing the intricate, graph-like structure of FHIR even when the
   information is available" [1][19]. MedAgentBench v2 found model-authored raw HTTP FHIR "produced malformed
   requests" [3].
 
@@ -71,6 +71,17 @@ actions, not URLs. *(Deep-dive in §2 — this is the "typed tools" result.)*
   scopes** (a ceiling, not a grant) [32] and **SMART Backend Services** [33].
 - **Against.** Still single-resource raw-FHIR underneath; the win is *input-formatting*, not a query layer; no
   GROUP BY, no aggregate ABAC [16].
+- **How MCP tool surfaces are benchmarked elsewhere.** A general MCP-eval corpus now exists: MCP-Bench (28
+  live MCP servers) [38], LiveMCPBench (70 servers / 527 tools; tool retrieval and composition at scale) [39],
+  and MCP-AgentBench (33 servers / 188 tools) [40] measure tool navigation and multi-step orchestration over
+  MCP surfaces. The closest clinical prior art is **EHR-MCP** (Masayoshi et al. — an LLM doing clinical
+  retrieval through an MCP server against a real hospital EHR), which already reported that "long and
+  repetitive data risked exceeding the context window" [41] — qualitatively the same wall this fork measures.
+  The differentiation: those works observe overflow anecdotally or score tool navigation; this fork
+  manipulates the context cap as an experimental factor and quantifies the overflow (64% of single-patient
+  questions at 32k) with paired statistics. Adjacent clinical agent evals: PhysicianBench (100 real clinical
+  tasks in live EHR environments) [42] and SELSM (a training-free skill-memory framework for locally
+  deployable FHIR-task agents) [43].
 
 ### Pattern E — RAG / semantic retrieval over notes
 For **unstructured text**, retrieve the relevant passages instead of dumping the chart. Myers et al. 2025:
@@ -140,9 +151,14 @@ This fork contributes three results to the picture above (full detail in [FINDIN
 - **The celebrated code-interpreter "win" is overflow-avoidance, not reasoning** (−3.6pp at matched budget,
   p=0.18). In this FHIR-AgentBench setup, the observed code gain is overflow-driven rather than a measured
   reasoning gain.
-- **Benchmark judges need auditing:** FHIR-AgentBench's default `gpt-5-mini` judge was only **61% accurate vs
-  non-LLM numeric ground truth**, with a one-directional precision-punishing bias; multi-vote panels score
-  98–99%. Published scores across this whole landscape deserve a skeptical eye.
+- **Benchmark judges need auditing:** the small judge we ran with the benchmark's judge prompt (gpt-5-mini;
+  the benchmark's shipped default is o4-mini, which we did not measure) was only **61% accurate vs non-LLM
+  numeric ground truth**, with a one-directional precision-punishing bias; multi-vote panels score 98–99%.
+  This is a benchmark-specific ground-truth audit, not a new methodology — auditing LLM judges for agreement
+  is the MT-Bench program [35], cross-family multi-judge panels are exactly the fix PoLL proposed [36], and
+  the Agentic Benchmark Checklist found flawed graders can mis-estimate agent-benchmark performance by up to
+  ~100% in relative terms [37]. Consistent with that literature, published scores across this whole landscape
+  deserve a skeptical eye.
 
 ---
 
@@ -182,7 +198,7 @@ context or a code sandbox. Two honest caveats keep this an *open direction*, not
 [1] FHIR-AgentBench — Lee et al., ML4H 2025, arXiv 2509.19319.
 [2] MedAgentBench — Stanford, NEJM AI 2025, arXiv 2501.14654.
 [3] MedAgentBench v2 — Chen et al., PSB 2026 (bounded tools+calculator+finish+prompt+memory, 70→91→98% on GPT-4.1; only memory isolated). Code: github.com/ericoericochen/medagentbenchv2.
-[4] FHIRPath-QA — arXiv 2026 (text-to-FHIRPath; 391× fewer tokens; ≤42% un-tuned synthesis).
+[4] FHIRPath-QA — Frew et al., arXiv 2602.23479 (text-to-FHIRPath; 391× fewer tokens; ≤42% un-tuned synthesis).
 [5] EHRAgent — EMNLP 2024 (code-as-action over relational EHRs), arXiv 2401.07128.
 [6] EHRSQL — NeurIPS 2022 D&B, arXiv 2301.07695.
 [7] EHRNoteQA — NeurIPS 2024 D&B, arXiv 2402.16040.
@@ -196,7 +212,17 @@ context or a code sandbox. Two honest caveats keep this an *open direction*, not
 [16] wso2/fhir-mcp-server ; [17] the-momentum/fhir-mcp-server ; [18] jmandel/health-record-mcp ; [22] rkirkendall/medplum-mcp.
 [19] glee4810/FHIR-AgentBench — github.com/glee4810/FHIR-AgentBench (upstream of this fork).
 [20] Canvas Medical SDK Data module — docs.canvasmedical.com/sdk/data/.
+[21] Medplum MCP server docs — medplum.com/docs/ai/mcp (the single generic `fhir-request` tool: method/url/body).
 [23] Particle Health — docs.particlehealth.com ; [24] Health Gorilla Patient360 ; [26] Metriport ; [28] Innovaccer Gravity.
 [27] MedBeads — arXiv 2026 (theory only).
 [31] FHIRPath — ANSI/HL7 Normative, hl7.org/fhirpath/.
 [32] SMART App Launch v2.2.0 scopes ; [33] SMART Backend Services ; [34] FHIR Bulk Data $export v3.0.0.
+[35] Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena — Zheng et al., NeurIPS 2023 D&B, arXiv 2306.05685.
+[36] Replacing Judges with Juries: Evaluating LLM Generations with a Panel of Diverse Models (PoLL) — Verga et al. 2024, arXiv 2404.18796.
+[37] Establishing Best Practices for Building Rigorous Agentic Benchmarks — Zhu et al. 2025, arXiv 2507.02825.
+[38] MCP-Bench: Benchmarking Tool-Using LLM Agents with Complex Real-World Tasks via MCP Servers — Wang et al. 2025, arXiv 2508.20453.
+[39] LiveMCPBench: Can Agents Navigate an Ocean of MCP Tools? — Mo et al. 2025, arXiv 2508.01780.
+[40] MCP-AgentBench: Evaluating Real-World Language Agent Performance with MCP-Mediated Tools — Guo et al. 2025, arXiv 2509.09734.
+[41] EHR-MCP: Real-world Evaluation of Clinical Information Retrieval by Large Language Models via Model Context Protocol — Masayoshi et al. 2025, arXiv 2509.15957.
+[42] PhysicianBench: Evaluating LLM Agents in Real-World EHR Environments — Liu et al. 2026, arXiv 2605.02240.
+[43] SELSM: Empowering Locally Deployable Medical Agent via State Enhanced Logical Skills for FHIR-based Clinical Tasks — Yang et al. 2026, arXiv 2603.06902.

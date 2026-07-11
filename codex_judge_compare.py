@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Aggregate the independent codex/GPT judge panel and triangulate it against the Claude panel and the
-benchmark's gpt-5-mini judge. The point: show the trustworthy conclusion (matched-budget NULL + overflow
+fork's gpt-5-mini judge run (benchmark judge prompt; the benchmark's shipped default is o4-mini). The point: show the trustworthy conclusion (matched-budget NULL + overflow
 architecture effect) is INDEPENDENT of which judge model family you trust.
 
 Inputs:

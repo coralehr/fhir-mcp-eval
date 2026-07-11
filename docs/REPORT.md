@@ -4,6 +4,10 @@
 
 *Substrate: FHIR-AgentBench (MIMIC-IV-on-FHIR demo, single-patient retrieval QA). Models: Claude Opus 4.8, GPT-5.5. Judge: gpt-5-mini LLM-as-judge (0/1 correctness). Paired stats: McNemar exact + paired bootstrap.*
 
+*Baseline caveat: the "single generic tool" arm throughout is a **description-matched local FastMCP
+re-implementation** of Medplum's shipped `fhir-request` tool (registered as `fhir_request`, proxying the same
+FHIR REST surface) — **not** the platform's production MCP tool path. See the README harness table.*
+
 ---
 
 ## 1. Bottom line
@@ -27,8 +31,9 @@ This is a **null result, and a clean one.** Across two frontier models, a catalo
 
 > **Prior art — the headline null is a replication, and we say so.** The parent FHIR-AgentBench paper's
 > *own* ablation already found specialized retrieval does **not** beat generic: o4-mini single-turn,
-> **generic FHIR Query Generator 0.25 vs specialized Retriever 0.22**, with the lift to the 0.50 ceiling
-> coming from a **code interpreter**, not specialization ([arXiv 2509.19319](https://arxiv.org/abs/2509.19319),
+> **generic FHIR Query Generator 0.25 vs specialized Retriever 0.22**, with the lift to the paper's 0.50 ceiling
+> coming from a **code interpreter** in their **multi-turn** retriever+code arm (their single-turn code arm
+> reaches 0.33), not specialization ([arXiv 2509.19319](https://arxiv.org/abs/2509.19319),
 > Table 3; the paper also reports ~3M-token full records and that "naive loading consistently failed" at
 > the fixed 32k cap). So the generic-vs-typed question was **already answered null in the literature we
 > forked.** Our result corroborates it on a different tool surface (an MCP server's single generic tool).
@@ -60,7 +65,7 @@ This is a **null result, and a clean one.** Across two frontier models, a catalo
 
 **RUN-1 (Opus, rigorous):** Re-ran the same comparison with a cap-factorial, paired McNemar/bootstrap, a coached-generic control, and answerable-set accounting. The +11pp **decomposed into nothing**: the structure-lift attributable to tool *design* was +8pp with a 95% CI of [-0.12, +0.28] and p=0.69 — indistinguishable from zero. Coaching the generic did **literally nothing** (Δ0.00). The lift that *was* real came from the **context cap** (p=0.039 / p=0.0005), not the tools.
 
-**RUN-2 (GPT-5.5, nested staircase):** Re-ran across 1→2→4→5→6 tools on a second, stronger model. The curve is **flat and noisy (0.70–0.83)**, every paired step is null, and the 1-tool generic (0.80) is **never beaten** by the 5-tool catalog (0.767). The effect is model-specific *and* artifact-driven — it survives on neither model.
+**RUN-2 (GPT-5.5, nested staircase):** Re-ran across 1→2→4→5→6 tools on a second, stronger model. The curve is **flat and noisy (0.70–0.83)**, every paired step is null, and the 1-tool generic (0.80) is **statistically indistinguishable from every larger catalog** (0.70–0.83; every paired step null — it beats the 5-tool catalog's 0.767 and trails the 6-tool arm's 0.833, neither significantly). The effect is model-specific *and* artifact-driven — it survives on neither model.
 
 > An independent judge-free deterministic re-score of the GPT-5.5 raw answers (strict string/number match, see §9.1) reproduces the **flat *shape*** — control (1 tool) ≈ arm_ref (6 tools) — but it floors **~20pp below** the LLM judge (deterministic 0.55–0.61 vs judge 0.70–0.83), because strict matching misses semantic equivalents (e.g. `'urgent'=='UR'`). So the *null/flat conclusion* is not an LLM-judge artifact; only the absolute level is judge-dependent. **Reproducibility note (updated):** the GPT-5.5 LLM-judge accuracies in §3 were originally lost (the scoring run was clobbered) but have since been **recovered** by re-judging the surviving committed raw answers — the per-question labels are now frozen in `medplum-eval/results/*.judged.json` and the aggregates in `_scores.csv`, so the GPT side is recomputable. Only the **Opus** numbers remain reconstructed (no committed raw data).
 
@@ -177,7 +182,7 @@ That is true, specific, and useful to a Medplum maintainer — "I disproved my o
 
 ## 8. Limitations (state these loudly and first)
 
-- **Underpowered.** n=25–30/cell. An 8pp effect cannot be resolved at this sample size (MDE would need ~n≥150). The honest claim is "no effect *detectable at this power*; the effect, if any, is ≤8pp and dwarfed by the cap effect" — **not** "tools definitively don't help."
+- **Underpowered.** n=25–30/cell. An 8pp effect cannot be resolved at this sample size (MDE would need ~n≥150). The honest claim is "no effect *detectable at this power*; the observed estimate is +8pp (95% CI −12…+28pp); effects below the MDE are unresolved" — **not** "tools definitively don't help."
 - **8-tool endpoint incomplete.** All 30 arm_full8 records are quota errors; the 8-tool agent never ran. The strong form of the diminishing-returns hypothesis is untestable. Disclose this before anyone finds the RateLimitErrors.
 - **Single benchmark, single-patient.** FHIR-AgentBench only, MIMIC-IV-on-FHIR demo (100 patients), single-patient retrieval QA. No cohort/aggregate coverage.
 - **Single-attempt accuracy — no reliability metric.** Each question is scored once; we report no τ-bench-style `pass^k` reliability ([2406.12045](https://arxiv.org/abs/2406.12045)). With this n, run-to-run variance could rival the between-arm deltas we call null.

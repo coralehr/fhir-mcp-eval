@@ -2,6 +2,10 @@
 
 Issue-ready follow-ups for turning this fork from a strong artifact into a cleaner public benchmark.
 
+**Disclosure:** Bonfire ([bonfiredb.dev](https://bonfiredb.dev)) is the author's product; the planned A6/A7
+arms (referenced in the README) and several follow-ups here test its design hypotheses. We pre-commit to
+publishing results either way.
+
 ## 1. Run the query-aware in-context projection arm
 
 **Question:** Can an in-context projection layer match the sandbox when it selects data by question intent?
@@ -78,3 +82,21 @@ Issue-ready follow-ups for turning this fork from a strong artifact into a clean
 **Acceptance:**
 - `python decompose_a0prime_failures.py` regenerates the numbers in `FINAL_REPORT.md`.
 - The report cites the generated artifact directly.
+
+## 7. Judge re-measurement (before re-asserting the judge-reliability headline)
+
+**Question:** Does the 61% single-judge figure survive an on-spec, apples-to-apples re-measurement — and how
+does the benchmark's actual shipped default judge score?
+
+**Scope:**
+- Run the upstream shipped default judge (o4-mini) through `judge_leaderboard.py` on the same 111 numeric
+  arm-answers (we never measured it).
+- Re-run gpt-5-mini on-spec: include the question text, as the benchmark's own pipeline does — our original
+  invocation omitted it.
+- Equalize (or ablate) the numeric-tolerance coaching and the side-by-side/both-arms prompt format between
+  single judges and panels, so 61% vs 98–99% is not confounded by invocation differences.
+
+**Acceptance:**
+- An updated judge leaderboard with o4-mini and on-spec gpt-5-mini rows.
+- The judge-reliability headline in README/FINDINGS/TRUSTWORTHY_REGRADE re-asserted or softened to match the
+  measured numbers.

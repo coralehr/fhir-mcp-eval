@@ -8,6 +8,9 @@
 > The harness pattern generalizes to other MCP tool surfaces; the empirical lessons are scoped to this FHIR
 > case study. Treat the numbers as preliminary; see
 > [Reproducibility status](#where-this-was-actually-run--reproducibility-status).
+>
+> **Disclosure:** Bonfire ([bonfiredb.dev](https://bonfiredb.dev)) is the author's product; the planned
+> A6/A7 arms test its design hypotheses. We pre-commit to publishing results either way.
 
 ## TL;DR
 
@@ -18,9 +21,11 @@ apparent win is a context-overflow artifact (a null at matched budget), not a re
 
 - **Bigger / purpose-built tool catalog → NULL.** No detectable advantage over one generic `fhir-request`
   on either **Opus 4.8** or **GPT-5.5** (Opus structure-lift p=0.69; GPT-5.5 curve flat, 1 tool never
-  beaten). The early **+11pp** (≈39%→50%) was a **context-budget confound**, not a tool win — and it
+  significantly beaten; underpowered for small effects — MDE ~34–46pp at n=25–30/cell). The early **+11pp**
+  (≈39%→50%) was a **context-budget confound**, not a tool win — and it
   replicates the parent paper's own ablation.
-- **Payload shaping → cost-only** (Δ0.00). **Reasoning effort medium→high → NULL** (0/30 answer flips).
+- **Payload shaping → cost-only** (Δ0.00). **Reasoning effort medium→high → NULL** (0/30 judged-correctness flips;
+  95% upper bound ≈12% flip rate).
 - **Code interpreter → overflow-avoidance, not a reasoning win.** Under **trustworthy grading**
   (deterministic numeric + a 3-Claude-judge panel, cross-checked by an independent codex/GPT panel and
   validated against non-LLM ground truth), the code arm shows **no significant benefit where the no-code
@@ -31,18 +36,28 @@ apparent win is a context-overflow artifact (a null at matched budget), not a re
   and the code agent sidesteps it via a sandbox. **The bottleneck is *getting bounded data into context* —
   not tool design, payload, thinking time, or compute.** A code path helps only because sandboxing the
   payload dodges the overflow; payload projection plausibly pulls the same lever.
-- **⚠️ The benchmark's default judge is unreliable — and we quantified it.** Against **non-LLM ground truth**
-  on the 111 numeric arm-answers (97 numeric-gold questions), gpt-5-mini is **61% accurate** (43 false-negatives, a one-directional
-  precision-punishing bias), while 3-vote panels score **98–99%** (Claude 98.2%, codex/GPT 99.1%). That bias
+- **⚠️ A single small LLM judge is unreliable here — and we quantified it.** Against **non-LLM ground truth**
+  on the 111 numeric arm-answers (97 numeric-gold questions), the small judge we ran with the benchmark's judge
+  prompt (gpt-5-mini; the benchmark's shipped default is o4-mini, which we did not measure) is **61% accurate**
+  (43 false-negatives, a one-directional
+  precision-punishing bias), while 3-vote panels score **98–99%** (Claude 98.2%, codex/GPT 99.1%). Measurement
+  caveat: our gpt-5-mini invocation omitted the question text while the panels received the question plus a
+  numeric-tolerance instruction and judged both arms side-by-side, so 61% measures *our configuration* of a
+  single small judge, and a fair re-measurement could move it. That bias
   manufactured an earlier spurious "code HURTS −8.6pp." Always audit your LLM judge against ground truth and
   use a panel. See [TRUSTWORTHY_REGRADE.md](docs/TRUSTWORTHY_REGRADE.md).
 - **Contributions:** (1) the *correct decomposition* — the code "win" is a context-overflow artifact, not a
   compute gain; the same confound faked the tool-catalog "win"; (2) a **judge-reliability finding** — the
-  default judge is 61% accurate vs ground truth; a multi-vote panel (two model families, 97% mutual
+  small judge we ran with the benchmark's judge prompt (gpt-5-mini) is 61% accurate vs ground truth; a
+  multi-vote panel (two model families, 97% mutual
   agreement) mitigates it; (3) the grading methodology that also caught a boolean Yes/No grading bug in our own
   first fix; (4) the cap-factorial + paired-stats harness that caught the confound twice.
-- ⚠️ **Reproducibility is split.** Frozen labels/summaries for the trustworthy re-grade are committed, but exact
-  answer-level recomputation requires raw answer dumps that are large and gitignored. The new A0′ table is
+- ⚠️ **Reproducibility is split.** For the trustworthy re-grade, the committed artifacts are the aggregate
+  summary (`medplum-eval/full409_summary.json`) and a durable per-question answer backup
+  (`medplum-eval/full409_answers.json`); the per-question panel/deterministic labels live under gitignored
+  `runs/` and are **not** committed — regenerating them requires the large gitignored raw answer dumps plus
+  judge-panel LLM calls. The GPT-5.5 tool-curve per-question labels *are* committed
+  (`medplum-eval/results/*.judged.json` + `_scores.csv`/`_paired.json`). The new A0′ table is
   locally recomputable when those dumps are present; [FINAL_REPORT.md](docs/FINAL_REPORT.md) records the exact scope.
   **Opus tool-ablation numbers are not** (run on torn-down EC2). See
   [Reproducibility status](#where-this-was-actually-run--reproducibility-status).
@@ -78,6 +93,10 @@ come from the per-question `usage` objects in the raw answer dumps
 `runs/full409/multi_turn_code_resource.json` — these raw dumps are gitignored and not committed; see
 [Reproducibility status](#where-this-was-actually-run--reproducibility-status)) and use the model-pricing table available to LiteLLM at run time.
 They exclude EC2/Docker/Colima infrastructure and do **not** fully include the ad hoc judge-panel/red-team spend.
+One reconciliation note: the committed `medplum-eval/full409_summary.json` records `"cost_total_agent_usd": 34.38`
+for the A0/A5 agent passes — that is the figure the run-time tracker had logged when the summary was written,
+whereas the ledger below is a later recomputation from the per-question `usage` objects; the two figures cover
+different accounting scopes, and this README ledger is the authoritative one for total agent spend.
 
 | Arm | Questions | Prompt tokens | Completion tokens | Total tokens | LLM calls | Tracked cost | Cost / question |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -152,7 +171,8 @@ plenty. Full write-up + tables + paired stats: **[REPORT.md](docs/REPORT.md)**.
 > **⚠️ This is a replication, not a discovery — and we say so up front.** The parent benchmark's *own*
 > paper already ran a generic-vs-specialized retrieval ablation and found specialization does **not** help:
 > o4-mini single-turn, **generic FHIR Query Generator 0.25 vs specialized Retriever 0.22**, with the lift
-> to the 0.50 ceiling coming from a **code interpreter**, not specialization
+> to the paper's 0.50 ceiling coming from a **code interpreter** in their **multi-turn** retriever+code arm
+> (their single-turn code arm reaches 0.33), not specialization
 > ([arXiv 2509.19319](https://arxiv.org/abs/2509.19319), Table 3). Our null **corroborates their
 > intra-paper result** on a different tool surface (an MCP server's single generic tool) — what we add is
 > the *method* they didn't run: paired stats + a **manipulated context-cap factorial** (they held the cap
@@ -260,8 +280,13 @@ since been torn down. Be precise about what survives:
 - The Docker **boot path** (steps 1–2): containers up, Medplum healthy, bare-PKCE token, FHIR read/write
   round-trip, MCP advertises the generic `fhir-request` tool — smoke-verified on macOS
   ([`medplum-eval-bundle/SMOKE_TEST.md`](medplum-eval-bundle/SMOKE_TEST.md)).
-- The **GPT-5.5 summaries and frozen labels**: deterministic re-score outputs, overflow taxonomy, LLM-judge
-  accuracies, paired stats, and panel labels are committed as derived artifacts. Exact answer-level
+- The **GPT-5.5 tool-curve summaries and frozen labels**: deterministic re-score outputs, overflow taxonomy,
+  LLM-judge accuracies, paired stats, and per-question judge labels are committed as derived artifacts
+  (`medplum-eval/results/*.judged.json` + `_scores.csv`/`_paired.json`). For the **trustworthy re-grade**, the
+  committed artifacts are the aggregate summary (`medplum-eval/full409_summary.json`) and the per-question
+  answer backup (`medplum-eval/full409_answers.json`); the per-question panel/deterministic labels
+  (`runs/full409/det_labels.json`, `panel_votes*.json`, codex votes, `human_review.csv`) are local-only and
+  gitignored. Exact answer-level
   recomputation still needs the raw answer dumps when a script reads them directly.
 
 **NOT reproducible (lost with a torn-down box):**
@@ -335,6 +360,20 @@ medplum-eval/                # design docs, results data, robustness output
 
 The original benchmark's code (dataset construction, the upstream agent implementations, `evaluation_metrics.py`,
 `fhir_client.py`, etc.) is unchanged from upstream and documented in their materials.
+
+## Data licensing
+
+The committed evaluation data (`final_dataset/*.csv` and derived answer artifacts such as
+`medplum-eval/full409_answers.json`) is derived from the
+[MIMIC-IV Clinical Database Demo on FHIR](https://physionet.org/content/mimic-iv-fhir-demo/2.1.0/)
+(PhysioNet, open access — the fully de-identified 100-patient demo, not credentialed MIMIC-IV),
+which is distributed under the
+[Open Data Commons Open Database License (ODbL) v1.0](https://opendatacommons.org/licenses/odbl/1-0/).
+The same question+answer files are published upstream by the benchmark authors in
+[glee4810/FHIR-AgentBench](https://github.com/glee4810/FHIR-AgentBench). This repo's
+[LICENSE](LICENSE) (CC BY 4.0, matching upstream) covers the fork's code and documentation; the
+ODbL notice and the PhysioNet-required citations for the data are in
+[NOTICE-DATA.md](NOTICE-DATA.md).
 
 ## Attribution & citation
 

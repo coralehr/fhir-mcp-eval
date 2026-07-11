@@ -38,8 +38,9 @@ are wrong or beside the point for this setup.
 - **A0′ vs A0 (projection vs raw): −0.7pp, McNemar p=1.00, cluster CI [−4.9, +3.2] — a clean null.** Projection
   gives no accuracy benefit when the record already fits.
 - **A5 vs A0 (code vs raw): −6.1pp, p=0.0225, cluster CI [−11.1, −1.4] — code is significantly *worse*** (a
-  reliability tax from buggy generated code; 11 breaks vs 2 fixes; borderline after Holm correction over 3
-  pairs, and rests on 13 discordant pairs).
+  reliability tax from buggy generated code; 11 breaks vs 2 fixes; fragile — it does **not** survive Holm
+  correction over the 3 predefined pairs (p_holm≈0.068), leave-one-patient-out lifts p to 0.065, and it rests
+  on 13 discordant pairs; see [TRUSTWORTHY_REGRADE.md](TRUSTWORTHY_REGRADE.md)).
 - So **no arm reasons *better* than raw** when the data fits; projection is tied, code is slightly worse. This
   is **not** an "all arms equal" claim. (The cleanest matched-budget null — questions where *both* arms
   produced a real answer, n=140 — is also a null: A0 71.4% vs A5 67.9%, −3.6pp, p=0.18; see
@@ -81,7 +82,8 @@ configuration*; it is a floor, not a ceiling for projection as a class.
 
 1. **The celebrated "+11pp code interpreter win" was a context-overflow + harness-bug artifact** (our scorer
    skipped the benchmark's error pre-filter; the pooled mix is dominated by the overflow stratum).
-2. **The benchmark's default judge (gpt-5-mini) is unreliable** — 61% accurate vs non-LLM numeric ground truth,
+2. **The small judge we ran with the benchmark's judge prompt (gpt-5-mini; the benchmark's shipped default is
+   o4-mini, which we did not measure) is unreliable** — 61% accurate vs non-LLM numeric ground truth,
    one-directional precision bias (it manufactured a phantom "code HURTS −8.6pp"). Replaced with deterministic
    numeric grading + a 3-Claude-judge panel, cross-checked by an independent codex/GPT panel (97% mutual
    agreement; both panels 98–99% vs ground truth).
@@ -97,7 +99,8 @@ configuration*; it is a floor, not a ceiling for projection as a class.
 - The lever is **query-aware data selection**; a sandbox provides it, and a smart in-context projection plausibly
   could too (heuristic ceiling near the sandbox); **blunt query-blind projection is insufficient** (recovers ~⅓ under
   cap-50).
-- The benchmark's default judge is unreliable; a multi-vote panel mitigates the judge-family dependence.
+- A single small judge run with the benchmark's judge prompt (gpt-5-mini, as we configured it) is unreliable;
+  a multi-vote panel mitigates the judge-family dependence.
 
 **Do NOT claim:** "typed tools / projections make agents reason better" (no detected matched-budget benefit);
 "projection alone solves it" (only 34% under blunt cap); "a sandbox is *required*" (a query-aware in-context
@@ -128,7 +131,9 @@ was isolated from its prompt/routing; that panel labels are human ground truth; 
 
 ## Reproducibility
 
-The branch commits the final reports, frozen summaries, A0′ panel votes, and `_strata.json`. Exact answer-level
+The repo commits the final reports and frozen summaries (`medplum-eval/full409_summary.json`,
+`medplum-eval/full409_answers.json`); the A0′ panel votes and `_strata.json` are generated locally under
+gitignored `runs/` and are **not** committed in this repo. Exact answer-level
 recomputation of the A0/A5/A0′ table still requires the local raw answer dumps
 (`runs/full409/multi_turn_{resource,code_resource}.json` and
 `runs/a0prime/multi_turn_projected_resource.json`), which are large and gitignored. `a0prime_verdict.py`
@@ -140,7 +145,8 @@ summaries rather than regenerating them from raw answers. Agent reruns need the 
 
 1. The correct decomposition: the code "win" is a context-budget artifact, not compute — the same confound
    faked the tool-catalog "win."
-2. The judge-reliability finding: the benchmark's default judge is 61% accurate; a multi-vote panel mitigates it.
+2. The judge-reliability finding: the small judge we ran with the benchmark's judge prompt (gpt-5-mini; the
+   shipped default, o4-mini, was not measured) is 61% accurate; a multi-vote panel mitigates it.
 3. The A0′ control: overflow-avoidance is the lever, *how* you avoid it matters, the likely lever is
    **query-aware selection** (not out-of-context compute exclusively), and blunt query-blind projection recovers
    only a third.
