@@ -78,6 +78,21 @@ QO_SCAFFOLD_WORDS = {
 # packet (mirrors the A0' strip set, adding `contained`).
 PROJECTION_DROP_KEYS = ("text", "meta", "extension", "modifierExtension", "contained")
 
+# A0' (blunt query-blind projection) as a frozen packet: every gold resource
+# type, no question-derived filters, per-type recency cap. The contemporaneous
+# control arm required by the A6a pre-registration (review finding 6).
+# Medication and Location have no `patient` search param; they enter packets
+# via _include on MedicationRequest and Encounter respectively.
+BLUNT_RESOURCE_TYPES = (
+    "Patient",
+    "Encounter",
+    "Observation",
+    "MedicationRequest",
+    "Procedure",
+    "Condition",
+)
+BLUNT_PER_TYPE_CAP = 50
+
 TABLE_TO_RESOURCES = {
     "admissions": ["Encounter"],
     "chartevents": ["Observation"],
@@ -345,6 +360,20 @@ def qo_temporal_policy(question: str) -> str:
     return "recent"
 
 
+def blunt_infer_intent(row: dict[str, Any]) -> dict[str, Any]:
+    """A0' intent: query-blind — all gold types, no terms, no windows."""
+    qrow = {k: row.get(k) for k in QUESTION_ONLY_FIELDS}
+    current_date = current_date_from_assumption(qrow.get("assumption"))
+    return {
+        "planner": "blunt-projection-v1",
+        "resource_types": list(BLUNT_RESOURCE_TYPES),
+        "search_terms": [],
+        "date_windows": [],
+        "temporal_policy": "recent",
+        "current_date": current_date.isoformat() if current_date else None,
+    }
+
+
 def qo_infer_intent(row: dict[str, Any]) -> dict[str, Any]:
     qrow = {k: row.get(k) for k in QUESTION_ONLY_FIELDS}
     question = str(qrow.get("question") or "")
@@ -405,6 +434,9 @@ def _query_for(resource_type: str, row: dict[str, Any], intent: dict[str, Any], 
         parts.append(f"code:text={urllib.parse.quote(terms[0])}")
     if resource_type == "MedicationRequest":
         parts.append("_include=MedicationRequest:medication")
+    if resource_type == "Encounter":
+        # Location has no patient search param; ward/careunit evidence rides in here.
+        parts.append("_include=Encounter:location")
     # NOTE: no Encounter class filter. Measured on the MIMIC-IV-on-FHIR demo
     # (2026-07-11 dev pilot): encounters are not coded class=IMP, so the old
     # `class=IMP` ICU heuristic zeroed out every ICU-phrased Encounter query.
@@ -471,6 +503,30 @@ def _resource_clinical_date(resource: dict[str, Any]) -> str:
 
 def project_resource(resource: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in resource.items() if k not in PROJECTION_DROP_KEYS}
+
+
+def blunt_bound(resources: list[dict[str, Any]], *, per_type_cap: int = BLUNT_PER_TYPE_CAP) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """A0' packet discipline: strip fields, keep the `per_type_cap` most recent
+    of each resource type. No global char cap — that is the historical A0'
+    definition, kept faithful; overflow risk is A0''s own measured property."""
+    projected = [project_resource(r) for r in resources]
+    by_type: dict[str, list[dict[str, Any]]] = {}
+    for r in projected:
+        by_type.setdefault(str(r.get("resourceType") or "Unknown"), []).append(r)
+    selected: list[dict[str, Any]] = []
+    for rtype in sorted(by_type):
+        items = sorted(by_type[rtype], key=_resource_clinical_date)
+        selected.extend(items[-per_type_cap:])
+    stats = {
+        "input_count": len(resources),
+        "kept_count": len(selected),
+        "dropped_count": len(resources) - len(selected),
+        "char_count": sum(len(_json(r)) for r in selected),
+        "char_budget_hit": False,
+        "per_type_cap": per_type_cap,
+        "temporal_policy": "recent",
+    }
+    return selected, stats
 
 
 def bound_resources(
@@ -618,6 +674,10 @@ def build_packet_record(
         safe = {k: row.get(k) for k in QUESTION_ONLY_FIELDS}
         intent = qo_infer_intent(safe)
         kind = "a6a_question_only_packet"
+    elif planner == "blunt-projection":
+        safe = {k: row.get(k) for k in QUESTION_ONLY_FIELDS}
+        intent = blunt_infer_intent(safe)
+        kind = "a0prime_blunt_packet"
     else:
         safe = {k: v for k, v in row.items() if k not in GOLD_FIELDS}
         intent = infer_intent(safe)
@@ -631,7 +691,9 @@ def build_packet_record(
         resources.extend(resources_by_query.get(item["path"], []))
     resources = _dedupe_resources(resources)
     bounds_stats: dict[str, Any] | None = None
-    if not plan_only and max_total_resources is not None and max_packet_chars is not None:
+    if not plan_only and planner == "blunt-projection":
+        resources, bounds_stats = blunt_bound(resources)
+    elif not plan_only and max_total_resources is not None and max_packet_chars is not None:
         resources, bounds_stats = bound_resources(
             resources,
             temporal_policy=intent["temporal_policy"],
@@ -711,9 +773,9 @@ def main() -> int:
     parser.add_argument("--plan-only", action="store_true")
     parser.add_argument(
         "--planner",
-        choices=["question-only", "metadata-oracle"],
+        choices=["question-only", "metadata-oracle", "blunt-projection"],
         default="question-only",
-        help="question-only = A6a primary arm (whitelist: question/patient/assumption); metadata-oracle = ceiling arm using benchmark-construction metadata",
+        help="question-only = A6a primary arm (whitelist: question/patient/assumption); metadata-oracle = ceiling arm using benchmark-construction metadata; blunt-projection = A0' control (query-blind, per-type recency cap)",
     )
     parser.add_argument("--max-total-resources", type=int, default=120)
     parser.add_argument("--max-packet-chars", type=int, default=100_000)
@@ -725,9 +787,13 @@ def main() -> int:
         if args.planner == "question-only":
             qrow = {k: row.get(k) for k in QUESTION_ONLY_FIELDS}
             plan = build_search_plan(qrow, qo_infer_intent(qrow), count=args.count)
+        elif args.planner == "blunt-projection":
+            qrow = {k: row.get(k) for k in QUESTION_ONLY_FIELDS}
+            plan = build_search_plan(qrow, blunt_infer_intent(qrow), count=args.count)
         else:
             plan = build_search_plan(row, count=args.count)
-        resources = {} if args.plan_only else fetch_resources(plan, per_query_cap=4 * args.max_total_resources)
+        per_query_cap = 4 * BLUNT_PER_TYPE_CAP if args.planner == "blunt-projection" else 4 * args.max_total_resources
+        resources = {} if args.plan_only else fetch_resources(plan, per_query_cap=per_query_cap)
         records.append(
             build_packet_record(
                 row,
