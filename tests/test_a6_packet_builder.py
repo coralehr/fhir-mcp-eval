@@ -174,5 +174,33 @@ class BoundsTests(unittest.TestCase):
         self.assertTrue(any(r.get("resourceType") == "Patient" for r in kept))
 
 
+class RelaxationTests(unittest.TestCase):
+    def test_relax_drops_code_text_first(self):
+        path = "Observation?patient=p1&_count=100&_sort=-date&date=ge2100-01-01&code:text=minimum%20respiratory%20rate"
+        relaxed = a6.relax_query(path)
+        self.assertNotIn("code:text", relaxed)
+        self.assertIn("date=ge2100-01-01", relaxed)
+
+    def test_relax_drops_dates_second_then_stops(self):
+        path = "Observation?patient=p1&_count=100&_sort=-date&date=ge2100-01-01&date=le2100-12-31"
+        relaxed = a6.relax_query(path)
+        self.assertNotIn("date=ge", relaxed)
+        self.assertNotIn("date=le", relaxed)
+        self.assertIsNone(a6.relax_query(relaxed))
+
+    def test_no_encounter_class_filter(self):
+        row = {
+            "question_id": "q20",
+            "split": "valid",
+            "question": "how many days was patient 1 in the icu during the last stay?",
+            "assumption": "",
+            "patient_fhir_id": "p20",
+        }
+        intent = a6.qo_infer_intent(row)
+        plan = a6.build_search_plan(row, intent, count=50)
+        for item in plan:
+            self.assertNotIn("class=", item["path"])
+
+
 if __name__ == "__main__":
     unittest.main()
