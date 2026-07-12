@@ -195,7 +195,25 @@ run-2 contrast is reported alongside run 1 regardless of direction or
 significance. Prediction (falsifiable, non-binding): both arms rise, the
 contrast persists. Run 2 outputs live under `runs/codex-*-test409-run2/`.
 
-**Interim-look disclosure (2026-07-11 ~20:45, run 86% complete).** At the
+**Amendment 3 (2026-07-12, substrate-uniformity repair + model pinning).**
+Post-hoc audit found the harness inherited each machine's codex config
+default, so run 2 mixed models mid-run: ~80 questions/arm on gpt-5.6-sol@high
+(laptop), the remainder on gpt-5.5@xhigh (mini). Within-pair contrasts stayed
+model-consistent (the driver interleaves arms), but pooled accuracies and the
+run-1-vs-run-2 delta were confounded. Repair, decided after an interim
+deterministic-subset look at the mixed run (disclosed; per-question outcomes
+not consulted): (a) every future invocation pins `--model gpt-5.6-sol
+--reasoning-effort high` (recorded in run manifests); (b) the mini-answered
+gpt-5.5@xhigh portions of run 2 and all of QT-1 are re-run under the pin;
+(c) the gpt-5.5@xhigh answer sets are ARCHIVED intact and labeled an
+exploratory second-model replication — reported, never deleted; (d) panel
+grading moves to the mini account with the judge pinned to gpt-5.6-sol@high
+(same judge model as runs 1's panel; account change disclosed). A
+model×effort generality grid (gpt-5.6 luna/terra/sol × medium/high on a
+seeded 100-question paired subset) is planned as a separate exploratory
+stage.
+
+**Interim-look disclosure**Interim-look disclosure (2026-07-11 ~20:45, run 86% complete).** At the
 investigator's request, a deterministic-subset, answered-only interim look was
 computed (111 paired numeric/unanswerable golds; all boolean/categorical golds
 still panel-pending): A6a 56.8% vs A0' 40.5%, discordants 19 vs 1. No design,
