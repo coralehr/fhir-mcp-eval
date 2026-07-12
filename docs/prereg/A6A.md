@@ -180,6 +180,21 @@ Dev-slice tuning results, disclosed in full:
 Confirmatory discipline unchanged: one run, untouched 409, frozen planner and
 bounds as of the freeze commit recorded in the run manifests.
 
+**Amendment 2 (2026-07-12, post-run-1, PRE-DECLARED before run 2 starts).**
+The artifact review (docs/A6A_ARTIFACT_REVIEW.md) confirmed a harness defect:
+the benchmark's per-question `assumption` (reference "now" + retrieval hints)
+never reached the answering prompt (0/818 prompts). Both arms were affected
+identically, so run 1's paired contrast is unbiased and remains the
+registered primary result. **Run 2** is hereby pre-declared: identical
+packets (same SHA-256 manifests), identical arms and schema, ONE change —
+the prompt now includes the assumption block. Grading: deterministic rules
+det-v2 (verbalized-sign equivalence added; disclosed) + the same 3-vote
+panel with two clarified rules (date-only placeholder timestamps,
+verbalized signs). Purpose: measure the absolute-level correction; the
+run-2 contrast is reported alongside run 1 regardless of direction or
+significance. Prediction (falsifiable, non-binding): both arms rise, the
+contrast persists. Run 2 outputs live under `runs/codex-*-test409-run2/`.
+
 **Interim-look disclosure (2026-07-11 ~20:45, run 86% complete).** At the
 investigator's request, a deterministic-subset, answered-only interim look was
 computed (111 paired numeric/unanswerable golds; all boolean/categorical golds

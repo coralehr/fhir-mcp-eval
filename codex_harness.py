@@ -120,6 +120,14 @@ def build_prompt(
         str(question),
     ]
 
+    # The benchmark's per-question assumption carries the reference "now"
+    # (MIMIC dates are future-shifted; relative-date questions are
+    # unanswerable without it) and sometimes retrieval hints. Omitting it was
+    # the run-1 harness defect documented in docs/A6A_ARTIFACT_REVIEW.md.
+    assumption = str(safe_row.get("assumption") or "").strip()
+    if assumption and assumption.lower() != "nan":
+        lines.extend(["", "Assumption (authoritative for any relative dates):", assumption])
+
     if skill_text.strip():
         lines.extend(["", "Skill / task playbook:", skill_text.strip()])
 
