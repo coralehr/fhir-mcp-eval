@@ -174,6 +174,7 @@ def build_codex_command(
     codex_bin: str = "codex",
     model: str | None = None,
     profile: str | None = None,
+    reasoning_effort: str | None = None,
     sandbox: str = "read-only",
     approval: str = "never",
 ) -> CodexCommand:
@@ -192,6 +193,8 @@ def build_codex_command(
         "-s",
         sandbox,
     ]
+    if reasoning_effort:
+        args += ["-c", f'model_reasoning_effort="{reasoning_effort}"']
     if model:
         args.extend(["-m", model])
     if profile:
@@ -348,6 +351,7 @@ def main() -> int:
     parser.add_argument("--extra-instruction", default="")
     parser.add_argument("--mcp-server-name", default="bonfire-eval")
     parser.add_argument("--model", default=None)
+    parser.add_argument("--reasoning-effort", default=None, choices=["low", "medium", "high", "xhigh"], help="pin model_reasoning_effort; otherwise the machine config default leaks in (see run-2 model-mix disclosure)")
     parser.add_argument("--profile", default=None)
     parser.add_argument("--substrate", default="codex_subscription")
     parser.add_argument("--sandbox", default="read-only")
@@ -379,6 +383,7 @@ def main() -> int:
         "mode": args.mode,
         "substrate": args.substrate,
         "model": args.model,
+        "reasoning_effort": args.reasoning_effort,
         "profile": args.profile,
         "sandbox": args.sandbox,
         "approval": args.approval,
@@ -423,6 +428,7 @@ def main() -> int:
             codex_bin=args.codex_bin,
             model=args.model,
             profile=args.profile,
+            reasoning_effort=args.reasoning_effort,
             sandbox=args.sandbox,
             approval=args.approval,
         )

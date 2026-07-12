@@ -74,6 +74,10 @@ def run_chunk(arm: dict, chunk: list[str], *, timeout: int) -> bool:
         "--skip-existing",
         "--allow-full-run",
     ]
+    if os.environ.get("A6A_MODEL"):
+        cmd += ["--model", os.environ["A6A_MODEL"]]
+    if os.environ.get("A6A_EFFORT"):
+        cmd += ["--reasoning-effort", os.environ["A6A_EFFORT"]]
     for qid in chunk:
         cmd += ["--question-id", qid]
     subprocess.run(cmd, check=False)
