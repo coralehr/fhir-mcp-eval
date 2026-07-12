@@ -135,6 +135,11 @@ def build_prompt(
         lines.extend(["", "Additional run instruction:", extra_instruction.strip()])
 
     if mode == "packet":
+        if isinstance(packet, dict):
+            # Bookkeeping fields never reach the model: a question where a
+            # feature is a no-op must produce a byte-identical prompt to the
+            # baseline arm (QT_ARMS.md no-op invariant).
+            packet = {k: v for k, v in packet.items() if k not in ("features", "pinned_reference_targets") and not (k == "aggregate_summary" and v is None)}
         lines.extend(
             [
                 "",
