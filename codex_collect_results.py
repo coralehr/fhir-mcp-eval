@@ -119,7 +119,6 @@ def normalize_usage(usage: dict[str, Any]) -> dict[str, int]:
 def extract_usage(event_log_path: Path | None) -> dict[str, int] | None:
     if not event_log_path or not event_log_path.exists():
         return None
-    last_usage: dict[str, Any] | None = None
     for line in event_log_path.read_text(encoding="utf-8", errors="replace").splitlines():
         try:
             event = json.loads(line)
@@ -132,11 +131,10 @@ def extract_usage(event_log_path: Path | None) -> dict[str, int] | None:
         ]
         for candidate in candidates:
             if isinstance(candidate, dict):
-                last_usage = candidate
-    if not last_usage:
-        return None
-    normalized = normalize_usage(last_usage)
-    return normalized or None
+                normalized = normalize_usage(candidate)
+                if normalized:
+                    return normalized
+    return None
 
 
 def resolve_recorded_path(run_dir: Path, path: Path) -> Path:

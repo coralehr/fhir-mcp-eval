@@ -7,6 +7,22 @@ import codex_collect_results as collector
 
 
 class CodexCollectResultsTests(unittest.TestCase):
+    def test_extract_usage_keeps_first_complete_record_after_collision(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            event_log_path = Path(tmp) / "events.jsonl"
+            event_log_path.write_text(
+                json.dumps({"type": "turn.completed", "usage": {"input_tokens": 10, "output_tokens": 3}})
+                + "\n"
+                + json.dumps({"type": "turn.completed", "usage": {"input_tokens": 999, "output_tokens": 99}})
+                + "\n"
+                + 'put_tokens": 888, "output_tokens": 88}}\n',
+                encoding="utf-8",
+            )
+
+            usage = collector.extract_usage(event_log_path)
+
+        self.assertEqual(usage, {"prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13})
+
     def test_collects_answer_into_score_taxonomy_shape(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -9,6 +9,7 @@ reset + 3 min, relaunch. Everything resumable; nothing deleted.
 
 from __future__ import annotations
 
+import atexit
 import datetime as dt
 import json
 import os
@@ -17,6 +18,8 @@ import re
 import subprocess
 import sys
 import time
+
+from run_lock import AlreadyRunning, LOCK_BUSY_EXIT, acquire_single_instance
 
 ROOT = pathlib.Path.home() / "fhir-mcp-eval-qt"
 os.chdir(ROOT)
@@ -27,6 +30,14 @@ PIN_EFFORT = os.environ.get("PIN_EFFORT", "high")
 
 def log(msg: str) -> None:
     print(f"[{dt.datetime.now():%m-%d %H:%M:%S}] {msg}", flush=True)
+
+
+try:
+    PIPELINE_LOCK = acquire_single_instance(ROOT / "runs/.mini_babysit.lock")
+except AlreadyRunning as exc:
+    log(f"ALREADY_RUNNING: {exc}")
+    raise SystemExit(LOCK_BUSY_EXIT) from exc
+atexit.register(PIPELINE_LOCK.close)
 
 
 def newest_reset_time() -> dt.datetime | None:
@@ -74,7 +85,11 @@ def drive(label: str, cmd: list[str], out_dirs: list[str], target: int, env: dic
             log(f"{label}: COMPLETE ({before}/{target})")
             return
         log(f"{label}: launching ({before}/{target})")
-        subprocess.run(cmd, env=env)
+        result = subprocess.run(cmd, env=env)
+        if result.returncode == LOCK_BUSY_EXIT:
+            log(f"{label}: another controller owns the run lock; retrying in 30s")
+            time.sleep(30)
+            continue
         after = sum(answered(d) for d in out_dirs)
         if after >= target:
             log(f"{label}: COMPLETE ({after}/{target})")
