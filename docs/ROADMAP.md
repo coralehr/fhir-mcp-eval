@@ -53,7 +53,7 @@ hard-coded to this fork's shapes). **Every arm's pre-registration must address i
 [docs/reviews/2026-07-11-adversarial-roadmap-review.md](reviews/2026-07-11-adversarial-roadmap-review.md)
 before it runs.**
 
-## 1. A6: run the query-aware in-context projection arm
+## 1. A6: run the query-aware in-context projection arm — **A6a RUN 2026-07-12: +9.5pp over A0′ (p=1.3e-5), see [A6A_RESULT.md](A6A_RESULT.md)**
 
 **Question:** Can an in-context projection layer match the sandbox when it selects data by question intent?
 

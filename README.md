@@ -12,6 +12,12 @@
 > **Disclosure:** Bonfire ([bonfiredb.dev](https://bonfiredb.dev)) is the author's product; the planned
 > A6/A7 arms test its design hypotheses. We pre-commit to publishing results either way.
 
+> **New (2026-07-12): the pre-registered A6a arm ran.** Deterministic **question-only selection beat
+> query-blind blunt projection by +9.5pp** (54.3% vs 44.7%, n=409 paired, McNemar p=1.3×10⁻⁵,
+> patient-cluster 95% CI [+5.4, +13.7]) at 43% less packet payload, on a frozen pre-registration with the
+> null branch committed in advance. Preliminary — single substrate, single-family panel, judge
+> re-measurement pending. Full table, strata, and caveats: [docs/A6A_RESULT.md](docs/A6A_RESULT.md).
+
 ## TL;DR
 
 **What actually makes an LLM agent more accurate on FHIR clinical QA?** We swept the levers an engineer
