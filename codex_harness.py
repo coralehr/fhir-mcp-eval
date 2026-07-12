@@ -428,7 +428,26 @@ def main() -> int:
         summary.append(item)
 
     (args.out_dir / "summary.json").write_text(_json_block({"manifest": manifest, "questions": summary}) + "\n", encoding="utf-8")
-    print(json.dumps({"out_dir": str(args.out_dir), "questions": len(summary), "dry_run": args.dry_run}, indent=2))
+    answered = sum(1 for item in summary if item.get("status") == "skipped" or Path(item.get("answer_path", "")).exists())
+    failed = len(summary) - answered
+    print(
+        json.dumps(
+            {
+                "out_dir": str(args.out_dir),
+                "questions": len(summary),
+                "answered_or_skipped": answered,
+                "failed": failed,
+                "dry_run": args.dry_run,
+            },
+            indent=2,
+        )
+    )
+    # Fail loudly when live questions produced no answer file (e.g. the
+    # 2026-07-11 silent 0/50 on a usage-limit error): exit non-zero so callers
+    # and logs cannot mistake a dead run for a completed one.
+    if not args.dry_run and failed:
+        print(f"ERROR: {failed} of {len(summary)} questions produced no answer file", flush=True)
+        return 1
     return 0
 
 
