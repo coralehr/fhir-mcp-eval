@@ -26,6 +26,8 @@ def main() -> int:
     ap.add_argument("--input", type=Path, default=Path("final_dataset/full_test409.csv"))
     ap.add_argument("--a6a-packets", type=Path, default=Path("runs/a6a_test409_packets.jsonl"))
     ap.add_argument("--a0prime-packets", type=Path, default=Path("runs/a0prime_test409_packets.jsonl"))
+    ap.add_argument("--a6a-dir", type=Path, default=Path("runs/codex-a6a-test409"))
+    ap.add_argument("--a0prime-dir", type=Path, default=Path("runs/codex-a0prime-test409"))
     args = ap.parse_args()
 
     gold = {r["question_id"]: r for r in csv.DictReader(args.input.open())}
@@ -95,8 +97,8 @@ def main() -> int:
         }
 
     secondary = {
-        "a6a": arm_secondary(Path("runs/codex-a6a-test409"), args.a6a_packets),
-        "a0prime": arm_secondary(Path("runs/codex-a0prime-test409"), args.a0prime_packets),
+        "a6a": arm_secondary(args.a6a_dir, args.a6a_packets),
+        "a0prime": arm_secondary(args.a0prime_dir, args.a0prime_packets),
     }
 
     result = {

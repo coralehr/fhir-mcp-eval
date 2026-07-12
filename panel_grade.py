@@ -89,7 +89,7 @@ def batch_prompt(batch: list[tuple[str, dict]]) -> str:
     return "\n".join(lines)
 
 
-def run_vote(batch: list[tuple[str, dict]], *, codex_bin: str, timeout: int) -> dict[str, bool]:
+def run_vote(batch: list[tuple[str, dict]], *, codex_bin: str, timeout: int, model: str | None = None, effort: str | None = None) -> dict[str, bool]:
     with tempfile.TemporaryDirectory() as td:
         schema_path = Path(td) / "schema.json"
         out_path = Path(td) / "out.json"
@@ -107,8 +107,12 @@ def run_vote(batch: list[tuple[str, dict]], *, codex_bin: str, timeout: int) -> 
             td,
             "-s",
             "read-only",
-            batch_prompt(batch),
         ]
+        if model:
+            cmd += ["-m", model]
+        if effort:
+            cmd += ["-c", f'model_reasoning_effort="{effort}"']
+        cmd.append(batch_prompt(batch))
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         if not out_path.exists():
             raise RuntimeError(f"no panel output (rc={proc.returncode}): {proc.stderr[-200:]}")
@@ -124,6 +128,8 @@ def main() -> int:
     ap.add_argument("--votes", type=int, default=3)
     ap.add_argument("--timeout", type=int, default=600)
     ap.add_argument("--codex-bin", default="codex")
+    ap.add_argument("--model", default=None)
+    ap.add_argument("--reasoning-effort", default=None)
     ap.add_argument("--live", action="store_true")
     args = ap.parse_args()
 
@@ -144,7 +150,7 @@ def main() -> int:
             batch_items = todo[i : i + args.batch_size]
             batch = [(cache_key(it), it) for it in batch_items]
             try:
-                result = run_vote(batch, codex_bin=args.codex_bin, timeout=args.timeout)
+                result = run_vote(batch, codex_bin=args.codex_bin, timeout=args.timeout, model=args.model, effort=args.reasoning_effort)
             except Exception as exc:
                 print(f"vote round {vote_round} batch {i // args.batch_size}: FAILED {exc}")
                 # persist and stop — resumable
