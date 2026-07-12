@@ -56,7 +56,8 @@ per question.
   resource type. Rebuilt **contemporaneously on this instance** (the historical
   A0′ numbers are not reused).
 - **A6a (treatment):** `a6_packet_builder.py --planner question-only`
-  (`qo-v1`), bounds `--max-total-resources 120 --max-packet-chars 100000`,
+  (`qo-v2`; see Amendment 1), bounds `--max-total-resources 200
+  --max-packet-chars 160000` (amended, see Amendment 1),
   single renderer (projected raw JSON), **no** coverage summary, **no**
   serialization variants, frozen packets with SHA-256 manifests.
 
@@ -152,5 +153,29 @@ under these controls. Until then, no sandbox comparison is made or implied.
 
 ## 10. Deviations
 
-None yet. (Amendments append here with date, reason, and the demotion of any
-affected analysis to exploratory.)
+**Amendment 1 (2026-07-12, pre-freeze — before any confirmatory packet was built).**
+Dev-slice tuning results, disclosed in full:
+
+1. **Planner locked at qo-v2.** Three qo-v3 mechanisms were built and measured on
+   the same 50 dev questions (gold-evidence-in-packet recall, n=32 gradeable):
+   code-bucket bounding 20/32, term-priority buckets 21/32, bare-companion
+   queries alone 21/32 — every variant ≤ qo-v2's 22/32. All three reverted;
+   the planner ships as qo-v2 exactly as merged in PR #15. (Negative results
+   recorded here per the winner's-curse discipline; the dev slice was reused
+   across variants, which is why none of these comparisons is evidence of
+   anything beyond "did not improve recall on dev.")
+2. **Bounds amended: 120/100k → 200 resources / 160k chars.** A config sweep
+   (not a new mechanism) measured recall 22/32 (69%) at 120/100k vs 24/32
+   (75%) at 200/160k, with median packet 127k chars — still below the A0′
+   control's 157k median. §3's A6a bounds are amended accordingly. The
+   trade-off is acknowledged: the token-economics contrast vs A0′ narrows
+   (~44% → ~19% median reduction) in exchange for a higher recall ceiling on
+   the primary accuracy hypothesis.
+3. **Root-cause note for the record:** the two "unsearchable" dev misses were
+   a pagination-depth artifact (client caps at 10 pages; sorted-prefix depth
+   depends on `_count`), not data absence. Deeper prefixes via larger
+   `_count` were part of the reverted variants and are NOT in the frozen
+   config; the misses stand as known planner-floor limitations.
+
+Confirmatory discipline unchanged: one run, untouched 409, frozen planner and
+bounds as of the freeze commit recorded in the run manifests.
