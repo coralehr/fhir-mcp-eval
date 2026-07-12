@@ -85,6 +85,48 @@ def drive(label: str, cmd: list[str], out_dirs: list[str], target: int, env: dic
             time.sleep(30)
 
 
+def run_grading(label: str, cmd: list[str], done_marker: pathlib.Path) -> None:
+    """Run a grading command with quota-wall retry; skip if done_marker exists."""
+    if done_marker.exists():
+        log(f"{label}: already done ({done_marker})")
+        return
+    attempts = 0
+    while True:
+        attempts += 1
+        log(f"{label}: attempt {attempts}")
+        r = subprocess.run(cmd)
+        if done_marker.exists() or r.returncode == 0:
+            log(f"{label}: DONE")
+            return
+        if attempts > 40:
+            log(f"{label}: giving up after 40 attempts")
+            return
+        wait_for_reset()
+
+
+PANEL_PIN = ["--model", PIN_MODEL, "--reasoning-effort", PIN_EFFORT]
+
+
+def grade_pair(tag: str, a_dir: str, b_dir: str) -> None:
+    """Full grading for a pair of answer dirs: det pass -> pinned panel -> assembly."""
+    gdir = ROOT / f"runs/{tag}-grading"
+    run_grading(
+        f"{tag}:det",
+        [PY, "grade_a6a_confirmatory.py", "--a6a-dir", a_dir, "--a0prime-dir", b_dir, "--out", str(gdir)],
+        gdir / "det_verdicts.json",
+    )
+    run_grading(
+        f"{tag}:panel",
+        [PY, "panel_grade.py", "--queue", str(gdir / "panel_queue.jsonl"), "--cache", str(gdir / "panel_votes.json"), "--live", *PANEL_PIN],
+        gdir / "panel_verdicts.json",
+    )
+    run_grading(
+        f"{tag}:assemble",
+        [PY, "final_confirmatory_result.py", "--grading-dir", str(gdir), "--a6a-dir", a_dir, "--a0prime-dir", b_dir],
+        gdir / "final_result.json",
+    )
+
+
 # Stage 1: run-2 remainder, pinned
 env = dict(os.environ, A6A_RUN_SUFFIX="-run2", A6A_MODEL=PIN_MODEL, A6A_EFFORT=PIN_EFFORT)
 drive(
@@ -94,6 +136,9 @@ drive(
     818,
     env=env,
 )
+
+# Stage 1b: grade run-2 (det -> pinned panel -> assembly)
+grade_pair("run2-final", "runs/codex-a6a-test409-run2", "runs/codex-a0prime-test409-run2")
 
 # Stage 2: QT arms, pinned
 for feat in ("include-pinning", "agg-summary", "endpoint-reserve"):
@@ -112,6 +157,8 @@ for feat in ("include-pinning", "agg-summary", "endpoint-reserve"):
     for q in qids:
         cmd += ["--question-id", q]
     drive(f"qt-{feat}", cmd, [out], len(qids))
+    # Stage 2b: grade this QT arm paired against the run-2 A6a baseline
+    grade_pair(f"qt-{feat}", out, "runs/codex-a6a-test409-run2")
 
 # Stage 3: generality grid, if spec present
 grid_spec = ROOT / "grid_spec.json"
@@ -132,6 +179,15 @@ if grid_spec.exists():
             for q in qids:
                 cmd += ["--question-id", q]
             drive(f"grid-{arm}-{model}-{effort}", cmd, [out], len(qids))
+    # Stage 3b: grade each grid cell pair (a6a vs a0prime within the cell)
+    for cell in spec["cells"]:
+        model, effort = cell["model"], cell["effort"]
+        mtag = model.replace(".", "")
+        grade_pair(
+            f"grid-{mtag}-{effort}",
+            f"runs/grid-a6a-{mtag}-{effort}",
+            f"runs/grid-a0prime-{mtag}-{effort}",
+        )
 else:
     log("no grid_spec.json — grid stage skipped")
 
