@@ -179,3 +179,11 @@ Dev-slice tuning results, disclosed in full:
 
 Confirmatory discipline unchanged: one run, untouched 409, frozen planner and
 bounds as of the freeze commit recorded in the run manifests.
+
+**Interim-look disclosure (2026-07-11 ~20:45, run 86% complete).** At the
+investigator's request, a deterministic-subset, answered-only interim look was
+computed (111 paired numeric/unanswerable golds; all boolean/categorical golds
+still panel-pending): A6a 56.8% vs A0' 40.5%, discordants 19 vs 1. No design,
+planner, bounds, or run change followed; the run continued to completion
+unchanged. Disclosed here because interim looks can bias reporting; the
+primary result remains the full-run, full-grading table.
