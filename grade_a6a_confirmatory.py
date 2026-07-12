@@ -43,9 +43,37 @@ def gold_numbers(g: str) -> list[float]:
     return [float(x) for x in NUM.findall(g or "")]
 
 
+GRADER_VERSION = "det-v2"  # v2: verbalized-sign equivalence (A6A_ARTIFACT_REVIEW.md)
+
+_DECREASE = re.compile(
+    r"\b(?:decreas\w+|dropp?\w+|fell|fall\w*|declin\w+|reduc\w+|lower\w*|lost|down)\b[^.;]{0,40}?\bby\s+(\d+\.?\d*)"
+)
+_INCREASE = re.compile(
+    r"\b(?:increas\w+|rose|risen|rais\w+|gain\w+|grew|higher|up)\b[^.;]{0,40}?\bby\s+(\d+\.?\d*)"
+)
+_X_LOWER = re.compile(r"\b(\d+\.?\d*)\s*(?:[a-zA-Z/%µ]+\s+)?(?:lower|less|below|fewer)\b")
+_X_HIGHER = re.compile(r"\b(\d+\.?\d*)\s*(?:[a-zA-Z/%µ]+\s+)?(?:higher|more|above|greater)\b")
+
+
+def signed_values(ans: str) -> list[float]:
+    """Signed magnitudes expressed verbally: 'decreased by 0.1' -> -0.1,
+    '2.1 K/uL lower' -> -2.1. Run-1's grader missed these (false negatives)."""
+    text = (ans or "").lower()
+    out: list[float] = []
+    for m in _DECREASE.finditer(text):
+        out.append(-float(m.group(1)))
+    for m in _X_LOWER.finditer(text):
+        out.append(-float(m.group(1)))
+    for m in _INCREASE.finditer(text):
+        out.append(float(m.group(1)))
+    for m in _X_HIGHER.finditer(text):
+        out.append(float(m.group(1)))
+    return out
+
+
 def numeric_match(ans: str, gold: str) -> bool | None:
     gnums = gold_numbers(gold)
-    anums = [float(x) for x in NUM.findall(ans or "")]
+    anums = [float(x) for x in NUM.findall(ans or "")] + signed_values(ans)
     if not gnums:
         return None
     for gn in gnums:
@@ -55,7 +83,7 @@ def numeric_match(ans: str, gold: str) -> bool | None:
     return True
 
 
-# --- end lifted section ---
+# --- end lifted section (numeric_match extended to det-v2) ---
 
 EMPTY_GOLDS = ("", "[]", "nan", "None", "[[]]")
 

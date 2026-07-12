@@ -20,16 +20,20 @@ import subprocess
 import sys
 from pathlib import Path
 
+import os
+
+RUN_SUFFIX = os.environ.get("A6A_RUN_SUFFIX", "")  # e.g. "-run2" for the prompt-fix rerun
+
 ARMS = [
     {
         "name": "a6a",
         "packets": Path("runs/a6a_test409_packets.jsonl"),
-        "out_dir": Path("runs/codex-a6a-test409"),
+        "out_dir": Path(f"runs/codex-a6a-test409{RUN_SUFFIX}"),
     },
     {
         "name": "a0prime",
         "packets": Path("runs/a0prime_test409_packets.jsonl"),
-        "out_dir": Path("runs/codex-a0prime-test409"),
+        "out_dir": Path(f"runs/codex-a0prime-test409{RUN_SUFFIX}"),
     },
 ]
 INPUT_CSV = Path("final_dataset/full_test409.csv")

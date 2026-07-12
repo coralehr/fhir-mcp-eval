@@ -63,3 +63,17 @@ class BootstrapTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SignedValuesTests(unittest.TestCase):
+    def test_verbalized_signs(self):
+        from grade_a6a_confirmatory import numeric_match, signed_values
+
+        self.assertIn(-0.1, signed_values("MCH decreased by 0.1 pg, from 29.5 to 29.4"))
+        self.assertIn(-2.1, signed_values("was 2.1 K/uL lower than the first"))
+        self.assertIn(4.0, signed_values("the weight increased by 4 kg"))
+        self.assertTrue(numeric_match("MCH decreased by 0.1 pg", "[[-0.1]]"))
+        self.assertTrue(numeric_match("7.8, which was 2.1 K/uL lower than 9.9", "[[-2.1]]"))
+        self.assertFalse(numeric_match("MCH decreased by 0.3 pg", "[[-0.1]]"))
+        # regression: plain numerics still work
+        self.assertTrue(numeric_match("the value was 115 mg/dL", "[[115]]"))

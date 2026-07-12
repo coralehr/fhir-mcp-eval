@@ -50,6 +50,9 @@ Rules:
   clinically equivalent phrasing counts.
 - Timestamp golds: same instant counts even if formatted differently; date-only match is
   acceptable when the question asks for a date.
+- Gold timestamps ending 00:00:00 are often DATE-ONLY placeholders (the source table has no
+  time component): an answer giving the same date with a different or more precise time is CORRECT.
+- Verbalized signed differences count: "decreased by 0.1" means -0.1; "2.1 lower" means -2.1.
 - An answer declaring insufficiency/abstention is CORRECT only if the gold is empty
   (unanswerable); otherwise it is incorrect.
 - Judge ONLY correctness against the gold. Ignore style, length, citations.
