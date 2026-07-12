@@ -75,17 +75,7 @@ before it runs.**
 - Publish hashes/manifests and redacted scorer inputs for Codex-substrate runs; keep raw prompts/events under ignored `runs/` or a reviewed artifact package.
 - Report the serialization sub-table separately (exploratory unless pre-registered).
 
-**Successor arm queued — A6g (chart-graph-indexed packets), added 2026-07-12.**
-Motivated by the A6a failure forensics (A6A_ARTIFACT_REVIEW.md): selection
-queries a deterministic per-patient chart-graph index (FHIR reference edges,
-`hasMember`/Specimen subgraph packing, per-code series nodes with
-first/last/count/sum, episode nodes) instead of raw type-bucket search.
-Paired vs A6a on the same substrate/instance/grading; per-stratum falsifiable
-predictions pre-registered from the forensics table (microbiology and
-aggregation move; admissions/demographics predicted unchanged). Requires its
-own pre-registration before any confirmatory packet is built. Strategy
-context: cstack plans/bonfire-chart-graph.md. Runs after run-2, A6-oracle,
-and judge re-measurement in the standing queue.
+**Successor arms (reworked 2026-07-12 after a second adversarial review — the A6g bundle is dead).** A Codex gpt-5.6-sol xhigh review of the chart-graph plan (verdict REWORK, 18 P1; verbatim in cstack plans/reviews/2026-07-12-chartgraph-adverse.md) killed "selection queries the chart graph" as a bundle and established: (1) single-feature arms vs A6a, one treatment each — _include pinning, query-time deterministic reducer, micro vocabulary + bounded hasMember traversal, endpoint preservation — each with its own mini-prereg; (2) results on the 409 are EXPLORATORY by definition (the mechanisms were chosen from this set's failures); confirmatory promotion requires an untouched holdout (unused valid-split or a second benchmark); (3) any index-vs-query-time comparison is a byte-equivalence engineering benchmark, never an accuracy arm.
 
 ## 2. A12: error fidelity — does an honest substrate make the agent smarter? (new)
 
