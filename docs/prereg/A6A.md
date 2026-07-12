@@ -213,6 +213,24 @@ model×effort generality grid (gpt-5.6 luna/terra/sol × medium/high on a
 seeded 100-question paired subset) is planned as a separate exploratory
 stage.
 
+**Amendment 4 (2026-07-12, run-2 controller-collision repair).** During the
+pinned run-2 continuation, an older direct `run_a6a_confirmatory.py` process
+(started 12:22:56 PDT) remained alive when the autonomous supervisor started
+another controller at 12:29:14. Both selected the same not-yet-completed
+questions and wrote to the same paths until the obsolete process group was
+terminated. Audit before any grading found 40 completed event logs with
+write-race debris (39 from the overlap and one from the controlled restart
+that loaded the repair). All persisted `answer.json` files parsed against the
+answer contract and exactly matched a complete agent-message event; no answer
+was excluded, selected, or rerun based on its content. Raw logs remain intact.
+The old regex token counter would have overcounted 1,114,501 tokens at the
+313-answer audit snapshot, so token analysis now takes the first valid
+`turn.completed` usage record per persisted answer and ignores malformed or
+duplicate trailing records. This rule was fixed before inspecting accuracy
+outcomes. The supervisor and run-2 driver now hold cross-process singleton
+locks; duplicate launches exit before a model call. This deviation affects
+operational/token metadata, not the answer set or paired accuracy contrast.
+
 **Interim-look disclosure**Interim-look disclosure (2026-07-11 ~20:45, run 86% complete).** At the
 investigator's request, a deterministic-subset, answered-only interim look was
 computed (111 paired numeric/unanswerable golds; all boolean/categorical golds

@@ -22,6 +22,8 @@ from pathlib import Path
 
 import os
 
+from run_lock import AlreadyRunning, LOCK_BUSY_EXIT, acquire_single_instance
+
 RUN_SUFFIX = os.environ.get("A6A_RUN_SUFFIX", "")  # e.g. "-run2" for the prompt-fix rerun
 
 ARMS = [
@@ -37,6 +39,7 @@ ARMS = [
     },
 ]
 INPUT_CSV = Path("final_dataset/full_test409.csv")
+LOCK_PATH = Path("runs") / f".run_a6a_confirmatory{RUN_SUFFIX or '-default'}.lock"
 
 
 def qids_for(packets: Path) -> list[str]:
@@ -109,31 +112,38 @@ def main() -> int:
     if args.status:
         return 0
 
-    chunks_run = 0
-    while True:
-        progressed = False
-        for st in state:
-            remaining = [q for q in st["qids"] if q not in answered(st["arm"]["out_dir"])]
-            if not remaining:
-                continue
-            chunk = remaining[: args.chunk_size]
-            print(f"[{st['arm']['name']}] chunk of {len(chunk)} ({len(remaining)} remaining)")
-            ok = run_chunk(st["arm"], chunk, timeout=args.timeout)
-            if not ok:
-                print("QUOTA_WALL: all questions in the last chunk failed on usage limit — stopping; re-run to resume")
-                return 3
-            progressed = True
-        chunks_run += 1
-        if args.max_chunks and chunks_run >= args.max_chunks:
-            print(f"max-chunks {args.max_chunks} reached — stopping (resumable)")
-            return 0
-        if not progressed:
-            break
+    try:
+        run_lock = acquire_single_instance(LOCK_PATH)
+    except AlreadyRunning as exc:
+        print(f"ALREADY_RUNNING: {exc}")
+        return LOCK_BUSY_EXIT
 
-    print("ALL_COMPLETE")
-    for st in state:
-        print(f"{st['arm']['name']}: {len(answered(st['arm']['out_dir']))}/{len(st['qids'])}")
-    return 0
+    with run_lock:
+        chunks_run = 0
+        while True:
+            progressed = False
+            for st in state:
+                remaining = [q for q in st["qids"] if q not in answered(st["arm"]["out_dir"])]
+                if not remaining:
+                    continue
+                chunk = remaining[: args.chunk_size]
+                print(f"[{st['arm']['name']}] chunk of {len(chunk)} ({len(remaining)} remaining)")
+                ok = run_chunk(st["arm"], chunk, timeout=args.timeout)
+                if not ok:
+                    print("QUOTA_WALL: all questions in the last chunk failed on usage limit — stopping; re-run to resume")
+                    return 3
+                progressed = True
+            chunks_run += 1
+            if args.max_chunks and chunks_run >= args.max_chunks:
+                print(f"max-chunks {args.max_chunks} reached — stopping (resumable)")
+                return 0
+            if not progressed:
+                break
+
+        print("ALL_COMPLETE")
+        for st in state:
+            print(f"{st['arm']['name']}: {len(answered(st['arm']['out_dir']))}/{len(st['qids'])}")
+        return 0
 
 
 if __name__ == "__main__":

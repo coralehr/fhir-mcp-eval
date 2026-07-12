@@ -9,24 +9,40 @@ harness out-dir (answer runs, QT arms, grid cells).
 from __future__ import annotations
 
 import json
-import re
 import statistics
 import sys
 from pathlib import Path
 
-USAGE_RE = re.compile(r'"input_tokens":\s*(\d+).*?"output_tokens":\s*(\d+)')
+
+def usage_for_event_log(event_path: Path) -> tuple[int, int] | None:
+    """Return the first complete turn's usage, ignoring race-corrupted debris."""
+
+    for line in event_path.read_text(errors="replace").splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get("type") != "turn.completed":
+            continue
+        usage = event.get("usage")
+        if not isinstance(usage, dict):
+            continue
+        try:
+            inp = int(usage.get("input_tokens", usage.get("prompt_tokens", 0)) or 0)
+            out = int(usage.get("output_tokens", usage.get("completion_tokens", 0)) or 0)
+        except (TypeError, ValueError):
+            continue
+        if inp or out:
+            return inp, out
+    return None
 
 
 def dir_stats(run_dir: Path) -> dict:
     per_q: list[tuple[int, int]] = []
     for ev in run_dir.glob("questions/*/events.jsonl"):
-        text = ev.read_text()
-        inp = out = 0
-        for m in USAGE_RE.finditer(text):
-            inp += int(m.group(1))
-            out += int(m.group(2))
-        if inp or out:
-            per_q.append((inp, out))
+        usage = usage_for_event_log(ev)
+        if usage:
+            per_q.append(usage)
     if not per_q:
         return {"dir": str(run_dir), "answers": 0}
     totals_in = sum(i for i, _ in per_q)
