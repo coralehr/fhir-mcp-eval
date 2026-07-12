@@ -529,12 +529,150 @@ def blunt_bound(resources: list[dict[str, Any]], *, per_type_cap: int = BLUNT_PE
     return selected, stats
 
 
+QT_FEATURES = ("include-pinning", "endpoint-reserve", "agg-summary")
+
+# Reference targets that ride _include and must never be independently evicted
+# (adversarial review 2026-07-12, single-feature arm 1).
+PINNABLE_TARGET_TYPES = ("Medication/", "Location/")
+
+
+def _iter_references(value):
+    """Yield every FHIR reference string reachable in a resource dict."""
+    if isinstance(value, dict):
+        ref = value.get("reference")
+        if isinstance(ref, str):
+            yield ref
+        for v in value.values():
+            yield from _iter_references(v)
+    elif isinstance(value, list):
+        for v in value:
+            yield from _iter_references(v)
+
+
+def pin_reference_targets(
+    kept: list[dict[str, Any]], universe: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], int]:
+    """Add Medication/Location resources referenced by kept resources back into
+    the packet if they were fetched but evicted. Exempt from caps by design:
+    a reference target is part of its referrer, not an independent candidate."""
+    by_id = {}
+    for r in universe:
+        rid = _resource_id(r)
+        if rid:
+            by_id[rid] = r
+    kept_ids = {rid for rid in (_resource_id(r) for r in kept) if rid}
+    added = []
+    for r in kept:
+        for ref in _iter_references(r):
+            if ref.startswith(PINNABLE_TARGET_TYPES) and ref not in kept_ids and ref in by_id:
+                added.append(project_resource(by_id[ref]))
+                kept_ids.add(ref)
+    return kept + added, len(added)
+
+
+def _quantity(resource: dict[str, Any]) -> tuple[float, str] | None:
+    q = resource.get("valueQuantity")
+    if isinstance(q, dict) and isinstance(q.get("value"), (int, float)):
+        return float(q["value"]), str(q.get("unit") or q.get("code") or "")
+    return None
+
+
+def _med_display(resource: dict[str, Any], by_id: dict[str, dict[str, Any]]) -> str:
+    for key in ("medicationCodeableConcept",):
+        cc = resource.get(key)
+        if isinstance(cc, dict):
+            text = cc.get("text") or ""
+            if text:
+                return str(text)
+    ref = (resource.get("medicationReference") or {}).get("reference")
+    if isinstance(ref, str) and ref in by_id:
+        code = by_id[ref].get("code") or {}
+        return str(code.get("text") or "")
+    return ""
+
+
+def aggregate_summary(resources: list[dict[str, Any]], *, max_chars: int = 8_000) -> dict[str, Any]:
+    """Question-blind deterministic reducer over the FULL fetched set, computed
+    BEFORE bounding — so counts/sums/extremes survive even when the raw rows
+    do not (single-feature arm 2). Semantics are explicit and versioned:
+    counts are RESOURCE counts per (type, code text); medication_distinct is
+    distinct display strings among MedicationRequests; sums are emitted only
+    when every contributing value shares one unit."""
+    by_id = {}
+    for r in resources:
+        rid = _resource_id(r)
+        if rid:
+            by_id[rid] = r
+    per_type: dict[str, int] = {}
+    series: dict[tuple[str, str], dict[str, Any]] = {}
+    med_displays: dict[str, int] = {}
+    for r in resources:
+        rtype = str(r.get("resourceType") or "Unknown")
+        per_type[rtype] = per_type.get(rtype, 0) + 1
+        code = r.get("code") or {}
+        code_text = str(code.get("text") or "").strip()
+        if not code_text and isinstance(code.get("coding"), list) and code["coding"]:
+            code_text = str(code["coding"][0].get("display") or "")
+        date = _resource_clinical_date(r)
+        if code_text:
+            key = (rtype, code_text.lower())
+            entry = series.setdefault(
+                key,
+                {"resource_count": 0, "first": None, "last": None, "values": [], "units": set()},
+            )
+            entry["resource_count"] += 1
+            if date:
+                if entry["first"] is None or date < entry["first"]:
+                    entry["first"] = date
+                if entry["last"] is None or date > entry["last"]:
+                    entry["last"] = date
+            q = _quantity(r)
+            if q is not None:
+                entry["values"].append(q[0])
+                entry["units"].add(q[1])
+        if rtype == "MedicationRequest":
+            display = _med_display(r, by_id).strip().lower()
+            if display:
+                med_displays[display] = med_displays.get(display, 0) + 1
+    series_out = []
+    for (rtype, code_text), e in sorted(series.items(), key=lambda kv: -kv[1]["resource_count"]):
+        row: dict[str, Any] = {
+            "type": rtype,
+            "code": code_text,
+            "resource_count": e["resource_count"],
+            "first": e["first"],
+            "last": e["last"],
+        }
+        if e["values"] and len(e["units"]) == 1:
+            unit = next(iter(e["units"]))
+            row["value_min"] = min(e["values"])
+            row["value_max"] = max(e["values"])
+            row["value_sum"] = round(sum(e["values"]), 6)
+            row["value_unit"] = unit
+        series_out.append(row)
+    summary = {
+        "kind": "deterministic_aggregate_summary",
+        "semantics": "resource counts per (type, code text) over ALL fetched resources pre-bounding; medication_distinct = distinct MedicationRequest display strings; sums only under a single consistent unit",
+        "computed_over_resources": len(resources),
+        "per_type_counts": dict(sorted(per_type.items())),
+        "medication_distinct_count": len(med_displays),
+        "medication_displays": dict(sorted(med_displays.items())[:60]),
+        "code_series": series_out,
+        "truncated": False,
+    }
+    while len(_json(summary)) > max_chars and summary["code_series"]:
+        summary["code_series"] = summary["code_series"][: max(1, len(summary["code_series"]) // 2)]
+        summary["truncated"] = True
+    return summary
+
+
 def bound_resources(
     resources: list[dict[str, Any]],
     *,
     temporal_policy: str,
     max_total_resources: int,
     max_packet_chars: int,
+    endpoint_reserve: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Enforce hard resource-count and char ceilings (review finding 2).
 
@@ -570,6 +708,22 @@ def bound_resources(
     chars = sum(len(_json(r)) for r in selected)
     budget_hit = False
     cursors = {rtype: 0 for rtype in sorted(ordered_by_type)}
+    if endpoint_reserve:
+        # Phase 1 (feature: endpoint-reserve): both temporal extremes of EVERY
+        # type are packed before general round-robin, so a char-budget hit on
+        # one noisy type can no longer evict another type's endpoint.
+        reserve_n = 2 if temporal_policy == "first_last" else 1
+        for rtype in sorted(cursors):
+            order = ordered_by_type[rtype]
+            while cursors[rtype] < min(reserve_n, len(order)) and len(selected) < max_total_resources:
+                candidate = order[cursors[rtype]]
+                candidate_chars = len(_json(candidate))
+                if chars + candidate_chars > max_packet_chars and selected:
+                    budget_hit = True
+                    break
+                selected.append(candidate)
+                chars += candidate_chars
+                cursors[rtype] += 1
     while len(selected) < max_total_resources and any(
         cursors[t] < len(ordered_by_type[t]) for t in cursors
     ):
@@ -669,6 +823,7 @@ def build_packet_record(
     max_total_resources: int | None = None,
     max_packet_chars: int | None = None,
     plan: list[dict[str, Any]] | None = None,
+    features: set[str] | frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     if planner == "question-only":
         safe = {k: row.get(k) for k in QUESTION_ONLY_FIELDS}
@@ -690,6 +845,7 @@ def build_packet_record(
     for item in plan:
         resources.extend(resources_by_query.get(item["path"], []))
     resources = _dedupe_resources(resources)
+    universe = list(resources)  # full fetched set, pre-bounding
     bounds_stats: dict[str, Any] | None = None
     if not plan_only and planner == "blunt-projection":
         resources, bounds_stats = blunt_bound(resources)
@@ -699,11 +855,21 @@ def build_packet_record(
             temporal_policy=intent["temporal_policy"],
             max_total_resources=max_total_resources,
             max_packet_chars=max_packet_chars,
+            endpoint_reserve="endpoint-reserve" in features,
         )
+    pinned_count = 0
+    if not plan_only and "include-pinning" in features:
+        resources, pinned_count = pin_reference_targets(resources, universe)
+    summary_block: dict[str, Any] | None = None
+    if not plan_only and "agg-summary" in features:
+        summary_block = aggregate_summary([project_resource(r) for r in universe])
     resource_ids = [rid for rid in (_resource_id(r) for r in resources) if rid]
     packet = {
         "kind": kind,
         "planner": intent.get("planner"),
+        "features": sorted(features),
+        "pinned_reference_targets": pinned_count,
+        "aggregate_summary": summary_block,
         "plan_only": plan_only,
         "resources": [] if plan_only else resources,
         "resource_count": 0 if plan_only else len(resources),
@@ -751,6 +917,7 @@ def write_manifest(path: Path, *, input_path: Path, output_path: Path, args: arg
             "plan_only": args.plan_only,
             "split": args.split,
             "planner": getattr(args, "planner", "metadata-oracle"),
+            "features": sorted({f.strip() for f in getattr(args, "features", "").split(",") if f.strip()}),
             "planner_version": QO_PLANNER_VERSION if getattr(args, "planner", "") == "question-only" else "metadata-v1",
             "max_total_resources": getattr(args, "max_total_resources", None),
             "max_packet_chars": getattr(args, "max_packet_chars", None),
@@ -779,8 +946,17 @@ def main() -> int:
     )
     parser.add_argument("--max-total-resources", type=int, default=120)
     parser.add_argument("--max-packet-chars", type=int, default=100_000)
+    parser.add_argument(
+        "--features",
+        default="",
+        help=f"comma-separated single-treatment toggles on the frozen base: {','.join(QT_FEATURES)}",
+    )
     args = parser.parse_args()
 
+    features = {f.strip() for f in args.features.split(",") if f.strip()}
+    unknown = features - set(QT_FEATURES)
+    if unknown:
+        raise SystemExit(f"unknown features: {sorted(unknown)}; valid: {QT_FEATURES}")
     rows = load_rows(args.input, limit=args.limit, split=args.split)
     records = []
     for row in rows:
@@ -804,6 +980,7 @@ def main() -> int:
                 max_total_resources=args.max_total_resources,
                 max_packet_chars=args.max_packet_chars,
                 plan=plan,
+                features=features,
             )
         )
     write_jsonl(args.output, records)
