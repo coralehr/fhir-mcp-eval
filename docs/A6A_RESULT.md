@@ -88,6 +88,28 @@ selection-vs-blunt question.
 6. **A0′-as-frozen-packet** differs from the historical multi-turn A0′; the
    historical 39.4% is not comparable and is not used.
 
+## Post-publication artifact review (2026-07-12)
+
+A 10-agent cross-family audit (Claude judges over the codex panel + grader +
+full failure forensics) ran the day after publication —
+[A6A_ARTIFACT_REVIEW.md](A6A_ARTIFACT_REVIEW.md). Three things to know:
+
+1. **The result is robust to every identified grading error.** Cross-family
+   agreement was 47/50 on a stratified sample; applying all adjudicated
+   corrections (8 label flips, both directions) leaves the difference at
+   **+9.5pp exactly** (54.8% vs 45.2%, same discordants, same p).
+2. **A harness defect was found:** the benchmark's per-question time
+   `assumption` was never included in the answering prompt, so relative-date
+   questions had no "now." It affected both arms identically — the paired
+   contrast is unbiased — but the absolute accuracies are **lower bounds**.
+   A prompt-fix rerun is pre-declared as a separately-labeled run 2.
+3. **Failure forensics:** microbiology (the worst stratum for both arms) is
+   ~85–90% a retrieval-expressiveness failure (no FHIR microbiology
+   category; organism on child `hasMember` observations); ~19 of 26
+   "abstained with evidence present" cases were actually correct abstentions
+   mislabeled by the evidence flag (aggregation-under-cap, missing temporal
+   anchor, dropped endpoints). Ranked fixes in the review doc.
+
 ## Reproducibility
 
 Freeze tag `a6a-freeze-1`. Packet manifests with SHA-256 hashes
