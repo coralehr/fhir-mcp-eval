@@ -1,0 +1,119 @@
+{
+ "prereg": "docs/prereg/A6A.md v1.0 + Amendment 1 (freeze tag a6a-freeze-1)",
+ "grading": "deterministic (build_labels rules) + 3-vote codex panel (single-family, conservative-lower-bound convention); failures scored 0",
+ "n": 409,
+ "primary": {
+  "n": 409,
+  "acc_a": 0.5427872860635696,
+  "acc_b": 0.4474327628361858,
+  "diff": 0.0953545232273838,
+  "discordant_a_only": 59,
+  "discordant_b_only": 20,
+  "mcnemar_p": 1.296707732517512e-05,
+  "cluster_bootstrap": {
+   "point_diff": 0.09535452322738386,
+   "ci_low": 0.053526083917220746,
+   "ci_high": 0.1373081714986354,
+   "alpha": 0.05,
+   "n_boot": 10000,
+   "n_clusters": 90,
+   "n_pairs": 409,
+   "seed": 20260712
+  }
+ },
+ "strata_exploratory": {
+  "answer_type": {
+   "boolean": {
+    "n": 115,
+    "a6a": 0.5217,
+    "a0prime": 0.4783
+   },
+   "categorical": {
+    "n": 121,
+    "a6a": 0.5207,
+    "a0prime": 0.405
+   },
+   "numeric": {
+    "n": 97,
+    "a6a": 0.433,
+    "a0prime": 0.2371
+   },
+   "other": {
+    "n": 19,
+    "a6a": 0.9474,
+    "a0prime": 0.9474
+   },
+   "unanswerable": {
+    "n": 57,
+    "a6a": 0.6842,
+    "a0prime": 0.6667
+   }
+  },
+  "source_domain": {
+   "admissions": {
+    "n": 55,
+    "a6a": 0.8,
+    "a0prime": 0.8
+   },
+   "chartevents": {
+    "n": 77,
+    "a6a": 0.3377,
+    "a0prime": 0.1688
+   },
+   "icustays": {
+    "n": 14,
+    "a6a": 1.0,
+    "a0prime": 1.0
+   },
+   "labevents": {
+    "n": 63,
+    "a6a": 0.619,
+    "a0prime": 0.3333
+   },
+   "microbiologyevents": {
+    "n": 42,
+    "a6a": 0.1429,
+    "a0prime": 0.0952
+   },
+   "outputevents": {
+    "n": 35,
+    "a6a": 0.4857,
+    "a0prime": 0.4571
+   },
+   "patients": {
+    "n": 7,
+    "a6a": 1.0,
+    "a0prime": 1.0
+   },
+   "prescriptions": {
+    "n": 63,
+    "a6a": 0.5873,
+    "a0prime": 0.4444
+   },
+   "procedures_icd": {
+    "n": 35,
+    "a6a": 0.6571,
+    "a0prime": 0.6857
+   },
+   "transfers": {
+    "n": 14,
+    "a6a": 0.5714,
+    "a0prime": 0.5714
+   }
+  }
+ },
+ "secondary": {
+  "a6a": {
+   "answered": 409,
+   "abstentions": 173,
+   "packet_chars_median": 135166,
+   "packet_chars_total": 36670975
+  },
+  "a0prime": {
+   "answered": 409,
+   "abstentions": 210,
+   "packet_chars_median": 154140,
+   "packet_chars_total": 63975342
+  }
+ }
+}
