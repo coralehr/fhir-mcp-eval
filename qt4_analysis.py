@@ -460,10 +460,52 @@ def _validate_failed_attempt_ledgers(
                     ):
                         raise ValueError(f"{arm}/{question_id} archived attempt file changed")
                 events_metadata = archived_files.get("events.jsonl")
+                if not isinstance(events_metadata, dict):
+                    raise ValueError(
+                        f"{arm}/{question_id} attempt event log is missing"
+                    )
+                archived_event_path = Path(str(events_metadata["path"]))
+                recomputed_audit = codex_harness.audit_event_log(
+                    archived_event_path
+                )
+                recorded_audit = receipt.get("event_integrity")
+                if recorded_audit != recomputed_audit:
+                    raise ValueError(
+                        f"{arm}/{question_id} archived attempt audit changed"
+                    )
+                if recomputed_audit.get("contaminated") and not (
+                    codex_harness.is_retryable_incomplete_packet_audit(
+                        recomputed_audit
+                    )
+                    and receipt.get("harness_exit_code") not in (None, 0)
+                    and receipt.get("answer_sha256") is None
+                ):
+                    raise ValueError(
+                        f"{arm}/{question_id} transient attempt was contaminated"
+                    )
+                if codex_harness.is_retryable_incomplete_packet_audit(
+                    recomputed_audit
+                ):
+                    marker_metadata = archived_files.get("contamination.json")
+                    if not isinstance(marker_metadata, dict):
+                        raise ValueError(
+                            f"{arm}/{question_id} retryable marker is missing"
+                        )
+                    try:
+                        marker = _read_json(Path(str(marker_metadata["path"])))
+                    except (OSError, json.JSONDecodeError) as exc:
+                        raise ValueError(
+                            f"{arm}/{question_id} retryable marker is malformed"
+                        ) from exc
+                    if not codex_harness.retryable_incomplete_packet_marker_matches(
+                        marker,
+                        recomputed_audit,
+                    ):
+                        raise ValueError(
+                            f"{arm}/{question_id} retryable marker changed"
+                        )
                 recomputed_usage = (
-                    _archived_event_usage(Path(str(events_metadata["path"])))
-                    if isinstance(events_metadata, dict)
-                    else {}
+                    _archived_event_usage(archived_event_path)
                 )
                 if receipt.get("usage") != recomputed_usage:
                     raise ValueError(

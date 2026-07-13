@@ -264,6 +264,23 @@ or any packet bound. It adds the following integrity and spend controls:
     traversal outcomes, and packet-resource counts before assessing whether an
     arm is merely a confirmation candidate. The 42-question screen cannot by
     itself satisfy the pooled-accuracy promotion condition.
+13. The first capped controller smoke on 2026-07-13 reached the Codex CLI once
+    but was rejected by the provider usage limit before an answer or token-usage
+    receipt (`turn.failed`, no `turn.completed`, zero tool findings). It exposed
+    a controller bug that classified every incomplete event stream as permanent
+    tool contamination. That controller and its output directories are retained
+    unchanged as an abandoned pre-answer artifact and are excluded from QT-4
+    analysis. A fresh controller may treat an incomplete stream as an
+    operational retry only for the exact four-event sequence observed here:
+    one each of `thread.started`, `turn.started`, `error`, and `turn.failed`, in
+    newline-terminated, strict UTF-8 JSONL with no duplicate object keys, the
+    observed exact key shapes, a nonempty matching error message, and no
+    item/tool event, completed turn, or canonical answer, plus a nonzero exit.
+    Its full event log and marker
+    remain in the append-only attempt archive. Any other incomplete, malformed,
+    empty, tool-bearing, or merely truncated stream remains a permanent hard failure.
+    The three-attempt cap is unchanged. No further call is authorized before
+    the reported quota reset at 2026-07-19 23:05 PT.
 
 The query-validity and question-routing repairs discovered in the run-2
 failure audit are deliberately excluded from QT-4. They change the frozen

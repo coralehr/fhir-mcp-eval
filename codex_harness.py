@@ -365,6 +365,17 @@ def _is_tool_event_type(value: Any) -> bool:
     )
 
 
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Build one JSON object while rejecting duplicate decoded keys."""
+
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
 def audit_event_log(event_log_path: Path) -> dict[str, Any]:
     """Audit a Codex JSONL log for packet-contaminating tool events.
 
@@ -377,6 +388,13 @@ def audit_event_log(event_log_path: Path) -> dict[str, Any]:
     integrity_errors: list[str] = []
     event_count = 0
     turn_completed_count = 0
+    turn_failed_count = 0
+    error_event_count = 0
+    thread_started_count = 0
+    turn_started_count = 0
+    item_event_count = 0
+    event_type_sequence: list[str] = []
+    parsed_events: list[dict[str, Any]] = []
     if not event_log_path.exists():
         return {
             "contaminated": True,
@@ -386,25 +404,54 @@ def audit_event_log(event_log_path: Path) -> dict[str, Any]:
             "integrity_errors": ["event_log_missing"],
             "event_count": 0,
             "turn_completed_count": 0,
+            "turn_failed_count": 0,
+            "error_event_count": 0,
+            "thread_started_count": 0,
+            "turn_started_count": 0,
+            "item_event_count": 0,
+            "event_type_sequence": [],
+            "utf8_valid": False,
+            "terminal_newline": False,
+            "provider_failure_shape": False,
         }
-    for line_number, line in enumerate(
-        event_log_path.read_text(encoding="utf-8", errors="replace").splitlines(),
-        start=1,
-    ):
+    payload = event_log_path.read_bytes()
+    utf8_valid = True
+    try:
+        text = payload.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        text = ""
+        utf8_valid = False
+        integrity_errors.append("event_log_invalid_utf8")
+    terminal_newline = payload.endswith(b"\n")
+    if payload and not terminal_newline:
+        integrity_errors.append("event_log_missing_terminal_newline")
+    for line_number, line in enumerate(text.splitlines(), start=1):
         try:
-            event = json.loads(line)
+            event = json.loads(line, object_pairs_hook=_unique_json_object)
         except Exception:
             parse_errors.append(line_number)
             continue
         if not isinstance(event, dict):
             integrity_errors.append(f"event_not_object:{line_number}")
             continue
+        parsed_events.append(event)
         event_count += 1
         event_type = _normalized_event_type(event.get("type"))
+        event_type_sequence.append(event_type)
         if event_type == "turn_completed":
             turn_completed_count += 1
+        elif event_type == "turn_failed":
+            turn_failed_count += 1
+        elif event_type == "error":
+            error_event_count += 1
+        elif event_type == "thread_started":
+            thread_started_count += 1
+        elif event_type == "turn_started":
+            turn_started_count += 1
         item = event.get("item") if isinstance(event.get("item"), dict) else {}
         item_type = _normalized_event_type(item.get("type"))
+        if item or event_type in {"item_started", "item_completed"}:
+            item_event_count += 1
         if _is_tool_event_type(event_type) or _is_tool_event_type(item_type):
             findings.append(
                 {
@@ -418,6 +465,28 @@ def audit_event_log(event_log_path: Path) -> dict[str, Any]:
         integrity_errors.append("event_log_empty")
     if turn_completed_count == 0:
         integrity_errors.append("turn_completed_missing")
+    provider_failure_shape = False
+    if len(parsed_events) == 4:
+        thread_started, turn_started, error_event, turn_failed = parsed_events
+        nested_error = turn_failed.get("error")
+        error_message = error_event.get("message")
+        provider_failure_shape = (
+            set(thread_started) == {"type", "thread_id"}
+            and thread_started.get("type") == "thread.started"
+            and isinstance(thread_started.get("thread_id"), str)
+            and bool(thread_started["thread_id"])
+            and set(turn_started) == {"type"}
+            and turn_started.get("type") == "turn.started"
+            and set(error_event) == {"type", "message"}
+            and error_event.get("type") == "error"
+            and isinstance(error_message, str)
+            and bool(error_message)
+            and set(turn_failed) == {"type", "error"}
+            and turn_failed.get("type") == "turn.failed"
+            and isinstance(nested_error, dict)
+            and set(nested_error) == {"message"}
+            and nested_error.get("message") == error_message
+        )
     return {
         # A malformed, empty, or unterminated stream makes the audit
         # unverifiable. Fail closed rather than accepting an answer whose tool
@@ -429,7 +498,60 @@ def audit_event_log(event_log_path: Path) -> dict[str, Any]:
         "integrity_errors": integrity_errors,
         "event_count": event_count,
         "turn_completed_count": turn_completed_count,
+        "turn_failed_count": turn_failed_count,
+        "error_event_count": error_event_count,
+        "thread_started_count": thread_started_count,
+        "turn_started_count": turn_started_count,
+        "item_event_count": item_event_count,
+        "event_type_sequence": event_type_sequence,
+        "utf8_valid": utf8_valid,
+        "terminal_newline": terminal_newline,
+        "provider_failure_shape": provider_failure_shape,
     }
+
+
+def is_retryable_incomplete_packet_audit(audit: object) -> bool:
+    """Identify a well-formed provider failure that produced no answer turn.
+
+    ``audit_event_log`` intentionally marks every incomplete stream as
+    contaminated so no answer can be accepted from it. A controller may retry
+    only this narrower shape: the CLI explicitly emitted both an error and a
+    failed turn, the log parsed completely, and no tool event was observed.
+    """
+
+    return (
+        isinstance(audit, dict)
+        and audit.get("contaminated") is True
+        and audit.get("event_log_exists") is True
+        and audit.get("findings") == []
+        and audit.get("parse_error_lines") == []
+        and audit.get("integrity_errors") == ["turn_completed_missing"]
+        and audit.get("turn_completed_count") == 0
+        and audit.get("event_count") == 4
+        and audit.get("thread_started_count") == 1
+        and audit.get("turn_started_count") == 1
+        and audit.get("error_event_count") == 1
+        and audit.get("turn_failed_count") == 1
+        and audit.get("item_event_count") == 0
+        and audit.get("event_type_sequence")
+        == ["thread_started", "turn_started", "error", "turn_failed"]
+        and audit.get("utf8_valid") is True
+        and audit.get("terminal_newline") is True
+        and audit.get("provider_failure_shape") is True
+    )
+
+
+def retryable_incomplete_packet_marker_matches(
+    marker: object,
+    audit: object,
+) -> bool:
+    """Require the durable marker to be the exact retryable audit receipt."""
+
+    return (
+        is_retryable_incomplete_packet_audit(audit)
+        and isinstance(audit, dict)
+        and marker == {**audit, "quarantine_path": None}
+    )
 
 
 def enforce_packet_event_integrity(*, event_log_path: Path, answer_path: Path) -> dict[str, Any]:

@@ -195,6 +195,8 @@ _bootstrap_before_project_imports()
 from codex_harness import (  # noqa: E402 - immutable bootstrap runs first
     answer_matches_schema,
     audit_event_log,
+    is_retryable_incomplete_packet_audit,
+    retryable_incomplete_packet_marker_matches,
     run_version,
     slugify,
     terminal_question_status,
@@ -1131,7 +1133,17 @@ def _archive_failed_attempt(
         if not source.exists():
             continue
         destination = attempt_dir / name
-        shutil.copyfile(source, destination)
+        retryable_incomplete = (
+            name == "contamination.json"
+            and receipt.get("status") == "transient_failure"
+            and is_retryable_incomplete_packet_audit(
+                receipt.get("event_integrity")
+            )
+        )
+        if retryable_incomplete:
+            source.replace(destination)
+        else:
+            shutil.copyfile(source, destination)
         archived_files[name] = {
             "path": str(destination),
             "sha256": _sha256_file(destination),
@@ -1211,6 +1223,15 @@ def _blocking_artifact_reason(
             return "stale_packet_attempt_archive"
         if receipt.get("status") in {"contaminated", "stale_artifact"}:
             return f"archived_{receipt['status']}"
+        recorded_audit = receipt.get("event_integrity")
+        if not isinstance(recorded_audit, dict):
+            return "malformed_attempt_event_integrity"
+        if recorded_audit.get("contaminated") and not (
+            is_retryable_incomplete_packet_audit(recorded_audit)
+            and receipt.get("harness_exit_code") not in (None, 0)
+            and receipt.get("answer_sha256") is None
+        ):
+            return "archived_unretryable_event_integrity"
         archived_files = receipt.get("archived_files")
         if not isinstance(archived_files, dict):
             return "malformed_attempt_archive_files"
@@ -1220,6 +1241,25 @@ def _blocking_artifact_reason(
             path = Path(str(metadata.get("path") or ""))
             if not path.is_file() or metadata.get("sha256") != _sha256_file(path):
                 return "changed_attempt_archive"
+        events_metadata = archived_files.get("events.jsonl")
+        if not isinstance(events_metadata, dict):
+            return "missing_attempt_event_log"
+        archived_audit = audit_event_log(Path(str(events_metadata["path"])))
+        if archived_audit != recorded_audit:
+            return "changed_attempt_event_integrity"
+        if is_retryable_incomplete_packet_audit(recorded_audit):
+            marker_metadata = archived_files.get("contamination.json")
+            if not isinstance(marker_metadata, dict):
+                return "missing_retryable_contamination_marker"
+            try:
+                marker = _read_json(Path(str(marker_metadata["path"])))
+            except (OSError, json.JSONDecodeError):
+                return "malformed_retryable_contamination_marker"
+            if not retryable_incomplete_packet_marker_matches(
+                marker,
+                recorded_audit,
+            ):
+                return "changed_retryable_contamination_marker"
     if completion_valid:
         completion_receipt = _read_json(completion)
         if completion_receipt.get("attempt_number") != len(archived) + 1:
@@ -1288,9 +1328,19 @@ def _write_attempt_receipt(
 def _failed_attempt_status(receipt: dict[str, Any], question_dir: Path) -> str:
     if (question_dir / "stale_artifact.json").exists():
         return "stale_artifact"
-    if (question_dir / "contamination.json").exists() or receipt.get(
-        "event_integrity", {}
-    ).get("contaminated"):
+    event_integrity = receipt.get("event_integrity")
+    integrity_failed = (question_dir / "contamination.json").exists() or (
+        isinstance(event_integrity, dict)
+        and event_integrity.get("contaminated") is True
+    )
+    if integrity_failed and (
+        receipt.get("status") == "invalid"
+        and receipt.get("harness_exit_code") not in (None, 0)
+        and receipt.get("answer_sha256") is None
+        and is_retryable_incomplete_packet_audit(event_integrity)
+    ):
+        return "transient_failure"
+    if integrity_failed:
         return "contaminated"
     return "transient_failure"
 
@@ -1619,6 +1669,19 @@ def main() -> int:
                     question_id=question_id,
                     receipt={**receipt, "status": failure_status},
                 )
+                archived_reason = _blocking_artifact_reason(
+                    arm,
+                    question_id,
+                    controller_manifest_sha256=bundle.manifest_sha256,
+                )
+                if archived_reason is not None:
+                    print(
+                        f"BLOCKED_ARCHIVE_INTEGRITY question={question_id} "
+                        f"arm={arm.name} attempt={attempt_number} "
+                        f"reason={archived_reason}",
+                        flush=True,
+                    )
+                    return 1
                 if failure_status != "transient_failure":
                     print(
                         f"BLOCKED_{failure_status.upper()} question={question_id} "

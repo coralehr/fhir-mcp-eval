@@ -626,6 +626,131 @@ class Qt4AnalysisTests(unittest.TestCase):
         self.assertEqual(a6["failed_attempt_tokens"]["input_tokens"]["total"], 11)
         self.assertEqual(a6["all_attempt_tokens"]["total_tokens"]["total"], 365)
 
+    def test_only_explicit_tool_free_provider_failure_is_valid_retry_history(self):
+        for tool_event, should_pass in ((False, True), (True, False)):
+            with self.subTest(tool_event=tool_event), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                synthetic = SyntheticQt4Run(root)
+                question_dir = synthetic.run_dirs["a6a"] / "questions" / "q1"
+                attempt_dir = question_dir / "attempts" / "attempt-0001"
+                attempt_dir.mkdir(parents=True)
+                failed_events = attempt_dir / "events.jsonl"
+                events = [
+                    {"type": "thread.started", "thread_id": "thread-test"},
+                    {"type": "turn.started"},
+                    {"type": "error", "message": "usage limit"},
+                ]
+                if tool_event:
+                    events.append(
+                        {
+                            "type": "item.completed",
+                            "item": {"type": "command_execution"},
+                        }
+                    )
+                events.append(
+                    {
+                        "type": "turn.failed",
+                        "error": {"message": "usage limit"},
+                    }
+                )
+                failed_events.write_text(
+                    "\n".join(json.dumps(event) for event in events) + "\n",
+                    encoding="utf-8",
+                )
+                audit = codex_harness.audit_event_log(failed_events)
+                marker_path = attempt_dir / "contamination.json"
+                write_json(marker_path, {**audit, "quarantine_path": None})
+                attempt_path = attempt_dir / "attempt.json"
+                controller = json.loads(
+                    synthetic.controller.read_text(encoding="utf-8")
+                )
+                receipt = {
+                    "kind": "qt4_attempt_completion",
+                    "schema_version": "qt4-attempt-v2",
+                    "controller_manifest_sha256": synthetic.controller_sha,
+                    "arm": "a6a",
+                    "question_id": "q1",
+                    "packet_sha256": qt4_analysis.sha256_file(
+                        synthetic.packets["a6a"]
+                    ),
+                    "schema_sha256": controller["snapshots"]["schema"]["sha256"],
+                    "model": "gpt-5.6-sol",
+                    "reasoning_effort": "high",
+                    "attempt_number": 1,
+                    "harness_exit_code": 1,
+                    "returncode": 1,
+                    "status": "transient_failure",
+                    "event_integrity": audit,
+                    "usage": {},
+                    "answer_sha256": None,
+                    "archived_files": {
+                        "events.jsonl": {
+                            "path": str(failed_events),
+                            "sha256": qt4_analysis.sha256_file(failed_events),
+                        },
+                        "contamination.json": {
+                            "path": str(marker_path),
+                            "sha256": qt4_analysis.sha256_file(marker_path),
+                        }
+                    },
+                    "attempt_receipt_path": str(attempt_path),
+                }
+                write_json(attempt_path, receipt)
+                (question_dir / "attempts.jsonl").write_text(
+                    json.dumps(receipt, ensure_ascii=False, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+                completion_path = question_dir / "completion.json"
+                completion = json.loads(completion_path.read_text(encoding="utf-8"))
+                completion["attempt_number"] = 2
+                write_json(completion_path, completion)
+
+                if should_pass:
+                    self.prepare(synthetic, root / "grading")
+                    missing_marker = json.loads(json.dumps(receipt))
+                    missing_marker["archived_files"].pop("contamination.json")
+                    write_json(attempt_path, missing_marker)
+                    (question_dir / "attempts.jsonl").write_text(
+                        json.dumps(
+                            missing_marker,
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        "retryable marker is missing",
+                    ):
+                        self.prepare(synthetic, root / "grading-missing-marker")
+
+                    changed_marker = {
+                        **audit,
+                        "quarantine_path": "unexpected-answer-path",
+                    }
+                    write_json(marker_path, changed_marker)
+                    receipt["archived_files"]["contamination.json"][
+                        "sha256"
+                    ] = qt4_analysis.sha256_file(marker_path)
+                    write_json(attempt_path, receipt)
+                    (question_dir / "attempts.jsonl").write_text(
+                        json.dumps(receipt, ensure_ascii=False, sort_keys=True)
+                        + "\n",
+                        encoding="utf-8",
+                    )
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        "retryable marker changed",
+                    ):
+                        self.prepare(synthetic, root / "grading-changed-marker")
+                else:
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        "transient attempt was contaminated",
+                    ):
+                        self.prepare(synthetic, root / "grading")
+
 
 if __name__ == "__main__":
     unittest.main()

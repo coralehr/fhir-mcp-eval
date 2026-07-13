@@ -11,6 +11,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import codex_harness
 import run_qt4_experiment as qt4
 
 
@@ -709,6 +710,87 @@ class Qt4ExperimentRunnerTests(unittest.TestCase):
             self.assertEqual(
                 progress["accepted_token_usage_by_arm"]["qt4v"]["input_tokens"],
                 13,
+            )
+
+    def test_provider_turn_failure_is_retryable_not_permanent_contamination(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            packet_path = root / "packets.jsonl"
+            packet_path.write_text("{}\n", encoding="utf-8")
+            arm = qt4.Arm("a6a", packet_path, root / "run")
+            qdir = arm.out_dir / "questions" / "q1"
+            qdir.mkdir(parents=True)
+            event_path = qdir / "events.jsonl"
+            message = "You've hit your usage limit; try again after reset."
+            event_path.write_text(
+                "\n".join(
+                    json.dumps(event)
+                    for event in (
+                        {"type": "thread.started", "thread_id": "thread-test"},
+                        {"type": "turn.started"},
+                        {"type": "error", "message": message},
+                        {"type": "turn.failed", "error": {"message": message}},
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (qdir / "prompt.txt").write_text("prompt", encoding="utf-8")
+            integrity = codex_harness.enforce_packet_event_integrity(
+                event_log_path=event_path,
+                answer_path=qdir / "answer.json",
+            )
+            self.assertTrue(integrity["contaminated"])
+            self.assertEqual(integrity["findings"], [])
+            self.assertEqual(integrity["integrity_errors"], ["turn_completed_missing"])
+            receipt = qt4._write_attempt_receipt(
+                arm=arm,
+                question_id="q1",
+                controller_manifest_sha256="manifest-sha",
+                returncode=1,
+                attempt_number=1,
+            )
+
+            self.assertEqual(
+                qt4._failed_attempt_status(receipt, qdir),
+                "transient_failure",
+            )
+            archived = qt4._archive_failed_attempt(
+                arm=arm,
+                question_id="q1",
+                receipt={**receipt, "status": "transient_failure"},
+            )
+            self.assertEqual(archived["status"], "transient_failure")
+            self.assertFalse((qdir / "contamination.json").exists())
+            self.assertTrue(
+                (qdir / "attempts" / "attempt-0001" / "contamination.json").exists()
+            )
+            self.assertIsNone(
+                qt4._blocking_artifact_reason(
+                    arm,
+                    "q1",
+                    controller_manifest_sha256="manifest-sha",
+                )
+            )
+            attempt_path = qdir / "attempts" / "attempt-0001" / "attempt.json"
+            incomplete = json.loads(attempt_path.read_text(encoding="utf-8"))
+            incomplete["archived_files"].pop("contamination.json")
+            attempt_path.write_text(
+                json.dumps(incomplete, ensure_ascii=False, indent=2, sort_keys=True)
+                + "\n",
+                encoding="utf-8",
+            )
+            (qdir / "attempts.jsonl").write_text(
+                json.dumps(incomplete, ensure_ascii=False, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                qt4._blocking_artifact_reason(
+                    arm,
+                    "q1",
+                    controller_manifest_sha256="manifest-sha",
+                ),
+                "missing_retryable_contamination_marker",
             )
 
     def test_retry_cap_is_pinned_and_survives_resume(self):

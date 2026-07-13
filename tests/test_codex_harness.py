@@ -261,6 +261,112 @@ class CodexHarnessTests(unittest.TestCase):
         self.assertFalse(receipt["contaminated"])
         self.assertEqual(receipt["turn_completed_count"], 1)
         self.assertEqual(receipt["integrity_errors"], [])
+        self.assertFalse(
+            codex_harness.is_retryable_incomplete_packet_audit(receipt)
+        )
+
+    def test_only_explicit_tool_free_provider_failure_is_retryable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            provider_failure = root / "provider-failure.jsonl"
+            provider_failure.write_text(
+                "\n".join(
+                    json.dumps(event)
+                    for event in (
+                        {"type": "thread.started", "thread_id": "thread-test"},
+                        {"type": "turn.started"},
+                        {"type": "error", "message": "usage limit"},
+                        {
+                            "type": "turn.failed",
+                            "error": {"message": "usage limit"},
+                        },
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            retryable = codex_harness.audit_event_log(provider_failure)
+            self.assertTrue(
+                codex_harness.is_retryable_incomplete_packet_audit(retryable)
+            )
+            self.assertTrue(
+                codex_harness.retryable_incomplete_packet_marker_matches(
+                    {**retryable, "quarantine_path": None},
+                    retryable,
+                )
+            )
+
+            tool_failure = root / "tool-failure.jsonl"
+            tool_failure.write_text(
+                provider_failure.read_text(encoding="utf-8")
+                + json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {"type": "command_execution"},
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            contaminated = codex_harness.audit_event_log(tool_failure)
+            self.assertFalse(
+                codex_harness.is_retryable_incomplete_packet_audit(contaminated)
+            )
+
+            no_newline = root / "no-newline.jsonl"
+            no_newline.write_bytes(provider_failure.read_bytes()[:-1])
+            invalid_utf8 = root / "invalid-utf8.jsonl"
+            invalid_utf8.write_bytes(provider_failure.read_bytes() + b"\xff")
+            hidden_tool_key = root / "hidden-tool-key.jsonl"
+            hidden_events = [
+                {"type": "thread.started", "thread_id": "thread-test"},
+                {"type": "turn.started"},
+                {
+                    "type": "error",
+                    "message": "usage limit",
+                    "tool_call": {"name": "shell"},
+                },
+                {
+                    "type": "turn.failed",
+                    "error": {"message": "usage limit"},
+                },
+            ]
+            hidden_tool_key.write_text(
+                "\n".join(json.dumps(event) for event in hidden_events) + "\n",
+                encoding="utf-8",
+            )
+            mismatched_error = root / "mismatched-error.jsonl"
+            mismatched_events = [
+                {"type": "thread.started", "thread_id": "thread-test"},
+                {"type": "turn.started"},
+                {"type": "error", "message": "usage limit"},
+                {"type": "turn.failed", "error": {"message": "other"}},
+            ]
+            mismatched_error.write_text(
+                "\n".join(json.dumps(event) for event in mismatched_events) + "\n",
+                encoding="utf-8",
+            )
+            duplicate_type = root / "duplicate-type.jsonl"
+            duplicate_type.write_text(
+                '{"type":"thread.started","thread_id":"thread-test"}\n'
+                '{"type":"turn.started"}\n'
+                '{"type":"item.completed","type":"error",'
+                '"message":"usage limit"}\n'
+                '{"type":"turn.failed","error":{"message":"usage limit"}}\n',
+                encoding="utf-8",
+            )
+            for path in (
+                no_newline,
+                invalid_utf8,
+                hidden_tool_key,
+                mismatched_error,
+                duplicate_type,
+            ):
+                with self.subTest(path=path.name):
+                    audit = codex_harness.audit_event_log(path)
+                    self.assertFalse(
+                        codex_harness.is_retryable_incomplete_packet_audit(audit)
+                    )
 
     def test_packet_mode_requires_packet_json_coverage(self):
         rows = [{"question_id": "q1"}, {"question_id": "q2"}]
