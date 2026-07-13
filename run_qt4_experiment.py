@@ -940,6 +940,8 @@ def _blocking_artifact_reason(
             return "misbound_attempt_archive"
         if receipt.get("packet_sha256") != _sha256_file(arm.packet_path):
             return "stale_packet_attempt_archive"
+        if receipt.get("status") in {"contaminated", "stale_artifact"}:
+            return f"archived_{receipt['status']}"
         archived_files = receipt.get("archived_files")
         if not isinstance(archived_files, dict):
             return "malformed_attempt_archive_files"
@@ -949,6 +951,10 @@ def _blocking_artifact_reason(
             path = Path(str(metadata.get("path") or ""))
             if not path.is_file() or metadata.get("sha256") != _sha256_file(path):
                 return "changed_attempt_archive"
+    if completion_valid:
+        completion_receipt = _read_json(completion)
+        if completion_receipt.get("attempt_number") != len(archived) + 1:
+            return "noncontiguous_accepted_attempt"
     return None
 
 

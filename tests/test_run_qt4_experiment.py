@@ -402,6 +402,27 @@ class Qt4ExperimentRunnerTests(unittest.TestCase):
                 ),
                 "contamination_marker",
             )
+            receipt = qt4._write_attempt_receipt(
+                arm=arm,
+                question_id="q1",
+                controller_manifest_sha256="manifest-sha",
+                returncode=1,
+                attempt_number=1,
+            )
+            qt4._archive_failed_attempt(
+                arm=arm,
+                question_id="q1",
+                receipt={**receipt, "status": "contaminated"},
+            )
+            (qdir / "contamination.json").unlink()
+            self.assertEqual(
+                qt4._blocking_artifact_reason(
+                    arm,
+                    "q1",
+                    controller_manifest_sha256="manifest-sha",
+                ),
+                "archived_contaminated",
+            )
 
     def test_orphan_answer_and_cross_controller_receipt_are_hard_blocking(self):
         with tempfile.TemporaryDirectory() as tmp:
