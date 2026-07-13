@@ -142,6 +142,10 @@ class QuestionSelectionTests(unittest.TestCase):
                     ),
                     encoding="utf-8",
                 )
+                (qdir / "events.jsonl").write_text(
+                    json.dumps({"type": "turn.completed"}) + "\n",
+                    encoding="utf-8",
+                )
 
             write_answer(a_dir, "q1", "1")
             write_answer(a_dir, "q2", "0")

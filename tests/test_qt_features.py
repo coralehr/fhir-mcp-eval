@@ -263,7 +263,7 @@ class MicroVocabularyTests(unittest.TestCase):
             def __init__(self):
                 self.paths = []
 
-            def search_with_pagination(self, path):
+            def search_with_pagination(self, path, *, max_results=None):
                 self.paths.append(path)
                 return []
 
@@ -597,6 +597,42 @@ class MicroTraversalTests(unittest.TestCase):
         self.assertEqual(record["packet"]["resource_count"], 2)
         self.assertEqual(record["packet"]["reference_traversal"]["stats"]["added_resource_count"], 1)
         self.assertEqual(record["packet"]["reference_traversal"]["path_receipts"][0]["to"], "Observation/org-1")
+
+    def test_packet_builder_records_frozen_traversal_contract_with_no_edges(self):
+        row = {
+            "question_id": "micro-empty",
+            "split": "test",
+            "question": "What organism was found in the last culture?",
+            "assumption": "",
+            "patient_fhir_id": "p1",
+        }
+        plan = [
+            {
+                "resource_type": "Observation",
+                "path": "Observation?patient=p1",
+                "reason": "test",
+            }
+        ]
+        root = {"resourceType": "Observation", "id": "test-1", "valueString": "negative"}
+
+        record = a6.build_packet_record(
+            row,
+            plan_only=False,
+            resources_by_query={plan[0]["path"]: [root]},
+            planner="question-only",
+            max_total_resources=a6.A6A_MAX_TOTAL_RESOURCES,
+            max_packet_chars=a6.A6A_MAX_PACKET_CHARS,
+            plan=plan,
+            features={"micro-vocab", "micro-traversal"},
+            reference_fetcher=lambda resource_type, ids: [],
+        )
+
+        traversal = record["packet"]["reference_traversal"]
+        self.assertEqual(traversal["version"], a6.MICRO_TRAVERSAL_VERSION)
+        self.assertEqual(traversal["limits"]["max_depth"], 2)
+        self.assertEqual(traversal["stats"]["fetch_attempt_count"], 0)
+        self.assertEqual(traversal["stats"]["added_resource_count"], 0)
+        self.assertEqual(traversal["path_receipts"], [])
 
 
 if __name__ == "__main__":

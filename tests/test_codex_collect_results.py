@@ -47,7 +47,16 @@ class CodexCollectResultsTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            event_log_path.write_text(json.dumps({"usage": {"input_tokens": 10, "output_tokens": 3}}) + "\n", encoding="utf-8")
+            event_log_path.write_text(
+                json.dumps(
+                    {
+                        "type": "turn.completed",
+                        "usage": {"input_tokens": 10, "output_tokens": 3},
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             summary = {
                 "questions": [
                     {
@@ -218,6 +227,51 @@ class CodexCollectResultsTests(unittest.TestCase):
 
         self.assertEqual(records[0]["agent_answer"], "")
         self.assertIn("contamination_marker", records[0]["error"])
+
+    def test_summary_is_merged_with_all_question_directories(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run_dir = root / "run"
+            questions = run_dir / "questions"
+            for qid in ("q1", "q2"):
+                qdir = questions / qid
+                qdir.mkdir(parents=True)
+                (qdir / "answer.json").write_text(
+                    json.dumps(
+                        {
+                            "answer": qid,
+                            "source_resource_ids": [],
+                            "evidence_summary": "evidence",
+                            "insufficiency_reason": None,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                (qdir / "events.jsonl").write_text(
+                    json.dumps({"type": "turn.completed"}) + "\n",
+                    encoding="utf-8",
+                )
+            (run_dir / "summary.json").write_text(
+                json.dumps(
+                    {
+                        "manifest": {"run_config": {"mode": "packet"}},
+                        "questions": [
+                            {
+                                "question_id": "q2",
+                                "status": "ok",
+                                "returncode": 0,
+                                "answer_path": str(questions / "q2" / "answer.json"),
+                                "event_log_path": str(questions / "q2" / "events.jsonl"),
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            items = collector.load_summary(run_dir)
+
+        self.assertEqual({item["question_id"] for item in items}, {"q1", "q2"})
 
 
 if __name__ == "__main__":

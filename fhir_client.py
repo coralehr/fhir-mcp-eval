@@ -3,9 +3,22 @@ import sys
 sys.path.append("..")
 
 from typing import Any, Optional
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
 JsonObject = list[dict[str, Any]]
+
+
+class FHIRSearchError(RuntimeError):
+    """Redacted FHIR HTTP failure safe for experiment control-plane logs."""
+
+    def __init__(self, status_code: int):
+        self.status_code = status_code
+        super().__init__(f"FHIR search failed with HTTP {status_code}")
+
+
+class FHIRPaginationError(RuntimeError):
+    """Raised when a complete paginated result cannot be proven."""
+
+    def __init__(self):
+        super().__init__("FHIR pagination did not reach a terminal page")
 
 def get_auth_session_from_default():
     from google.auth import default
@@ -49,7 +62,9 @@ class FHIRClient:
                 del resource[field]
         return resource
 
-    def _fetch_resources_with_pagination(self, initial_resource_path: str) -> list[JsonObject]:
+    def _fetch_resources_with_pagination(
+        self, initial_resource_path: str, *, max_results: int | None = None
+    ) -> list[JsonObject]:
         """
         Common function to fetch resources with pagination support.
         """
@@ -63,6 +78,8 @@ class FHIRClient:
 
             if resources.get("entry", []):
                 all_resources.extend([self.remove_fields(e["resource"], ["text", "meta"]) for e in resources["entry"]])
+                if max_results is not None and len(all_resources) >= max_results:
+                    return all_resources[:max_results]
 
             next_url = None
             for link in resources.get("link", []):
@@ -82,10 +99,14 @@ class FHIRClient:
         
         resource_ids_str = ",".join(resource_ids)
         resource_path = f"{self.fhir_store_url}/{resource_type}?_id={resource_ids_str}&_count={max_size}"
-        return self._fetch_resources_with_pagination(resource_path)
+        return self._fetch_resources_with_pagination(
+            resource_path, max_results=max_size
+        )
 
 
-    def search_with_pagination(self, query_string: str) -> list[dict]:
+    def search_with_pagination(
+        self, query_string: str, *, max_results: int | None = None
+    ) -> list[dict]:
         """
         Perform a FHIR search with automatic pagination handling.
         
@@ -96,7 +117,9 @@ class FHIRClient:
             list[dict]: All paginated resources
         """
         resource_path = f"{self.fhir_store_url}/{query_string}"
-        return self._fetch_resources_with_pagination(resource_path)
+        return self._fetch_resources_with_pagination(
+            resource_path, max_results=max_results
+        )
     
 
     

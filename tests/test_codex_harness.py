@@ -25,6 +25,32 @@ class CodexHarnessTests(unittest.TestCase):
         self.assertNotIn("do-not-leak", prompt)
         self.assertNotIn("SELECT leaked_proc_query", prompt)
 
+    def test_packet_prompt_hides_query_plan_and_rejects_nested_gold(self):
+        record = {
+            "question_id": "q1",
+            "question": "What was measured?",
+            "patient_fhir_id": "Patient/p1",
+            "packet": {
+                "resources": [{"resourceType": "Observation", "id": "o1"}],
+                "source_queries": [
+                    {
+                        "path": "Observation?code:text=culture",
+                        "reason": "fixed microbiology display vocabulary (micro-v1)",
+                    }
+                ],
+                "bounds": {"char_count": 99},
+            },
+        }
+
+        prompt = codex_harness.build_prompt(record, mode="packet")
+
+        self.assertNotIn("source_queries", prompt)
+        self.assertNotIn("micro-v1", prompt)
+        self.assertNotIn("char_count", prompt)
+        record["packet"]["audit"] = {"true_fhir_ids": {"Observation": ["o1"]}}
+        with self.assertRaisesRegex(ValueError, "forbidden benchmark key"):
+            codex_harness.build_prompt(record, mode="packet")
+
     def test_noop_packet_metadata_and_sha_do_not_change_model_prompt(self):
         clinical_packet = {
             "kind": "bounded_fhir_packet",
@@ -59,6 +85,44 @@ class CodexHarnessTests(unittest.TestCase):
         self.assertEqual(baseline_prompt, treatment_prompt)
         self.assertNotIn("sha256", baseline_prompt)
         self.assertNotIn("include-pinning", treatment_prompt)
+
+    def test_empty_traversal_receipt_is_kept_in_artifact_but_hidden_from_prompt(self):
+        clinical_packet = {
+            "kind": "bounded_fhir_packet",
+            "planner": "qo-v2",
+            "resources": [{"resourceType": "Observation", "id": "o1"}],
+            "aggregate_summary": None,
+        }
+        baseline = {
+            "question_id": "q1",
+            "question": "What organism was found?",
+            "patient_fhir_id": "Patient/p1",
+            "packet": {**clinical_packet, "features": ["micro-vocab"]},
+        }
+        treatment = {
+            **baseline,
+            "packet": {
+                **clinical_packet,
+                "features": ["micro-traversal", "micro-vocab"],
+                "reference_traversal": {
+                    "kind": "bounded_exact_reference_traversal",
+                    "version": "micro-traversal-v1",
+                    "limits": {"max_depth": 2},
+                    "stats": {
+                        "fetch_attempt_count": 0,
+                        "added_resource_count": 0,
+                        "path_receipt_count": 0,
+                    },
+                    "path_receipts": [],
+                },
+            },
+        }
+
+        self.assertIn("reference_traversal", treatment["packet"])
+        self.assertEqual(
+            codex_harness.build_prompt(baseline, mode="packet"),
+            codex_harness.build_prompt(treatment, mode="packet"),
+        )
 
     def test_packet_mode_uses_empty_temporary_working_directory(self):
         requested = Path(codex_harness.__file__).resolve().parent
@@ -130,6 +194,53 @@ class CodexHarnessTests(unittest.TestCase):
             self.assertFalse(answer_path.exists())
             self.assertTrue((qdir / "contamination.json").exists())
 
+    def test_missing_empty_and_incomplete_packet_event_logs_fail_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cases = {
+                "missing": None,
+                "empty": "",
+                "scalar": json.dumps("not-an-event") + "\n",
+                "incomplete": json.dumps(
+                    {"type": "item.completed", "item": {"type": "reasoning"}}
+                )
+                + "\n",
+            }
+            for name, content in cases.items():
+                with self.subTest(name=name):
+                    qdir = root / name
+                    qdir.mkdir()
+                    answer_path = qdir / "answer.json"
+                    event_log = qdir / "events.jsonl"
+                    answer_path.write_text('{"answer":"unverifiable"}\n', encoding="utf-8")
+                    if content is not None:
+                        event_log.write_text(content, encoding="utf-8")
+
+                    receipt = codex_harness.enforce_packet_event_integrity(
+                        event_log_path=event_log,
+                        answer_path=answer_path,
+                    )
+
+                    self.assertTrue(receipt["contaminated"])
+                    self.assertTrue(receipt["integrity_errors"])
+                    self.assertFalse(answer_path.exists())
+                    self.assertTrue((qdir / "contamination.json").exists())
+
+    def test_completed_tool_free_packet_event_log_is_clean(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            event_log = Path(tmp) / "events.jsonl"
+            event_log.write_text(
+                json.dumps({"type": "turn.completed", "usage": {"input_tokens": 1}})
+                + "\n",
+                encoding="utf-8",
+            )
+
+            receipt = codex_harness.audit_event_log(event_log)
+
+        self.assertFalse(receipt["contaminated"])
+        self.assertEqual(receipt["turn_completed_count"], 1)
+        self.assertEqual(receipt["integrity_errors"], [])
+
     def test_packet_mode_requires_packet_json_coverage(self):
         rows = [{"question_id": "q1"}, {"question_id": "q2"}]
 
@@ -181,6 +292,8 @@ class CodexHarnessTests(unittest.TestCase):
         self.assertIn("--json", cmd.args)
         self.assertIn("--output-schema", cmd.args)
         self.assertIn("--output-last-message", cmd.args)
+        self.assertIn("--ignore-user-config", cmd.args)
+        self.assertIn("--ignore-rules", cmd.args)
         self.assertEqual(cmd.stdout_path, paths.event_log_path.resolve())
         schema_arg = Path(cmd.args[cmd.args.index("--output-schema") + 1])
         output_arg = Path(cmd.args[cmd.args.index("--output-last-message") + 1])
@@ -211,6 +324,75 @@ class CodexHarnessTests(unittest.TestCase):
             self.assertTrue(loaded["git"]["dirty"])
             self.assertEqual(loaded["files"]["input"]["sha256"], codex_harness.sha256_file(input_file))
             self.assertEqual(loaded, manifest)
+
+            resumed = codex_harness.write_manifest(
+                manifest_path=manifest_path,
+                run_config={"mode": "packet", "substrate": "codex_subscription"},
+                files={"input": input_file, "schema": schema},
+                codex_version="codex-cli 0.142.1",
+                git_commit="abc123",
+                git_dirty=True,
+            )
+            self.assertEqual(resumed, manifest)
+
+            with self.assertRaisesRegex(ValueError, "immutable harness manifest"):
+                codex_harness.write_manifest(
+                    manifest_path=manifest_path,
+                    run_config={"mode": "packet", "substrate": "changed"},
+                    files={"input": input_file, "schema": schema},
+                    codex_version="codex-cli 0.142.1",
+                    git_commit="abc123",
+                    git_dirty=True,
+                )
+
+    def test_live_success_requires_clean_ok_answer_not_file_existence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            answer = Path(tmp) / "answer.json"
+            answer.write_text("{}", encoding="utf-8")
+            base = {
+                "answer_path": str(answer),
+                "event_integrity": {"contaminated": False},
+            }
+
+            self.assertTrue(
+                codex_harness.question_result_succeeded(
+                    {**base, "status": "ok", "returncode": 0}, dry_run=False
+                )
+            )
+            for status, returncode in (
+                ("error", 1),
+                ("timeout", None),
+                ("contaminated", 0),
+            ):
+                with self.subTest(status=status):
+                    self.assertFalse(
+                        codex_harness.question_result_succeeded(
+                            {**base, "status": status, "returncode": returncode},
+                            dry_run=False,
+                        )
+                    )
+            self.assertFalse(
+                codex_harness.question_result_succeeded(
+                    {
+                        **base,
+                        "status": "ok",
+                        "returncode": 0,
+                        "event_integrity": {"contaminated": True},
+                    },
+                    dry_run=False,
+                )
+            )
+            self.assertTrue(
+                codex_harness.question_result_succeeded(
+                    {
+                        "answer_path": str(answer),
+                        "status": "ok",
+                        "returncode": 0,
+                    },
+                    dry_run=False,
+                    mode="mcp",
+                )
+            )
 
 
 if __name__ == "__main__":

@@ -42,9 +42,27 @@ GOLD_FIELD_NAMES = {
 # from revealing its arm or producing a different prompt solely because its
 # packet hash was recomputed.
 MODEL_HIDDEN_PACKET_FIELDS = {
+    "bounds",
     "features",
+    "kind",
+    "plan_only",
+    "planner",
     "pinned_reference_targets",
+    "resource_count",
+    "root_fetch_receipt",
     "sha256",
+    "source_queries",
+    "source_resource_ids",
+}
+
+FORBIDDEN_MODEL_PACKET_KEYS = {
+    "expected_answer",
+    "gold",
+    "gold_answer",
+    "proc_query",
+    "sql_query",
+    "true_answer",
+    "true_fhir_ids",
 }
 
 # Codex JSONL item types that prove the answering process reached outside the
@@ -134,13 +152,55 @@ def _json_block(value: Any) -> str:
 
 
 def model_visible_packet(packet: dict[str, Any]) -> dict[str, Any]:
-    """Return only packet fields that can be shown to the answering model."""
-    return {
-        key: value
-        for key, value in packet.items()
-        if key not in MODEL_HIDDEN_PACKET_FIELDS
-        and not (key == "aggregate_summary" and value is None)
-    }
+    """Return only clinical evidence and relationship citations for the model.
+
+    Traversal version, bounds, missing/capped edges, and aggregate counts are
+    evaluation bookkeeping. A fetched/already-present edge is retained as a
+    compact path citation because that relationship is part of the treatment.
+    """
+    def reject_forbidden(value: Any, path: str = "packet") -> None:
+        if isinstance(value, dict):
+            forbidden = FORBIDDEN_MODEL_PACKET_KEYS & set(value)
+            if forbidden:
+                raise ValueError(
+                    f"forbidden benchmark key in model packet at {path}: "
+                    + ",".join(sorted(forbidden))
+                )
+            for child_key, child in value.items():
+                reject_forbidden(child, f"{path}.{child_key}")
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                reject_forbidden(child, f"{path}[{index}]")
+
+    reject_forbidden(packet)
+    visible: dict[str, Any] = {}
+    for key, value in packet.items():
+        if key in MODEL_HIDDEN_PACKET_FIELDS:
+            continue
+        if key == "aggregate_summary" and value is None:
+            continue
+        if key == "reference_traversal":
+            traversal = value if isinstance(value, dict) else {}
+            receipts = traversal.get("path_receipts")
+            citations = []
+            if isinstance(receipts, list):
+                for receipt in receipts:
+                    if not isinstance(receipt, dict) or receipt.get("status") not in {
+                        "fetched",
+                        "already_present",
+                    }:
+                        continue
+                    citations.append(
+                        {
+                            field: receipt.get(field)
+                            for field in ("depth", "from", "path", "to")
+                        }
+                    )
+            if citations:
+                visible[key] = {"path_citations": citations}
+            continue
+        visible[key] = value
+    return visible
 
 
 def build_prompt(
@@ -244,6 +304,8 @@ def build_codex_command(
         "exec",
         "--skip-git-repo-check",
         "--ephemeral",
+        "--ignore-user-config",
+        "--ignore-rules",
         "--json",
         "--output-schema",
         str(schema_path),
@@ -304,12 +366,18 @@ def audit_event_log(event_log_path: Path) -> dict[str, Any]:
     """
     findings: list[dict[str, Any]] = []
     parse_errors: list[int] = []
+    integrity_errors: list[str] = []
+    event_count = 0
+    turn_completed_count = 0
     if not event_log_path.exists():
         return {
-            "contaminated": False,
+            "contaminated": True,
             "event_log_exists": False,
             "findings": findings,
             "parse_error_lines": parse_errors,
+            "integrity_errors": ["event_log_missing"],
+            "event_count": 0,
+            "turn_completed_count": 0,
         }
     for line_number, line in enumerate(
         event_log_path.read_text(encoding="utf-8", errors="replace").splitlines(),
@@ -321,8 +389,12 @@ def audit_event_log(event_log_path: Path) -> dict[str, Any]:
             parse_errors.append(line_number)
             continue
         if not isinstance(event, dict):
+            integrity_errors.append(f"event_not_object:{line_number}")
             continue
+        event_count += 1
         event_type = _normalized_event_type(event.get("type"))
+        if event_type == "turn_completed":
+            turn_completed_count += 1
         item = event.get("item") if isinstance(event.get("item"), dict) else {}
         item_type = _normalized_event_type(item.get("type"))
         if _is_tool_event_type(event_type) or _is_tool_event_type(item_type):
@@ -334,13 +406,21 @@ def audit_event_log(event_log_path: Path) -> dict[str, Any]:
                     "item_id": str(item.get("id")) if item.get("id") is not None else None,
                 }
             )
+    if event_count == 0:
+        integrity_errors.append("event_log_empty")
+    if turn_completed_count == 0:
+        integrity_errors.append("turn_completed_missing")
     return {
-        # A malformed line makes the audit unverifiable. Fail closed rather
-        # than accepting an answer whose tool history may have been truncated.
-        "contaminated": bool(findings or parse_errors),
+        # A malformed, empty, or unterminated stream makes the audit
+        # unverifiable. Fail closed rather than accepting an answer whose tool
+        # history may have been truncated or deleted.
+        "contaminated": bool(findings or parse_errors or integrity_errors),
         "event_log_exists": True,
         "findings": findings,
         "parse_error_lines": parse_errors,
+        "integrity_errors": integrity_errors,
+        "event_count": event_count,
+        "turn_completed_count": turn_completed_count,
     }
 
 
@@ -457,8 +537,7 @@ def write_manifest(
             "path": str(path),
             "sha256": sha256_file(path),
         }
-    manifest = {
-        "created_at": dt.datetime.now(dt.UTC).isoformat(),
+    identity = {
         "substrate": "codex",
         "codex_version": codex_version,
         "python_version": sys.version.split()[0],
@@ -468,8 +547,65 @@ def write_manifest(
         "files": file_entries,
     }
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    manifest_path.write_text(_json_block(manifest) + "\n", encoding="utf-8")
+    if manifest_path.exists():
+        existing = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if not isinstance(existing, dict):
+            raise ValueError("immutable harness manifest is not a JSON object")
+        existing_identity = {
+            key: value for key, value in existing.items() if key != "created_at"
+        }
+        if existing_identity != identity:
+            raise ValueError(
+                "immutable harness manifest does not match this resume configuration"
+            )
+        return existing
+    manifest = {
+        "created_at": dt.datetime.now(dt.UTC).isoformat(),
+        **identity,
+    }
+    _write_json_atomic(manifest_path, manifest)
     return manifest
+
+
+def _write_json_atomic(path: Path, value: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temporary.write_text(_json_block(value) + "\n", encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def _load_summary_items(path: Path) -> dict[str, dict[str, Any]]:
+    if not path.exists():
+        return {}
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict) or not isinstance(value.get("questions"), list):
+        raise ValueError("existing summary.json has an invalid shape")
+    return {
+        str(item["question_id"]): item
+        for item in value["questions"]
+        if isinstance(item, dict) and item.get("question_id") is not None
+    }
+
+
+def question_result_succeeded(
+    item: dict[str, Any], *, dry_run: bool, mode: str = "packet"
+) -> bool:
+    """Return true only for a complete, audited result from this invocation."""
+    if dry_run:
+        return item.get("status") == "dry_run"
+    if item.get("status") not in {"ok", "skipped"}:
+        return False
+    if item.get("status") == "ok" and item.get("returncode") != 0:
+        return False
+    if mode == "packet":
+        integrity = item.get("event_integrity")
+        if (
+            not isinstance(integrity, dict)
+            or integrity.get("contaminated") is not False
+        ):
+            return False
+    answer_path = item.get("answer_path")
+    return bool(answer_path and Path(str(answer_path)).is_file())
 
 
 def run_question(command: CodexCommand, prompt: str, *, timeout: int, dry_run: bool) -> dict[str, Any]:
@@ -550,18 +686,36 @@ def main() -> int:
         "dry_run": args.dry_run,
         "live": args.live,
         "question_count": len(rows),
+        "timeout_seconds": args.timeout,
+        "extra_instruction": args.extra_instruction,
+        "codex_bin": args.codex_bin,
+        "ignore_user_config": True,
+        "ignore_rules": True,
     }
     git_commit, git_dirty = git_commit_and_dirty(repo)
     manifest = write_manifest(
         manifest_path=args.out_dir / "manifest.json",
         run_config=run_config,
-        files={"input": args.input, "packet_json": args.packet_json, "schema": args.schema, "skill_file": args.skill_file},
+        files={
+            "input": args.input,
+            "packet_json": args.packet_json,
+            "schema": args.schema,
+            "skill_file": args.skill_file,
+            "harness": Path(__file__).resolve(),
+        },
         codex_version=run_version(args.codex_bin),
         git_commit=git_commit,
         git_dirty=git_dirty,
     )
 
-    summary = []
+    summary_path = args.out_dir / "summary.json"
+    summary_by_id = _load_summary_items(summary_path)
+    current_summary: list[dict[str, Any]] = []
+
+    def record(item: dict[str, Any]) -> None:
+        current_summary.append(item)
+        summary_by_id[str(item["question_id"])] = item
+
     for row in rows:
         qid = str(row.get("question_id"))
         packet = packets.get(qid)
@@ -575,8 +729,9 @@ def main() -> int:
         )
         paths = paths_for_question(args.out_dir, qid)
         contamination_path = paths.answer_path.with_name("contamination.json")
+        integrity = None
         if args.skip_existing and contamination_path.exists():
-            summary.append(
+            record(
                 {
                     "question_id": qid,
                     "status": "contaminated",
@@ -584,7 +739,10 @@ def main() -> int:
                     "answer_path": str(paths.answer_path),
                     "event_log_path": str(paths.event_log_path),
                     "contamination_path": str(contamination_path),
-                    "error": "packet answer previously quarantined after tool/command use",
+                    "event_integrity": json.loads(
+                        contamination_path.read_text(encoding="utf-8")
+                    ),
+                    "error": "packet answer previously quarantined after event-log integrity failure",
                 }
             )
             continue
@@ -595,7 +753,7 @@ def main() -> int:
                     answer_path=paths.answer_path,
                 )
                 if integrity["contaminated"]:
-                    summary.append(
+                    record(
                         {
                             "question_id": qid,
                             "status": "contaminated",
@@ -604,11 +762,20 @@ def main() -> int:
                             "event_log_path": str(paths.event_log_path),
                             "contamination_path": str(contamination_path),
                             "event_integrity": integrity,
-                            "error": "packet answer quarantined after tool/command use",
+                            "error": "packet answer quarantined after event-log integrity failure",
                         }
                     )
                     continue
-            summary.append({"question_id": qid, "status": "skipped"})
+            record(
+                {
+                    "question_id": qid,
+                    "status": "skipped",
+                    "returncode": None,
+                    "answer_path": str(paths.answer_path),
+                    "event_log_path": str(paths.event_log_path),
+                    "event_integrity": integrity,
+                }
+            )
             continue
         paths.prompt_path.write_text(prompt, encoding="utf-8")
         with question_working_directory(mode=args.mode, requested_cwd=args.cwd) as command_cwd:
@@ -637,7 +804,6 @@ def main() -> int:
                 encoding="utf-8",
             )
             result = run_question(command, prompt, timeout=args.timeout, dry_run=args.dry_run)
-        integrity = None
         if args.mode == "packet" and not args.dry_run:
             integrity = enforce_packet_event_integrity(
                 event_log_path=paths.event_log_path,
@@ -647,8 +813,13 @@ def main() -> int:
                 result = {
                     "status": "contaminated",
                     "returncode": result.get("returncode"),
-                    "error": "packet answer quarantined after tool/command use",
+                    "error": "packet answer quarantined after event-log integrity failure",
                 }
+        if result["status"] not in {"ok", "dry_run"} and paths.answer_path.exists():
+            # Never leave a nonzero/timeout attempt looking resumable merely
+            # because Codex wrote a partial last message before failing.
+            failed_answer_path = paths.answer_path.with_name("answer.failed.json")
+            paths.answer_path.replace(failed_answer_path)
         item = {
             "question_id": qid,
             "status": result["status"],
@@ -663,16 +834,23 @@ def main() -> int:
             item["event_integrity"] = integrity
             if integrity["contaminated"]:
                 item["contamination_path"] = str(contamination_path)
-        summary.append(item)
+        record(item)
 
-    (args.out_dir / "summary.json").write_text(_json_block({"manifest": manifest, "questions": summary}) + "\n", encoding="utf-8")
-    answered = sum(1 for item in summary if item.get("status") == "skipped" or Path(item.get("answer_path", "")).exists())
-    failed = len(summary) - answered
+    cumulative_summary = [summary_by_id[qid] for qid in sorted(summary_by_id)]
+    _write_json_atomic(
+        summary_path, {"manifest": manifest, "questions": cumulative_summary}
+    )
+    answered = sum(
+        question_result_succeeded(item, dry_run=args.dry_run, mode=args.mode)
+        for item in current_summary
+    )
+    failed = len(current_summary) - answered
     print(
         json.dumps(
             {
                 "out_dir": str(args.out_dir),
-                "questions": len(summary),
+                "questions": len(current_summary),
+                "cumulative_questions": len(cumulative_summary),
                 "answered_or_skipped": answered,
                 "failed": failed,
                 "dry_run": args.dry_run,
@@ -684,7 +862,10 @@ def main() -> int:
     # 2026-07-11 silent 0/50 on a usage-limit error): exit non-zero so callers
     # and logs cannot mistake a dead run for a completed one.
     if not args.dry_run and failed:
-        print(f"ERROR: {failed} of {len(summary)} questions produced no answer file", flush=True)
+        print(
+            f"ERROR: {failed} of {len(current_summary)} questions failed completion/integrity validation",
+            flush=True,
+        )
         return 1
     return 0
 

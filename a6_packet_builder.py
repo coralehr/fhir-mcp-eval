@@ -30,6 +30,10 @@ GOLD_FIELDS = {"true_answer", "true_fhir_ids", "sql_query", "proc_query"}
 # (adversarial review 2026-07-11, finding 1). Whitelist, not blacklist.
 QUESTION_ONLY_FIELDS = {"split", "question_id", "question", "assumption", "patient_fhir_id"}
 
+
+class PacketFetchError(RuntimeError):
+    """A redacted transport/incompleteness failure that invalidates a packet."""
+
 QO_PLANNER_VERSION = "qo-v2"
 A6A_MAX_TOTAL_RESOURCES = 200
 A6A_MAX_PACKET_CHARS = 160_000
@@ -990,6 +994,11 @@ def bound_resources(
             order = list(reversed(items))  # newest first
         ordered_by_type[rtype] = order
 
+    patient_chars = sum(len(_json(resource)) for resource in patients)
+    if len(patients) > max_total_resources or patient_chars > max_packet_chars:
+        raise ValueError(
+            "Patient resources exceed the frozen packet count/character bounds"
+        )
     selected: list[dict[str, Any]] = list(patients)
     chars = sum(len(_json(r)) for r in selected)
     budget_hit = False
@@ -1004,7 +1013,7 @@ def bound_resources(
             while cursors[rtype] < min(reserve_n, len(order)) and len(selected) < max_total_resources:
                 candidate = order[cursors[rtype]]
                 candidate_chars = len(_json(candidate))
-                if chars + candidate_chars > max_packet_chars and selected:
+                if chars + candidate_chars > max_packet_chars:
                     budget_hit = True
                     break
                 selected.append(candidate)
@@ -1022,7 +1031,7 @@ def bound_resources(
                 continue
             candidate = ordered_by_type[rtype][i]
             candidate_chars = len(_json(candidate))
-            if chars + candidate_chars > max_packet_chars and selected:
+            if chars + candidate_chars > max_packet_chars:
                 budget_hit = True
                 cursors[rtype] = len(ordered_by_type[rtype])  # this type is done
                 continue
@@ -1071,6 +1080,21 @@ def relax_query(path: str) -> str | None:
     return None
 
 
+def _safe_fetch_error(exc: Exception) -> dict[str, Any]:
+    """Extract stable failure metadata without exception text, URLs, or bodies."""
+    status = getattr(exc, "status_code", None)
+    if not isinstance(status, int):
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None)
+    if not isinstance(status, int):
+        code = getattr(exc, "code", None)
+        status = code if isinstance(code, int) else None
+    error: dict[str, Any] = {"type": type(exc).__name__}
+    if status is not None:
+        error["http_status"] = status
+    return error
+
+
 def fetch_resources(
     plan: list[dict[str, Any]],
     *,
@@ -1084,28 +1108,67 @@ def fetch_resources(
     out = {}
     for item in plan:
         path = item["path"]
-        attempts = []
+        relaxation_attempts: list[dict[str, Any]] = []
+        initial_result_count: int | None = None
         resources: list[dict[str, Any]] = []
-        try:
-            current: str | None = path
-            while current is not None:
-                attempts.append(current)
-                resources = client.search_with_pagination(current)
-                if resources:
-                    break
-                current = (
-                    None
-                    if item.get("relaxation_policy") == "none"
-                    else relax_query(current)
+        current: str | None = path
+        attempt_index = 0
+        while current is not None:
+            try:
+                resources = client.search_with_pagination(
+                    current, max_results=per_query_cap
                 )
-            if per_query_cap is not None and len(resources) > per_query_cap:
-                # `_sort` on the query makes this a meaningful prefix, not a random slice.
-                resources = resources[:per_query_cap]
-            out[path] = resources
-        except Exception as exc:
-            out[path] = [{"resourceType": "OperationOutcome", "issue": [{"diagnostics": str(exc)}]}]
-        if len(attempts) > 1:
-            item["relaxation_attempts"] = attempts[1:]
+            except Exception as exc:
+                error = _safe_fetch_error(exc)
+                receipt: dict[str, Any] = {
+                    "status": "http_error" if "http_status" in error else "error",
+                    "initial_result_count": initial_result_count,
+                    "relaxation_attempts": relaxation_attempts,
+                    "pre_bound_count": 0,
+                    "retained_count": 0,
+                    "dropped_count": 0,
+                    "error": error,
+                }
+                item["fetch_receipt"] = receipt
+                status_suffix = (
+                    f" HTTP {error['http_status']}" if "http_status" in error else ""
+                )
+                raise PacketFetchError(
+                    f"FHIR packet fetch failed: {error['type']}{status_suffix}"
+                ) from None
+            result_count = len(resources)
+            if attempt_index == 0:
+                initial_result_count = result_count
+            else:
+                relaxation_attempts.append(
+                    {"path": current, "result_count": result_count}
+                )
+            if resources:
+                break
+            current = (
+                None
+                if item.get("relaxation_policy") == "none"
+                else relax_query(current)
+            )
+            attempt_index += 1
+
+        pre_bound_count = len(resources)
+        if per_query_cap is not None and len(resources) > per_query_cap:
+            resources = resources[:per_query_cap]
+        retained_count = len(resources)
+        out[path] = resources
+        if relaxation_attempts:
+            item["relaxation_attempts"] = [
+                attempt["path"] for attempt in relaxation_attempts
+            ]
+        item["fetch_receipt"] = {
+            "status": "ok",
+            "initial_result_count": initial_result_count,
+            "relaxation_attempts": relaxation_attempts,
+            "pre_bound_count": pre_bound_count,
+            "retained_count": retained_count,
+            "dropped_count": pre_bound_count - retained_count,
+        }
     return out
 
 
@@ -1160,6 +1223,13 @@ def build_packet_record(
             max_packet_chars=max_packet_chars,
             endpoint_reserve="endpoint-reserve" in features,
         )
+    root_fetch_receipt = None
+    if not plan_only:
+        root_fetch_receipt = {
+            "pre_bound_count": len(universe),
+            "retained_count": len(resources),
+            "dropped_count": len(universe) - len(resources),
+        }
     pinned_count = 0
     if not plan_only and "include-pinning" in features:
         resources, pinned_count = pin_reference_targets(resources, universe)
@@ -1176,10 +1246,13 @@ def build_packet_record(
             raise ValueError("micro-traversal requires a reference_fetcher")
         traversal = traverse_exact_references(resources, fetch_by_ids=reference_fetcher)
         resources = _dedupe_resources(resources + traversal["resources"])
-        if traversal["path_receipts"]:
-            reference_traversal = {
-                key: value for key, value in traversal.items() if key != "resources"
-            }
+        # Keep a complete audit receipt even when no eligible edge exists. The
+        # zero-edge outcome is part of the frozen traversal contract and lets
+        # the preflight gate distinguish "ran and found nothing" from "did not
+        # run" without exposing bookkeeping to the answering model.
+        reference_traversal = {
+            key: value for key, value in traversal.items() if key != "resources"
+        }
     resource_ids = [rid for rid in (_resource_id(r) for r in resources) if rid]
     applied_features = features
     if features and features.issubset({"micro-vocab", "micro-traversal"}) and not is_microbiology_question(
@@ -1201,6 +1274,7 @@ def build_packet_record(
         "source_resource_ids": [] if plan_only else sorted(resource_ids),
         "source_queries": plan,
         "bounds": bounds_stats,
+        "root_fetch_receipt": root_fetch_receipt,
     }
     if reference_traversal is not None:
         packet["reference_traversal"] = reference_traversal
@@ -1215,11 +1289,35 @@ def build_packet_record(
     }
 
 
-def load_rows(input_path: Path, *, limit: int | None = None, split: str | None = "test") -> list[dict[str, Any]]:
+def load_question_ids(path: Path) -> list[str]:
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict) or not isinstance(value.get("question_ids"), list):
+        raise ValueError("question spec must contain question_ids")
+    question_ids = [str(item) for item in value["question_ids"]]
+    if not question_ids or len(question_ids) != len(set(question_ids)):
+        raise ValueError("question spec IDs must be non-empty and unique")
+    return question_ids
+
+
+def load_rows(
+    input_path: Path,
+    *,
+    limit: int | None = None,
+    split: str | None = "test",
+    question_ids: list[str] | None = None,
+) -> list[dict[str, Any]]:
     with input_path.open(newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
     if split:
         rows = [r for r in rows if r.get("split") == split]
+    if question_ids is not None:
+        by_id = {str(row.get("question_id")): row for row in rows}
+        missing = [question_id for question_id in question_ids if question_id not in by_id]
+        if missing:
+            raise ValueError(
+                f"question spec contains {len(missing)} IDs missing from input"
+            )
+        rows = [by_id[question_id] for question_id in question_ids]
     if limit is not None:
         rows = rows[:limit]
     return rows
@@ -1252,6 +1350,14 @@ def write_manifest(path: Path, *, input_path: Path, output_path: Path, args: arg
             "count": args.count,
             "plan_only": args.plan_only,
             "split": args.split,
+            "question_spec": (
+                {
+                    "path": str(args.question_spec),
+                    "sha256": sha256_file(args.question_spec),
+                }
+                if getattr(args, "question_spec", None)
+                else None
+            ),
             "planner": getattr(args, "planner", "metadata-oracle"),
             "features": sorted(features),
             "planner_version": QO_PLANNER_VERSION if getattr(args, "planner", "") == "question-only" else "metadata-v1",
@@ -1301,6 +1407,12 @@ def main() -> int:
     parser.add_argument("--manifest", type=Path, default=Path("runs/a6_query_aware_manifest.json"))
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--split", default="test")
+    parser.add_argument(
+        "--question-spec",
+        type=Path,
+        default=None,
+        help="optional frozen JSON question_ids schedule to build in exact order",
+    )
     parser.add_argument("--count", type=int, default=100)
     parser.add_argument("--plan-only", action="store_true")
     parser.add_argument(
@@ -1333,7 +1445,18 @@ def main() -> int:
         )
     except ValueError as exc:
         parser.error(str(exc))
-    rows = load_rows(args.input, limit=args.limit, split=args.split)
+    try:
+        question_ids = (
+            load_question_ids(args.question_spec) if args.question_spec else None
+        )
+        rows = load_rows(
+            args.input,
+            limit=args.limit,
+            split=args.split,
+            question_ids=question_ids,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        parser.error(str(exc))
     records = []
     client = None
     if not args.plan_only:

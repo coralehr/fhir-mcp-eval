@@ -1,9 +1,34 @@
 import unittest
+import json
+import tempfile
+from pathlib import Path
 
 import a6_packet_builder as a6
+from fhir_client import FHIRPaginationError, FHIRSearchError
+from medplum_fhir_client import MedplumFHIRClient
 
 
 class A6PacketBuilderTests(unittest.TestCase):
+    def test_frozen_question_spec_filters_and_orders_packet_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            input_path = root / "input.csv"
+            input_path.write_text(
+                "question_id,split,question\nq1,test,one\nq2,test,two\nq3,valid,three\n",
+                encoding="utf-8",
+            )
+            spec_path = root / "spec.json"
+            spec_path.write_text(
+                json.dumps({"question_ids": ["q2", "q1"]}), encoding="utf-8"
+            )
+
+            rows = a6.load_rows(
+                input_path,
+                split="test",
+                question_ids=a6.load_question_ids(spec_path),
+            )
+
+        self.assertEqual([row["question_id"] for row in rows], ["q2", "q1"])
     def test_infers_observation_month_window_from_question_metadata(self):
         row = {
             "question_id": "q1",
@@ -53,6 +78,98 @@ class A6PacketBuilderTests(unittest.TestCase):
         self.assertEqual(intent["temporal_policy"], "recent")
         self.assertEqual(intent["date_windows"][0]["start"], "2136-01-01")
         self.assertEqual(len(plan), 1)
+
+    def test_root_bounds_never_admit_oversized_first_resource(self):
+        kept, stats = a6.bound_resources(
+            [{"resourceType": "Observation", "id": "huge", "valueString": "x" * 500}],
+            temporal_policy="recent",
+            max_total_resources=10,
+            max_packet_chars=100,
+        )
+
+        self.assertEqual(kept, [])
+        self.assertLessEqual(stats["char_count"], 100)
+        self.assertTrue(stats["char_budget_hit"])
+
+    def test_mandatory_patient_that_cannot_fit_fails_packet_build(self):
+        with self.assertRaisesRegex(ValueError, "Patient resources exceed"):
+            a6.bound_resources(
+                [{"resourceType": "Patient", "id": "p1", "name": "x" * 500}],
+                temporal_policy="recent",
+                max_total_resources=1,
+                max_packet_chars=100,
+            )
+
+    def test_fetch_receipt_is_precise_and_transport_failure_aborts(self):
+        precise = "Observation?patient=p1&code:text=heart"
+        relaxed = "Observation?patient=p1"
+
+        class Client:
+            def search_with_pagination(self, path, *, max_results=None):
+                self.max_results = max_results
+                if path == precise:
+                    return []
+                return [
+                    {"resourceType": "Observation", "id": "one"},
+                    {"resourceType": "Observation", "id": "two"},
+                ]
+
+        plan = [{"resource_type": "Observation", "path": precise, "reason": "test"}]
+        resources = a6.fetch_resources(plan, per_query_cap=1, client=Client())
+        self.assertEqual([item["id"] for item in resources[precise]], ["one"])
+        self.assertEqual(
+            plan[0]["fetch_receipt"],
+            {
+                "status": "ok",
+                "initial_result_count": 0,
+                "relaxation_attempts": [{"path": relaxed, "result_count": 2}],
+                "pre_bound_count": 2,
+                "retained_count": 1,
+                "dropped_count": 1,
+            },
+        )
+
+        class FailingClient:
+            def search_with_pagination(self, _path, *, max_results=None):
+                raise FHIRSearchError(400)
+
+        failed_plan = [
+            {"resource_type": "Observation", "path": precise, "reason": "test"}
+        ]
+        with self.assertRaisesRegex(a6.PacketFetchError, "HTTP 400"):
+            a6.fetch_resources(failed_plan, client=FailingClient())
+        self.assertEqual(failed_plan[0]["fetch_receipt"]["status"], "http_error")
+
+    def test_medplum_http_and_incomplete_pagination_fail_closed(self):
+        class Response:
+            def __init__(self, status_code, *, next_url=None):
+                self.status_code = status_code
+                self._next_url = next_url
+
+            def json(self):
+                links = (
+                    [{"relation": "next", "url": self._next_url}]
+                    if self._next_url
+                    else []
+                )
+                return {"entry": [], "link": links}
+
+        class ErrorSession:
+            def get(self, _path):
+                return Response(429)
+
+        client = MedplumFHIRClient.__new__(MedplumFHIRClient)
+        client.session = ErrorSession()
+        with self.assertRaises(FHIRSearchError):
+            client._fetch_resources_with_pagination("start")
+
+        class EndlessSession:
+            def get(self, _path):
+                return Response(200, next_url="next")
+
+        client.session = EndlessSession()
+        with self.assertRaises(FHIRPaginationError):
+            client._fetch_resources_with_pagination("start")
 
     def test_does_not_emit_gold_fields_in_packet_record(self):
         row = {

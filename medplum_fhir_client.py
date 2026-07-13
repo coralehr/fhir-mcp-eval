@@ -14,13 +14,14 @@ Activated transparently: get_fhir_client() returns this when MEDPLUM_BASE_URL is
 import os
 import json
 import secrets
+import time as _time
 import hashlib
 import base64
 import urllib.request
 import urllib.parse
 import urllib.error
 
-from fhir_client import FHIRClient
+from fhir_client import FHIRClient, FHIRPaginationError, FHIRSearchError
 
 
 def _b64u(b: bytes) -> str:
@@ -56,7 +57,6 @@ def medplum_login(base_url: str) -> str:
     return tok["access_token"]
 
 
-import time as _time
 _TOKEN_CACHE = {"value": None, "exp": 0.0}
 
 
@@ -124,16 +124,20 @@ class MedplumFHIRClient(FHIRClient):
         self.session = _MedplumSession(base)
         self.metadata = {"backend": "medplum", "fhir_store_url": self.fhir_store_url}
 
-    def search_with_pagination(self, query_string):
+    def search_with_pagination(self, query_string, *, max_results=None):
         # Inject a large page size. Medplum paginates at 20/page by default, so a patient with 11k+
         # observations would take ~560 requests -> saturates Medplum's rate limit. _count=1000 (Medplum's
         # max page) drops that to ~12 requests. Same resources returned; far fewer calls = no 429 storm.
         if "_count=" not in query_string:
             sep = "&" if "?" in query_string else "?"
             query_string = f"{query_string}{sep}_count=1000"
-        return super().search_with_pagination(query_string)
+        return super().search_with_pagination(
+            query_string, max_results=max_results
+        )
 
-    def _fetch_resources_with_pagination(self, initial_resource_path):
+    def _fetch_resources_with_pagination(
+        self, initial_resource_path, *, max_results=None
+    ):
         # Medplum caps OFFSET-based pagination at offset 10000. For very high-volume patients (>10k
         # resources of a type) the next-link eventually requests offset>10000 and 400s. Cap retrieval at
         # the first 10 pages (=10000 resources at _count=1000) and stop gracefully — ample for the QA
@@ -142,12 +146,24 @@ class MedplumFHIRClient(FHIRClient):
         for _ in range(10):
             resp = self.session.get(path)
             if resp.status_code >= 400:
-                break  # offset cap or other error -> return what we have
+                raise FHIRSearchError(resp.status_code)
             data = resp.json()
             for e in data.get("entry", []):
                 all_resources.append(self.remove_fields(e["resource"], ["text", "meta"]))
-            nxt = next((l.get("url") for l in data.get("link", []) if l.get("relation") == "next"), None)
+                if max_results is not None and len(all_resources) >= max_results:
+                    return all_resources[:max_results]
+            nxt = next(
+                (
+                    link.get("url")
+                    for link in data.get("link", [])
+                    if link.get("relation") == "next"
+                ),
+                None,
+            )
             if not nxt:
-                break
+                return all_resources
             path = nxt
-        return all_resources
+        # Reaching the local page ceiling with a next link is a partial result,
+        # not a successful empty/complete query. Packet construction must fail
+        # rather than differentially truncate a treatment arm.
+        raise FHIRPaginationError()

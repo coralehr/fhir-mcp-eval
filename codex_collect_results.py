@@ -27,21 +27,39 @@ def load_rows(input_path: Path) -> dict[str, dict[str, Any]]:
 
 def load_summary(run_dir: Path) -> list[dict[str, Any]]:
     path = run_dir / "summary.json"
+    questions: list[dict[str, Any]] = []
     if path.exists():
         data = json.loads(path.read_text(encoding="utf-8"))
-        return list(data.get("questions") or [])
-    questions = []
-    for answer_path in sorted((run_dir / "questions").glob("*/answer.json")):
-        questions.append(
+        questions = [
+            item for item in list(data.get("questions") or []) if isinstance(item, dict)
+        ]
+
+    # Older single-question harness invocations overwrote summary.json. Merge
+    # every durable question directory so collection cannot silently collapse
+    # a multi-question arm to the final invocation.
+    by_id = {
+        str(item.get("question_id")): item
+        for item in questions
+        if item.get("question_id") is not None
+    }
+    for question_dir in sorted((run_dir / "questions").glob("*")):
+        if not question_dir.is_dir():
+            continue
+        qid = question_dir.name
+        answer_path = question_dir / "answer.json"
+        event_log_path = question_dir / "events.jsonl"
+        item = by_id.setdefault(
+            qid,
             {
-                "question_id": answer_path.parent.name,
-                "status": "unknown",
+                "question_id": qid,
+                "status": codex_harness.terminal_question_status(question_dir)
+                or "unknown",
                 "returncode": None,
-                "answer_path": str(answer_path),
-                "event_log_path": str(answer_path.with_name("events.jsonl")),
-            }
+            },
         )
-    return questions
+        item.setdefault("answer_path", str(answer_path))
+        item.setdefault("event_log_path", str(event_log_path))
+    return [by_id[qid] for qid in sorted(by_id)]
 
 
 def load_run_mode(run_dir: Path) -> str | None:
