@@ -150,12 +150,24 @@ class Qt4PacketGateTests(unittest.TestCase):
         with self.spec_path.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.DictWriter(
                 handle,
-                fieldnames=["question_id", "main_table_name", "true_fhir_ids"],
+                fieldnames=[
+                    "question_id",
+                    "question",
+                    "question_with_context",
+                    "patient_fhir_id",
+                    "assumption",
+                    "main_table_name",
+                    "true_fhir_ids",
+                ],
             )
             writer.writeheader()
             writer.writerow(
                 {
                     "question_id": "q-micro",
+                    "question": "What organism was found in the culture?",
+                    "question_with_context": "",
+                    "patient_fhir_id": "p1",
+                    "assumption": "",
                     "main_table_name": "microbiologyevents",
                     "true_fhir_ids": repr({"Observation": ["g1", "g2"]}),
                 }
@@ -163,6 +175,10 @@ class Qt4PacketGateTests(unittest.TestCase):
             writer.writerow(
                 {
                     "question_id": "q-other",
+                    "question": "What diagnosis was recorded?",
+                    "question_with_context": "",
+                    "patient_fhir_id": "p1",
+                    "assumption": "",
                     "main_table_name": "diagnoses_icd",
                     "true_fhir_ids": repr({"Condition": ["c1"]}),
                 }
@@ -295,6 +311,9 @@ class Qt4PacketGateTests(unittest.TestCase):
         self.assertEqual(
             report["equivalence"]["non_micro_prompt"], {"matched": 1, "total": 1}
         )
+        self.assertEqual(
+            report["equivalence"]["effective_prompt_metadata"]["matched"], 6
+        )
 
         overall = report["evaluation_only_gold_metrics"]["recall"]["overall"]
         self.assertEqual(overall["a6a"]["id_weighted_recall"], 1 / 3)
@@ -352,6 +371,73 @@ class Qt4PacketGateTests(unittest.TestCase):
 
         report = self._assert_failed("micro_dispatch_v1_matches_analysis_stratum")
         self.assertEqual(report["dispatch"]["analysis_non_microbiology_dispatched"], 1)
+
+    def test_question_spec_retains_exact_frozen_input_rows(self):
+        spec = gate.load_question_spec(self.spec_path)
+
+        self.assertEqual(
+            spec.input_rows["q-micro"]["question"],
+            "What organism was found in the culture?",
+        )
+        self.assertEqual(spec.input_rows["q-micro"]["patient_fhir_id"], "p1")
+        self.assertEqual(spec.input_rows["q-micro"]["assumption"], "")
+
+    def test_prompt_affecting_packet_metadata_is_bound_to_frozen_input(self):
+        mutations = {
+            "question": "Tampered question",
+            "question_with_context": "Tampered context",
+            "patient_fhir_id": "Patient/tampered",
+            "assumption": "Tampered assumption",
+        }
+        for field, value in mutations.items():
+            with self.subTest(field=field):
+                changed = json.loads(json.dumps(self.a6_records))
+                changed[0][field] = value
+                self._write_arm("a6a", changed)
+
+                report = self._assert_failed(
+                    "effective_prompt_metadata_matches_frozen_input"
+                )
+                issues = report["equivalence"]["effective_prompt_metadata"][
+                    "failures"
+                ]["a6a"]["q-micro"]
+                self.assertIn(f"metadata_changed:{field}", issues)
+
+                self._write_arm("a6a", self.a6_records)
+
+    def test_packet_question_id_cannot_replace_frozen_question_id(self):
+        changed = json.loads(json.dumps(self.a6_records))
+        changed[0]["question_id"] = "q-tampered"
+        self._write_arm("a6a", changed)
+
+        report = self._assert_failed(
+            "effective_prompt_metadata_matches_frozen_input"
+        )
+
+        self.assertIn(
+            "packet_record_missing",
+            report["equivalence"]["effective_prompt_metadata"]["failures"][
+                "a6a"
+            ]["q-micro"],
+        )
+
+    def test_non_micro_prompt_identity_uses_frozen_input_overlay(self):
+        for arm, records in (
+            ("a6a", self.a6_records),
+            ("qt4v", self.v_records),
+            ("qt4t", self.t_records),
+        ):
+            changed = json.loads(json.dumps(records))
+            for field in ("question", "patient_fhir_id", "assumption"):
+                changed[1].pop(field, None)
+            self._write_arm(arm, changed)
+
+        report = self._report()
+
+        self.assertTrue(report["passed"])
+        self.assertEqual(
+            report["equivalence"]["non_micro_prompt"], {"matched": 1, "total": 1}
+        )
 
     def test_nested_benchmark_answer_keys_are_rejected_without_copying_values(self):
         for forbidden_key in sorted(gate.FORBIDDEN_PACKET_KEYS):

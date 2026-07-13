@@ -63,6 +63,13 @@ MICRO_DISPATCH_TERMS = (
 )
 MICRO_VOCABULARY_VERSION = "micro-v1"
 MICRO_CODE_TEXT_TERMS = ("culture", "gram stain", "screen", "smear")
+PROMPT_METADATA_FIELDS = (
+    "question_id",
+    "question",
+    "question_with_context",
+    "patient_fhir_id",
+    "assumption",
+)
 FORBIDDEN_PACKET_KEYS = frozenset(
     {
         "true_answer",
@@ -109,6 +116,7 @@ class QuestionSpec:
     scheduled_ids: tuple[str, ...]
     microbiology_ids: frozenset[str]
     gold_ids: dict[str, frozenset[str]]
+    input_rows: dict[str, dict[str, Any]]
 
 
 def _canonical_json(value: Any) -> str:
@@ -251,7 +259,9 @@ def _spec_from_rows(rows: Iterable[dict[str, Any]], *, source: Path) -> Question
     seen: set[str] = set()
     microbiology: set[str] = set()
     gold: dict[str, frozenset[str]] = {}
+    input_rows: dict[str, dict[str, Any]] = {}
     for row in rows:
+        row = dict(row)
         question_id = _question_id(row.get("question_id"), source=source)
         if question_id in seen:
             raise GateInputError(f"duplicate question_id {question_id!r} in {source}")
@@ -260,12 +270,14 @@ def _spec_from_rows(rows: Iterable[dict[str, Any]], *, source: Path) -> Question
         if _row_is_microbiology(row):
             microbiology.add(question_id)
         gold[question_id] = _parse_gold_ids(row.get("true_fhir_ids"))
+        input_rows[question_id] = row
     if not scheduled:
         raise GateInputError(f"question specification has no rows: {source}")
     return QuestionSpec(
         scheduled_ids=tuple(sorted(scheduled)),
         microbiology_ids=frozenset(microbiology),
         gold_ids=gold,
+        input_rows=input_rows,
     )
 
 
@@ -366,8 +378,44 @@ def _features(record: dict[str, Any] | None) -> tuple[str, ...]:
     return tuple(sorted(str(feature) for feature in features))
 
 
-def _prompt(record: dict[str, Any]) -> str:
-    return build_prompt(record, mode="packet")
+def _effective_prompt_row(
+    input_row: dict[str, Any], record: dict[str, Any]
+) -> dict[str, Any]:
+    """Reproduce the harness's exact frozen-input then packet-row overlay."""
+    return {**input_row, **record}
+
+
+def _prompt(input_row: dict[str, Any], record: dict[str, Any]) -> str:
+    return build_prompt(_effective_prompt_row(input_row, record), mode="packet")
+
+
+def _frozen_metadata_prompt(
+    input_row: dict[str, Any], record: dict[str, Any]
+) -> str:
+    """Render the record's packet with metadata sourced only from frozen input."""
+    return build_prompt({**input_row, "packet": record["packet"]}, mode="packet")
+
+
+def _prompt_metadata_issues(
+    input_row: dict[str, Any], record: dict[str, Any] | None
+) -> list[str]:
+    """Return field names only so the integrity report does not copy row values."""
+    if not record:
+        return ["packet_record_missing"]
+    if not isinstance(record.get("packet"), dict):
+        return ["packet_missing"]
+    effective = _effective_prompt_row(input_row, record)
+    issues = [
+        f"metadata_changed:{field}"
+        for field in PROMPT_METADATA_FIELDS
+        if effective.get(field) != input_row.get(field)
+    ]
+    try:
+        if _prompt(input_row, record) != _frozen_metadata_prompt(input_row, record):
+            issues.append("effective_prompt_differs_from_frozen_metadata_render")
+    except (TypeError, ValueError):
+        issues.append("prompt_render_rejected")
+    return issues
 
 
 def _recall_metrics(
@@ -531,10 +579,15 @@ def _query_fetch_issues(record: dict[str, Any] | None) -> list[str]:
     return sorted(set(issues))
 
 
-def _question_text(record: dict[str, Any] | None) -> str | None:
-    if not record or not isinstance(record.get("question"), str):
+def _question_text(
+    record: dict[str, Any] | None, input_row: dict[str, Any]
+) -> str | None:
+    if not record:
         return None
-    question = record["question"]
+    effective = _effective_prompt_row(input_row, record)
+    question = effective.get("question") or effective.get("question_with_context")
+    if not isinstance(question, str):
+        return None
     return question if question.strip() else None
 
 
@@ -1080,6 +1133,38 @@ def compare_packet_arms(
                 gates, name, observed == expected, observed=observed, expected=expected
             )
 
+    prompt_metadata_failures: dict[str, dict[str, list[str]]] = {}
+    for arm in ARM_NAMES:
+        for question_id in scheduled_ids:
+            input_row = spec.input_rows.get(question_id)
+            if input_row is None:
+                issues = ["frozen_input_row_missing"]
+            else:
+                issues = _prompt_metadata_issues(
+                    input_row, arms[arm].get(question_id)
+                )
+            if issues:
+                prompt_metadata_failures.setdefault(arm, {})[question_id] = issues
+    prompt_metadata_total = len(ARM_NAMES) * len(scheduled_ids)
+    prompt_metadata_matched = prompt_metadata_total - sum(
+        len(failures) for failures in prompt_metadata_failures.values()
+    )
+    _gate(
+        gates,
+        "effective_prompt_metadata_matches_frozen_input",
+        not prompt_metadata_failures,
+        observed={
+            "matched": prompt_metadata_matched,
+            "total": prompt_metadata_total,
+            "failures": prompt_metadata_failures,
+        },
+        expected={
+            "matched": prompt_metadata_total,
+            "total": prompt_metadata_total,
+            "failures": {},
+        },
+    )
+
     live_observed = {
         arm: sum(
             1
@@ -1100,8 +1185,10 @@ def compare_packet_arms(
     question_text_failures: dict[str, dict[str, str | None]] = {}
     recomputed_micro_ids: set[str] = set()
     for question_id in scheduled_ids:
+        input_row = spec.input_rows.get(question_id, {})
         arm_questions = {
-            arm: _question_text(arms[arm].get(question_id)) for arm in ARM_NAMES
+            arm: _question_text(arms[arm].get(question_id), input_row)
+            for arm in ARM_NAMES
         }
         if (
             any(question is None for question in arm_questions.values())
@@ -1259,10 +1346,16 @@ def compare_packet_arms(
         records = [arms[arm].get(question_id) for arm in ARM_NAMES]
         if not all(records):
             continue
+        input_row = spec.input_rows.get(question_id, {})
         packets = [_canonical_json(_packet(record)) for record in records if record]
-        prompts = [_prompt(record) for record in records if record]
+        try:
+            prompts = [_prompt(input_row, record) for record in records if record]
+        except (TypeError, ValueError):
+            prompts = []
         non_micro_packet_matches += int(len(set(packets)) == 1)
-        non_micro_prompt_matches += int(len(set(prompts)) == 1)
+        non_micro_prompt_matches += int(
+            len(prompts) == len(ARM_NAMES) and len(set(prompts)) == 1
+        )
     _gate(
         gates,
         "non_micro_packet_equivalence",
@@ -1498,6 +1591,13 @@ def compare_packet_arms(
             "qt4t_dispatched": len(dispatch_sets["qt4t"]),
         },
         "equivalence": {
+            "effective_prompt_metadata": {
+                "matched": prompt_metadata_matched,
+                "total": prompt_metadata_total,
+                "failures": prompt_metadata_failures,
+                "bound_fields": list(PROMPT_METADATA_FIELDS),
+                "overlay": "{**frozen_input_row, **packet_record}",
+            },
             "non_micro_packet": {
                 "matched": non_micro_packet_matches,
                 "total": len(non_micro_ids),
@@ -1609,6 +1709,11 @@ def render_text(report: dict[str, Any]) -> str:
             f"scheduled: {report['scheduled_question_count']} "
             f"(microbiology={dispatch['microbiology_questions']}, "
             f"non-microbiology={dispatch['non_microbiology_questions']})"
+        ),
+        (
+            "frozen prompt metadata: "
+            f"{equivalence['effective_prompt_metadata']['matched']}/"
+            f"{equivalence['effective_prompt_metadata']['total']}"
         ),
         (
             "non-micro packet no-op: "

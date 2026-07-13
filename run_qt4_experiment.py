@@ -51,6 +51,7 @@ REQUIRED_GATE_NAMES = {
     "a6a_dispatch_none",
     "qt4v_dispatch_exact",
     "qt4t_dispatch_exact",
+    "effective_prompt_metadata_matches_frozen_input",
     "non_micro_packet_equivalence",
     "non_micro_prompt_equivalence",
     "qt4v_qt4t_micro_search_plan_equivalence",

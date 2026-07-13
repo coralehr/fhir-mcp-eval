@@ -234,10 +234,13 @@ or any packet bound. It adds the following integrity and spend controls:
    `Observation.specimen` traversal. Registered DiagnosticReport paths remain
    measured, but zero use cannot support a claim about them. DiagnosticReport
    root selection or reverse traversal requires a separately versioned arm.
-10. The 42-row refresh may replace only each record's nested `packet`; all
-    prompt metadata remains sourced from the frozen 409-row CSV. A hard gate
-    renders the effective CSV-plus-packet prompt for every arm and rejects any
-    question, patient, assumption, or other prompt-affecting metadata drift.
+10. A stratum rebuild may replace only the nested clinical `packet`; it may not
+    replace any top-level benchmark-row field. The zero-model gate retains the
+    exact frozen CSV row and independently renders the live harness merge
+    `{**input_row, **packet_record}`. It blocks execution if `question_id`,
+    `question`, `question_with_context`, `patient_fhir_id`, or `assumption`
+    differs from the frozen input. Negative-control prompt identity is measured
+    from this same input-overlay rendering, not from packet JSONL rows alone.
 11. Operational retries are capped at three attempts per arm/question. Every
     failed non-contaminated attempt is retained in an append-only ledger with
     its prompt, event log, return code, audit, usage, and hashes; only a clean

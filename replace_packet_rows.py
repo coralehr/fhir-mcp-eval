@@ -59,7 +59,11 @@ def replace_records(
         raise ValueError(
             f"spec has {len(question_ids)} update IDs, expected {expected_updates}"
         )
+    if len(question_ids) != len(set(question_ids)):
+        raise ValueError("frozen question spec IDs must be unique")
     base_ids = [str(record["question_id"]) for record in base]
+    if len(base_ids) != len(set(base_ids)):
+        raise ValueError("base contains duplicate question IDs")
     update_map = {str(record["question_id"]): record for record in updates}
     if len(update_map) != len(updates):
         raise ValueError("updates contain duplicate question IDs")
@@ -68,7 +72,21 @@ def replace_records(
     missing = set(question_ids) - set(base_ids)
     if missing:
         raise ValueError("frozen question spec is not a subset of the base packet")
-    return [update_map.get(question_id, record) for question_id, record in zip(base_ids, base)]
+
+    result: list[dict[str, Any]] = []
+    for question_id, base_record in zip(base_ids, base):
+        update = update_map.get(question_id)
+        if update is None:
+            result.append(base_record)
+            continue
+        if not isinstance(update.get("packet"), dict):
+            raise ValueError(f"update {question_id} has no packet object")
+
+        # A stratum rebuild is permitted to replace clinical packet evidence,
+        # not the frozen benchmark row that the harness overlays it onto.
+        # Copy every top-level value from the base and replace only `packet`.
+        result.append({**base_record, "packet": update["packet"]})
+    return result
 
 
 def main() -> int:
