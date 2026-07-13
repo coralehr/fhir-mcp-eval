@@ -18,6 +18,14 @@ def _micro_queries(*, patient="p1"):
             "path": f"Observation?patient={patient}&code:text={term.replace(' ', '%20')}",
             "reason": "fixed microbiology display vocabulary (micro-v1)",
             "relaxation_policy": "none",
+            "fetch_receipt": {
+                "status": "ok",
+                "initial_result_count": 1,
+                "relaxation_attempts": [],
+                "pre_bound_count": 1,
+                "retained_count": 1,
+                "dropped_count": 0,
+            },
         }
         for term in ("culture", "gram stain", "screen", "smear")
     ]
@@ -50,8 +58,26 @@ def _packet(
             f"{resource['resourceType']}/{resource['id']}" for resource in resources
         ),
         "source_queries": queries
-        or [{"resource_type": query.split("?", 1)[0], "path": query}],
+        or [
+            {
+                "resource_type": query.split("?", 1)[0],
+                "path": query,
+                "fetch_receipt": {
+                    "status": "ok",
+                    "initial_result_count": root_count,
+                    "relaxation_attempts": [],
+                    "pre_bound_count": root_count,
+                    "retained_count": root_count,
+                    "dropped_count": 0,
+                },
+            }
+        ],
         "bounds": {"kept_count": root_count},
+        "root_fetch_receipt": {
+            "pre_bound_count": root_count,
+            "retained_count": root_count,
+            "dropped_count": 0,
+        },
     }
     if traversal is not None:
         packet["reference_traversal"] = traversal
@@ -238,6 +264,18 @@ class Qt4PacketGateTests(unittest.TestCase):
             encoding="utf-8",
         )
 
+    def test_missing_query_receipt_blocks_gate(self):
+        del self.v_records[0]["packet"]["source_queries"][0]["fetch_receipt"]
+        self._write_arm("qt4v", self.v_records)
+
+        report = self._report()
+
+        self.assertFalse(report["passed"])
+        self.assertIn(
+            "query_fetch_receipts_complete_and_error_free", report["failed_gates"]
+        )
+        self.assertTrue(report["query_fetch_audit"]["supported"])
+
     def _assert_failed(self, gate_name):
         report = self._report()
         self.assertFalse(report["passed"])
@@ -294,11 +332,12 @@ class Qt4PacketGateTests(unittest.TestCase):
             report["resource_footprint"]["arms"]["qt4t"]["resource_json_bytes"],
             report["resource_footprint"]["arms"]["qt4t"]["root_resource_json_bytes"],
         )
-        self.assertFalse(report["query_fetch_audit"]["supported"])
-        self.assertFalse(report["query_fetch_audit"]["hard_gate_applied"])
-        self.assertIn(
-            "do not preserve per-query fetch receipts",
-            report["query_fetch_audit"]["limitation"],
+        self.assertTrue(report["query_fetch_audit"]["supported"])
+        self.assertTrue(report["query_fetch_audit"]["hard_gate_applied"])
+        self.assertEqual(report["query_fetch_audit"]["matched"], 3)
+        self.assertEqual(
+            report["query_fetch_audit"]["scope"],
+            "answer-bearing microbiology stratum only",
         )
 
     def test_dispatch_is_recomputed_from_question_text_not_analysis_label(self):

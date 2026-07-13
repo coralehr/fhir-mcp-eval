@@ -466,6 +466,71 @@ def _forbidden_packet_paths(value: Any, *, path: str = "packet") -> list[str]:
     return found
 
 
+def _query_fetch_issues(record: dict[str, Any] | None) -> list[str]:
+    """Validate that every root query completed with an auditable safe receipt."""
+    packet = _packet(record)
+    issues: list[str] = []
+    queries = packet.get("source_queries")
+    if not isinstance(queries, list) or not queries:
+        return ["source_queries_missing"]
+    for index, query in enumerate(queries):
+        prefix = f"source_queries[{index}]"
+        if not isinstance(query, dict):
+            issues.append(f"{prefix}_not_object")
+            continue
+        receipt = query.get("fetch_receipt")
+        if not isinstance(receipt, dict):
+            issues.append(f"{prefix}_fetch_receipt_missing")
+            continue
+        if receipt.get("status") != "ok" or receipt.get("error") is not None:
+            issues.append(f"{prefix}_fetch_not_ok")
+        counts = {
+            key: _nonnegative_int(receipt.get(key))
+            for key in ("pre_bound_count", "retained_count", "dropped_count")
+        }
+        if any(value is None for value in counts.values()):
+            issues.append(f"{prefix}_fetch_counts_invalid")
+        elif counts["pre_bound_count"] != counts["retained_count"] + counts["dropped_count"]:
+            issues.append(f"{prefix}_fetch_count_arithmetic")
+        initial = receipt.get("initial_result_count")
+        if initial is not None and _nonnegative_int(initial) is None:
+            issues.append(f"{prefix}_initial_result_count_invalid")
+        attempts = receipt.get("relaxation_attempts")
+        if not isinstance(attempts, list):
+            issues.append(f"{prefix}_relaxation_attempts_invalid")
+        else:
+            for attempt_index, attempt in enumerate(attempts):
+                if (
+                    not isinstance(attempt, dict)
+                    or not isinstance(attempt.get("path"), str)
+                    or _nonnegative_int(attempt.get("result_count")) is None
+                ):
+                    issues.append(
+                        f"{prefix}_relaxation_attempt[{attempt_index}]_invalid"
+                    )
+        if query.get("relaxation_policy") == "none" and attempts:
+            issues.append(f"{prefix}_forbidden_relaxation")
+
+    root_receipt = packet.get("root_fetch_receipt")
+    if not isinstance(root_receipt, dict):
+        issues.append("root_fetch_receipt_missing")
+    else:
+        counts = {
+            key: _nonnegative_int(root_receipt.get(key))
+            for key in ("pre_bound_count", "retained_count", "dropped_count")
+        }
+        if any(value is None for value in counts.values()):
+            issues.append("root_fetch_counts_invalid")
+        elif counts["pre_bound_count"] != counts["retained_count"] + counts["dropped_count"]:
+            issues.append("root_fetch_count_arithmetic")
+    if any(
+        resource.get("resourceType") == "OperationOutcome"
+        for resource in _resources(record)
+    ):
+        issues.append("operation_outcome_in_model_evidence")
+    return sorted(set(issues))
+
+
 def _question_text(record: dict[str, Any] | None) -> str | None:
     if not record or not isinstance(record.get("question"), str):
         return None
@@ -1158,6 +1223,36 @@ def compare_packet_arms(
         expected={},
     )
 
+    query_fetch_failures: dict[str, dict[str, list[str]]] = {}
+    for arm in ARM_NAMES:
+        # Only the frozen microbiology stratum is answer-bearing in this
+        # screen.  Its 42 rows were rebuilt with fail-closed query receipts;
+        # the 367 legacy negative controls are used solely for literal
+        # packet/prompt no-op checks and never reach an answering model.
+        for question_id in sorted(micro_ids):
+            issues = _query_fetch_issues(arms[arm].get(question_id))
+            if issues:
+                query_fetch_failures.setdefault(arm, {})[question_id] = issues
+    query_fetch_total = len(ARM_NAMES) * len(micro_ids)
+    query_fetch_matched = query_fetch_total - sum(
+        len(items) for items in query_fetch_failures.values()
+    )
+    _gate(
+        gates,
+        "query_fetch_receipts_complete_and_error_free",
+        not query_fetch_failures,
+        observed={
+            "matched": query_fetch_matched,
+            "total": query_fetch_total,
+            "failures": query_fetch_failures,
+        },
+        expected={
+            "matched": query_fetch_total,
+            "total": query_fetch_total,
+            "failures": {},
+        },
+    )
+
     non_micro_packet_matches = 0
     non_micro_prompt_matches = 0
     for question_id in sorted(non_micro_ids):
@@ -1431,14 +1526,15 @@ def compare_packet_arms(
             },
         },
         "query_fetch_audit": {
-            "supported": False,
-            "hard_gate_applied": False,
-            "limitation": (
-                "Packets preserve the query plan and optional relaxation_attempts, but "
-                "do not preserve per-query fetch receipts, result counts, or errors. "
-                "OperationOutcome resources lose query provenance after union/deduplication, "
-                "so this gate does not invent a fetch-success assertion."
+            "supported": True,
+            "hard_gate_applied": True,
+            "scope": "answer-bearing microbiology stratum only",
+            "negative_controls": (
+                "mechanical packet/prompt no-op checks; no model answers"
             ),
+            "matched": query_fetch_matched,
+            "total": query_fetch_total,
+            "failures": query_fetch_failures,
         },
         "resource_footprint": resource_footprint,
         "traversal": traversal,
@@ -1568,7 +1664,13 @@ def render_text(report: dict[str, Any]) -> str:
             ),
         ]
     )
-    if not report.get("query_fetch_audit", {}).get("supported"):
+    query_fetch = report.get("query_fetch_audit", {})
+    if query_fetch.get("supported"):
+        lines.append(
+            "query fetch receipt/error audit: "
+            f"{query_fetch.get('matched', 0)}/{query_fetch.get('total', 0)} passed"
+        )
+    else:
         lines.append(
             "query fetch receipt/error audit: unavailable in current packet format "
             "(no hard gate invented)"

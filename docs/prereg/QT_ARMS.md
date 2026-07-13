@@ -173,11 +173,82 @@ adverse incremental contrast is dropped rather than retained as an
 implementation detail. No QT-4 result licenses a claim about persistent graph
 storage; storage is a separate zero-model byte-equivalence benchmark.
 
+## Amendment 2026-07-13 — integrity gate and microbiology-first screen
+
+This amendment was frozen before any QT-4 answer was generated or graded. It
+does not change `micro-dispatch-v1`, `micro-v1`, `micro-traversal-v1`, qo-v2,
+or any packet bound. It adds the following integrity and spend controls:
+
+1. Before model execution, a file-only gate must verify all 409 packet rows,
+   exact dispatch coverage, literal packet and rendered-prompt equality for all
+   367 non-dispatched questions, gold-resource recall, packet bytes, traversal
+   statuses, and path-family use. A failed gate blocks the answer run.
+2. Packet-mode Codex runs execute from an empty isolated working directory.
+   Any command/tool event in the structured event log quarantines that attempt
+   as a harness failure. Packet bookkeeping fields, including the packet SHA,
+   are removed before rendering; they remain in the frozen artifacts and
+   manifests. This renderer correction is applied identically to all three
+   same-run arms.
+3. The first answer-bearing screen is restricted to the 42 pre-existing
+   `microbiologyevents` questions, frozen in `qt4_micro42_spec.json`. Their
+   order is a deterministic hash order, and arm order rotates A6a → QT-4V →
+   QT-4T, then V → T → A, then T → A → V. The answering model remains pinned
+   to `gpt-5.6-sol` at `high` effort. This screen estimates the registered
+   vocabulary and traversal contrasts in the primary mechanism stratum while
+   spending 126 answers rather than 1,227.
+4. The 367-question negative-control stratum is mechanical in this screen:
+   packet and prompt identity are established by the zero-model gate, but those
+   questions are not re-answered. Therefore this screen cannot satisfy the
+   pooled-accuracy promotion condition by itself. A favorable mechanism result
+   may advance only to the already-registered full-set or untouched-holdout
+   confirmation, where pooled degradation is measured.
+5. The answering renderer exposes clinical resources plus fetched or
+   already-present reference-path citations only. Search plans, treatment
+   labels, packet kind/planner/count/bounds, source-ID ledgers, traversal
+   version/limits/status counts, missing or capped edges, and fetch receipts
+   remain artifact-only. This common renderer correction was frozen before any
+   QT-4 answer; it prevents the words `micro-v1` and bookkeeping counts from
+   cueing the model independently of clinical evidence.
+6. Every root query in the 42-question answer-bearing microbiology stratum must
+   carry a successful structured fetch receipt. Those 42 rows are rebuilt from
+   the frozen qo-v2 selector; the 367 legacy negative controls are not answered
+   and are used only for literal packet/prompt no-op checks. HTTP failure,
+   incomplete pagination, an `OperationOutcome` in evidence, missing receipt,
+   or inconsistent fetch-count arithmetic fails packet construction or the
+   stratum gate. A bounded query may stop once its pre-registered per-query cap
+   is reached; reaching an arbitrary backend page ceiling does not count as
+   success.
+7. The live controller snapshots the exact input, gate, schema, harness, code,
+   and three packet JSONLs under a locked run bundle. Its manifest is immutable;
+   resume requires an audited per-question completion receipt bound to that
+   manifest and the prompt/answer/event/packet hashes. Contamination, stale
+   output, aliased arm directories, runtime drift, and partial capped runs
+   cannot count as completed pairs.
+8. Panel grading uses one three-arm queue with deterministic opaque item IDs and
+   interleaved arms. The judge never receives an arm name or benchmark question
+   ID. Vote caches are content-addressed over the judged text, prompt/protocol,
+   model, effort, runtime, and vote configuration; legacy or mismatched caches
+   are invalid rather than reusable.
+9. The current qo-v2 microbiology selector produces Observation roots, so this
+   screen can directly exercise forward `Observation.hasMember` and
+   `Observation.specimen` traversal. Registered DiagnosticReport paths remain
+   measured, but zero use cannot support a claim about them. DiagnosticReport
+   root selection or reverse traversal requires a separately versioned arm.
+
+The query-validity and question-routing repairs discovered in the run-2
+failure audit are deliberately excluded from QT-4. They change the frozen
+qo-v2 root selector and will be evaluated as a separately versioned planner
+arm.
+
 ## Run plan
 
-Packets: built locally per arm from the frozen base (SHA manifests). Answer
-runs: queued on the shared Codex substrate BEHIND run 2; one arm per quota
-window, `--skip-existing` resumable. Grading: identical pipeline (det-v2 +
-3-vote panel, arm-blind). An arm's packets differ from A6a's ONLY in its
-feature's footprint — verified by diffing packet hashes on questions where
-the feature is a no-op.
+Packets: built locally per arm from the frozen base (SHA manifests). The
+completed run-2 queue is no longer active. Per the 2026-07-13 amendment, the
+42-question screen runs all three arms in rotating, question-level interleaved
+order with `--skip-existing` resumability. Grading uses the identical pipeline
+(det-v2 + 3-vote panel, arm-blind), assembled once across A6a/QT-4V/QT-4T so
+the registered V-minus-A and T-minus-V contrasts share one frozen label per
+arm/question. Token and actual model-visible packet-byte economics are reported
+from accepted completion receipts only. An arm's packets differ from A6a's ONLY
+in its feature's footprint — verified by diffing packet hashes and rendered
+prompts wherever the feature is a no-op.
