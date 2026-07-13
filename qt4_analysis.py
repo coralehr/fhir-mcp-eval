@@ -35,7 +35,8 @@ REGISTERED_CONTRASTS = (
 CONTROLLER_KIND = "qt4_micro_interleaved_controller_manifest"
 CONTROLLER_SCHEMA_VERSION = "qt4-controller-v2"
 COMPLETION_KIND = "qt4_attempt_completion"
-COMPLETION_SCHEMA_VERSION = "qt4-attempt-v1"
+COMPLETION_SCHEMA_VERSION = "qt4-attempt-v2"
+MAX_ATTEMPTS_PER_ITEM = 3
 REGISTERED_PANEL_VOTES = 3
 REGISTERED_PANEL_MODEL = "gpt-5.6-sol"
 REGISTERED_PANEL_EFFORT = "high"
@@ -78,6 +79,7 @@ class ValidatedRun:
     controller: dict[str, Any]
     controller_sha256: str
     accepted: dict[str, list[AcceptedCompletion]]
+    failed_attempts: dict[str, list[dict[str, Any]]]
     completion_summary: dict[str, Any]
     input_hashes: dict[str, Any]
 
@@ -351,6 +353,93 @@ def _load_events(path: Path) -> list[dict[str, Any]]:
     return events
 
 
+def _validate_failed_attempt_ledgers(
+    *,
+    question_ids: list[str],
+    controller_sha: str,
+    controller: Mapping[str, Any],
+    arms: Mapping[str, ArmArtifacts],
+) -> dict[str, list[dict[str, Any]]]:
+    execution = controller["execution"]
+    schema_sha = controller["snapshots"]["schema"]["sha256"]
+    packet_hashes = {arm: sha256_file(arms[arm].packet_path) for arm in ARM_NAMES}
+    result: dict[str, list[dict[str, Any]]] = {arm: [] for arm in ARM_NAMES}
+    for arm in ARM_NAMES:
+        for question_id in question_ids:
+            question_dir = arms[arm].run_dir / "questions" / question_id
+            attempts_dir = question_dir / "attempts"
+            receipt_paths = sorted(attempts_dir.glob("attempt-*/attempt.json"))
+            ledger_path = question_dir / "attempts.jsonl"
+            if not receipt_paths:
+                if ledger_path.exists():
+                    raise ValueError(f"{arm}/{question_id} has an orphan attempt ledger")
+                continue
+            if not ledger_path.exists():
+                raise ValueError(f"{arm}/{question_id} has no mirrored attempt ledger")
+            ledger: list[dict[str, Any]] = []
+            for line_number, line in enumerate(
+                ledger_path.read_text(encoding="utf-8").splitlines(), start=1
+            ):
+                try:
+                    value = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(
+                        f"{arm}/{question_id} malformed attempt ledger line {line_number}"
+                    ) from exc
+                if not isinstance(value, dict):
+                    raise ValueError(f"{arm}/{question_id} attempt ledger is not object JSONL")
+                ledger.append(value)
+            receipts = [_read_json(path) for path in receipt_paths]
+            if receipts != ledger:
+                raise ValueError(f"{arm}/{question_id} attempt ledger/archive mismatch")
+            if len(receipts) >= MAX_ATTEMPTS_PER_ITEM:
+                raise ValueError(f"{arm}/{question_id} exhausted attempts before acceptance")
+            for index, (path, receipt) in enumerate(
+                zip(receipt_paths, receipts), start=1
+            ):
+                expected_identity = {
+                    "kind": COMPLETION_KIND,
+                    "schema_version": COMPLETION_SCHEMA_VERSION,
+                    "controller_manifest_sha256": controller_sha,
+                    "arm": arm,
+                    "question_id": question_id,
+                    "packet_sha256": packet_hashes[arm],
+                    "schema_sha256": schema_sha,
+                    "model": execution["model"],
+                    "reasoning_effort": execution["reasoning_effort"],
+                    "attempt_number": index,
+                    "status": "transient_failure",
+                }
+                if not isinstance(receipt, dict) or any(
+                    receipt.get(key) != value
+                    for key, value in expected_identity.items()
+                ):
+                    raise ValueError(f"{arm}/{question_id} failed attempt is misbound")
+                if Path(str(receipt.get("attempt_receipt_path") or "")).resolve() != path.resolve():
+                    raise ValueError(f"{arm}/{question_id} attempt receipt path is stale")
+                archived_files = receipt.get("archived_files")
+                if not isinstance(archived_files, dict):
+                    raise ValueError(f"{arm}/{question_id} attempt file inventory missing")
+                for metadata in archived_files.values():
+                    if not isinstance(metadata, dict):
+                        raise ValueError(f"{arm}/{question_id} attempt file metadata malformed")
+                    archived_path = Path(str(metadata.get("path") or ""))
+                    if (
+                        archived_path.resolve().parent != path.parent.resolve()
+                        or not archived_path.is_file()
+                        or metadata.get("sha256") != sha256_file(archived_path)
+                    ):
+                        raise ValueError(f"{arm}/{question_id} archived attempt file changed")
+                usage = receipt.get("usage")
+                if not isinstance(usage, dict) or any(
+                    not isinstance(value, (int, float)) or isinstance(value, bool)
+                    for value in usage.values()
+                ):
+                    raise ValueError(f"{arm}/{question_id} attempt usage is malformed")
+                result[arm].append(receipt)
+    return result
+
+
 def _validate_completions(
     *,
     question_ids: list[str],
@@ -358,6 +447,8 @@ def _validate_completions(
     arms: Mapping[str, ArmArtifacts],
     input_rows: Mapping[str, dict[str, str]],
     packet_records: Mapping[str, Mapping[str, dict[str, Any]]],
+    controller: Mapping[str, Any],
+    failed_attempts: Mapping[str, list[dict[str, Any]]],
 ) -> tuple[dict[str, list[AcceptedCompletion]], dict[str, Any]]:
     expected_set = set(question_ids)
     accepted: dict[str, list[AcceptedCompletion]] = {}
@@ -399,6 +490,15 @@ def _validate_completions(
                 "arm": arm,
                 "question_id": question_id,
                 "packet_sha256": sha256_file(arms[arm].packet_path),
+                "schema_sha256": controller["snapshots"]["schema"]["sha256"],
+                "model": controller["execution"]["model"],
+                "reasoning_effort": controller["execution"]["reasoning_effort"],
+                "attempt_number": 1
+                + sum(
+                    item.get("question_id") == question_id
+                    for item in failed_attempts[arm]
+                ),
+                "harness_exit_code": 0,
                 "returncode": 0,
                 "status": "answered",
             }
@@ -430,6 +530,25 @@ def _validate_completions(
             audit = codex_harness.audit_event_log(paths["event_log_sha256"])
             if audit.get("contaminated") or receipt.get("event_integrity") != audit:
                 raise ValueError(f"{arm}/{question_id} event integrity is not accepted")
+            raw_completed_usage = next(
+                (
+                    event.get("usage")
+                    for event in events
+                    if event.get("type") == "turn.completed"
+                ),
+                None,
+            )
+            completed_usage = (
+                {
+                    str(key): value
+                    for key, value in raw_completed_usage.items()
+                    if isinstance(value, (int, float)) and not isinstance(value, bool)
+                }
+                if isinstance(raw_completed_usage, dict)
+                else None
+            )
+            if receipt.get("usage") != completed_usage:
+                raise ValueError(f"{arm}/{question_id} receipt usage changed")
 
             arm_accepted.append(
                 AcceptedCompletion(
@@ -461,6 +580,10 @@ def _validate_completions(
         "accepted_answers": accepted_answers,
         "accepted_by_arm": {arm: len(accepted[arm]) for arm in ARM_NAMES},
         "completion_receipt_set_sha256": sha256_json(receipt_bindings),
+        "archived_failed_attempts": sum(
+            len(items) for items in failed_attempts.values()
+        ),
+        "archived_failed_attempt_receipts_sha256": sha256_json(failed_attempts),
         "invalid_current_receipts": 0,
     }
     return accepted, summary
@@ -490,12 +613,20 @@ def validate_sealed_run(
         arm: load_packet_records(arms[arm].packet_path, question_ids)
         for arm in ARM_NAMES
     }
+    failed_attempts = _validate_failed_attempt_ledgers(
+        question_ids=question_ids,
+        controller_sha=controller_sha,
+        controller=controller,
+        arms=arms,
+    )
     accepted, completion_summary = _validate_completions(
         question_ids=question_ids,
         controller_sha=controller_sha,
         arms=arms,
         input_rows=gold,
         packet_records=packet_records,
+        controller=controller,
+        failed_attempts=failed_attempts,
     )
     input_hashes["implementations"] = _implementation_hashes()
     return ValidatedRun(
@@ -505,6 +636,7 @@ def validate_sealed_run(
         controller=controller,
         controller_sha256=controller_sha,
         accepted=accepted,
+        failed_attempts=failed_attempts,
         completion_summary=completion_summary,
         input_hashes=input_hashes,
     )
@@ -868,14 +1000,9 @@ def _wall_time_seconds(events: list[dict[str, Any]]) -> float | None:
     return None
 
 
-def _completion_metrics(completion: AcceptedCompletion) -> dict[str, Any]:
-    events = _load_events(completion.event_log_path)
-    usage_events = [
-        event
-        for event in events
-        if event.get("type") == "turn.completed" and isinstance(event.get("usage"), dict)
-    ]
-    usage = usage_events[0]["usage"] if usage_events else {}
+def _usage_metrics(
+    *, question_id: str, usage: Mapping[str, Any], wall_time_seconds: float | None
+) -> dict[str, Any]:
     input_tokens = _first_metric(usage, ("input_tokens", "prompt_tokens"))
     output_tokens = _first_metric(usage, ("output_tokens", "completion_tokens"))
     cached_tokens = _first_metric(
@@ -903,15 +1030,39 @@ def _completion_metrics(completion: AcceptedCompletion) -> dict[str, Any]:
         total_tokens = input_tokens + output_tokens
         total_source = "derived_input_plus_output"
     return {
-        "question_id": completion.question_id,
+        "question_id": question_id,
         "input_tokens": input_tokens,
         "cached_input_tokens": cached_tokens,
         "output_tokens": output_tokens,
         "reasoning_output_tokens": reasoning_tokens,
         "total_tokens": total_tokens,
         "total_tokens_source": total_source,
-        "wall_time_seconds": _wall_time_seconds(events),
+        "wall_time_seconds": wall_time_seconds,
     }
+
+
+def _completion_metrics(completion: AcceptedCompletion) -> dict[str, Any]:
+    events = _load_events(completion.event_log_path)
+    usage_events = [
+        event
+        for event in events
+        if event.get("type") == "turn.completed" and isinstance(event.get("usage"), dict)
+    ]
+    usage = usage_events[0]["usage"] if usage_events else {}
+    return _usage_metrics(
+        question_id=completion.question_id,
+        usage=usage,
+        wall_time_seconds=_wall_time_seconds(events),
+    )
+
+
+def _failed_attempt_metrics(receipt: Mapping[str, Any]) -> dict[str, Any]:
+    usage = receipt.get("usage")
+    return _usage_metrics(
+        question_id=str(receipt.get("question_id") or ""),
+        usage=usage if isinstance(usage, dict) else {},
+        wall_time_seconds=None,
+    )
 
 
 def _metric_summary(records: list[dict[str, Any]], name: str) -> dict[str, Any]:
@@ -919,11 +1070,33 @@ def _metric_summary(records: list[dict[str, Any]], name: str) -> dict[str, Any]:
     count = len(records)
     reported = len(values)
     return {
-        "available": reported > 0,
+        "available": reported > 0 or count == 0,
         "complete": reported == count,
         "reported_completions": reported,
         "missing_completions": count - reported,
-        "total": sum(values) if values else None,
+        "total": sum(values) if values else (0 if count == 0 else None),
+    }
+
+
+def _combine_metric_summaries(
+    accepted: Mapping[str, Any], failed: Mapping[str, Any]
+) -> dict[str, Any]:
+    complete = accepted.get("complete") is True and failed.get("complete") is True
+    accepted_total = accepted.get("total")
+    failed_total = failed.get("total")
+    total = (
+        accepted_total + failed_total
+        if complete and accepted_total is not None and failed_total is not None
+        else None
+    )
+    return {
+        "available": total is not None,
+        "complete": complete,
+        "reported_completions": int(accepted.get("reported_completions", 0))
+        + int(failed.get("reported_completions", 0)),
+        "missing_completions": int(accepted.get("missing_completions", 0))
+        + int(failed.get("missing_completions", 0)),
+        "total": total,
     }
 
 
@@ -968,6 +1141,9 @@ def _packet_byte_summary(
 
 def _arm_economics(validated: ValidatedRun, arm: str) -> dict[str, Any]:
     records = [_completion_metrics(item) for item in validated.accepted[arm]]
+    failed_records = [
+        _failed_attempt_metrics(item) for item in validated.failed_attempts[arm]
+    ]
     token_names = (
         "input_tokens",
         "cached_input_tokens",
@@ -976,27 +1152,41 @@ def _arm_economics(validated: ValidatedRun, arm: str) -> dict[str, Any]:
         "total_tokens",
     )
     tokens = {name: _metric_summary(records, name) for name in token_names}
+    failed_tokens = {
+        name: _metric_summary(failed_records, name) for name in token_names
+    }
+    all_attempt_tokens = {
+        name: _combine_metric_summaries(tokens[name], failed_tokens[name])
+        for name in token_names
+    }
     wall_time = _metric_summary(records, "wall_time_seconds")
     unavailable = [name for name, value in tokens.items() if not value["complete"]]
     if not wall_time["complete"]:
         unavailable.append("wall_time_seconds")
-    unavailable.extend(["retry_count", "historical_invalid_attempt_count", "monetary_cost"])
+    unavailable.extend(
+        f"all_attempt_{name}"
+        for name, value in all_attempt_tokens.items()
+        if not value["complete"]
+    )
+    unavailable.append("monetary_cost")
     return {
         "accepted_completion_logs": len(records),
         "tokens": tokens,
+        "failed_attempt_tokens": failed_tokens,
+        "all_attempt_tokens": all_attempt_tokens,
         "wall_time_seconds": wall_time,
         "attempts": {
             "accepted_completion_receipts": len(records),
             "current_invalid_completion_receipts": 0,
             "retry_history": {
-                "available": False,
-                "count": None,
-                "reason": "qt4-attempt-v1 has no append-only retry ledger",
+                "available": True,
+                "count": len(failed_records),
+                "receipt_set_sha256": sha256_json(validated.failed_attempts[arm]),
             },
             "historical_invalid_attempts": {
-                "available": False,
-                "count": None,
-                "reason": "a final completion receipt does not encode overwritten/deleted attempts",
+                "available": True,
+                "count": len(failed_records),
+                "scope": "append-only qt4-attempt-v2 archives",
             },
         },
         "model_visible_packet_bytes": _packet_byte_summary(
@@ -1043,6 +1233,55 @@ def _contrast_economics(
             arms[treatment]["tokens"][metric], arms[reference]["tokens"][metric]
         )
         for metric in token_names
+    }
+    all_attempt_token_differences = {
+        metric: _difference_metric(
+            arms[treatment]["all_attempt_tokens"][metric],
+            arms[reference]["all_attempt_tokens"][metric],
+        )
+        for metric in token_names
+    }
+    wall = _difference_metric(
+        arms[treatment]["wall_time_seconds"], arms[reference]["wall_time_seconds"]
+    )
+    treatment_bytes = arms[treatment]["model_visible_packet_bytes"]["total"]
+    reference_bytes = arms[reference]["model_visible_packet_bytes"]["total"]
+    unavailable = [
+        metric for metric, value in token_differences.items() if not value["available"]
+    ]
+    unavailable.extend(
+        f"all_attempt_{metric}"
+        for metric, value in all_attempt_token_differences.items()
+        if not value["available"]
+    )
+    if not wall["available"]:
+        unavailable.append("wall_time_seconds")
+    unavailable.append("monetary_cost")
+    return {
+        "name": name,
+        "orientation": "treatment_minus_reference",
+        "treatment": treatment,
+        "reference": reference,
+        "tokens": token_differences,
+        "all_attempt_tokens": all_attempt_token_differences,
+        "wall_time_seconds": wall,
+        "accepted_completion_difference": arms[treatment]["accepted_completion_logs"]
+        - arms[reference]["accepted_completion_logs"],
+        "failed_attempt_difference": arms[treatment]["attempts"]["retry_history"][
+            "count"
+        ]
+        - arms[reference]["attempts"]["retry_history"]["count"],
+        "model_visible_packet_bytes": {
+            "treatment_total": treatment_bytes,
+            "reference_total": reference_bytes,
+            "difference": treatment_bytes - reference_bytes,
+            "relative_change": (
+                (treatment_bytes - reference_bytes) / reference_bytes
+                if reference_bytes
+                else None
+            ),
+        },
+        "unavailable_dimensions": sorted(set(unavailable)),
     }
 
 
@@ -1179,38 +1418,6 @@ def _promotion_assessment(
         "persistent_graph_storage_claim_supported": False,
         "contrasts": assessments,
     }
-    wall = _difference_metric(
-        arms[treatment]["wall_time_seconds"], arms[reference]["wall_time_seconds"]
-    )
-    treatment_bytes = arms[treatment]["model_visible_packet_bytes"]["total"]
-    reference_bytes = arms[reference]["model_visible_packet_bytes"]["total"]
-    unavailable = [
-        metric for metric, value in token_differences.items() if not value["available"]
-    ]
-    if not wall["available"]:
-        unavailable.append("wall_time_seconds")
-    unavailable.extend(["retry_count", "historical_invalid_attempt_count", "monetary_cost"])
-    return {
-        "name": name,
-        "orientation": "treatment_minus_reference",
-        "treatment": treatment,
-        "reference": reference,
-        "tokens": token_differences,
-        "wall_time_seconds": wall,
-        "accepted_completion_difference": arms[treatment]["accepted_completion_logs"]
-        - arms[reference]["accepted_completion_logs"],
-        "model_visible_packet_bytes": {
-            "treatment_total": treatment_bytes,
-            "reference_total": reference_bytes,
-            "difference": treatment_bytes - reference_bytes,
-            "relative_change": (
-                (treatment_bytes - reference_bytes) / reference_bytes
-                if reference_bytes
-                else None
-            ),
-        },
-        "unavailable_dimensions": sorted(set(unavailable)),
-    }
 
 
 def _text_report(result: dict[str, Any]) -> str:
@@ -1268,10 +1475,13 @@ def _text_report(result: dict[str, Any]) -> str:
         input_total = economics["tokens"]["input_tokens"]["total"]
         output_total = economics["tokens"]["output_tokens"]["total"]
         total = economics["tokens"]["total_tokens"]["total"]
+        all_attempt_total = economics["all_attempt_tokens"]["total_tokens"]["total"]
+        retries = economics["attempts"]["retry_history"]["count"]
         packet_bytes = economics["model_visible_packet_bytes"]["total"]
         unavailable = ", ".join(economics["unavailable_dimensions"]) or "none"
         lines.append(
             f"{arm}: input={input_total} output={output_total} total={total} "
+            f"all_attempt_total={all_attempt_total} retries={retries} "
             f"packet_bytes={packet_bytes}; unavailable={unavailable}"
         )
     lines.extend(["", "ECONOMIC CONTRASTS (treatment minus reference)"])
@@ -1279,10 +1489,14 @@ def _text_report(result: dict[str, Any]) -> str:
         economics = result["economics"]["contrasts"][name]
         input_difference = economics["tokens"]["input_tokens"]["difference"]
         total_difference = economics["tokens"]["total_tokens"]["difference"]
+        spend_difference = economics["all_attempt_tokens"]["total_tokens"][
+            "difference"
+        ]
         packet_difference = economics["model_visible_packet_bytes"]["difference"]
         unavailable = ", ".join(economics["unavailable_dimensions"]) or "none"
         lines.append(
             f"{name}: input_delta={input_difference} total_delta={total_difference} "
+            f"all_attempt_total_delta={spend_difference} "
             f"packet_byte_delta={packet_difference}; unavailable={unavailable}"
         )
     lines.extend(["", "INPUT HASHES", canonical_json(result["input_hashes"]), ""])

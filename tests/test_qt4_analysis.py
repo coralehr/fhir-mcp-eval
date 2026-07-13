@@ -273,14 +273,20 @@ class SyntheticQt4Run:
                 audit = codex_harness.audit_event_log(qdir / "events.jsonl")
                 receipt = {
                     "kind": "qt4_attempt_completion",
-                    "schema_version": "qt4-attempt-v1",
+                    "schema_version": "qt4-attempt-v2",
                     "controller_manifest_sha256": self.controller_sha,
                     "arm": arm,
                     "question_id": qid,
                     "packet_sha256": qt4_analysis.sha256_file(self.packets[arm]),
+                    "schema_sha256": qt4_analysis.sha256_file(schema),
+                    "model": "gpt-5.6-sol",
+                    "reasoning_effort": "high",
+                    "attempt_number": 1,
+                    "harness_exit_code": 0,
                     "returncode": 0,
                     "status": "answered",
                     "event_integrity": audit,
+                    "usage": usage_value,
                     "answer_sha256": qt4_analysis.sha256_file(qdir / "answer.json"),
                     "event_log_sha256": qt4_analysis.sha256_file(
                         qdir / "events.jsonl"
@@ -428,10 +434,9 @@ class Qt4AnalysisTests(unittest.TestCase):
         self.assertFalse(a6["tokens"]["cached_input_tokens"]["complete"])
         self.assertEqual(a6["tokens"]["cached_input_tokens"]["total"], 10)
         self.assertEqual(a6["wall_time_seconds"]["total"], 5.0)
-        self.assertFalse(a6["attempts"]["retry_history"]["available"])
-        self.assertIn(
-            "retry_count", a6["unavailable_dimensions"]
-        )
+        self.assertTrue(a6["attempts"]["retry_history"]["available"])
+        self.assertEqual(a6["attempts"]["retry_history"]["count"], 0)
+        self.assertEqual(a6["all_attempt_tokens"]["total_tokens"]["total"], 350)
         self.assertEqual(
             result["economics"]["contrasts"]["qt4v_minus_a6a"]["tokens"][
                 "input_tokens"
@@ -510,11 +515,85 @@ class Qt4AnalysisTests(unittest.TestCase):
             receipt["prompt_sha256"] = qt4_analysis.sha256_file(prompt_path)
             write_json(receipt_path, receipt)
 
+            with self.assertRaisesRegex(ValueError, "prompt does not match sealed"):
+                self.prepare(synthetic, grading_dir)
+
+    def test_append_only_retry_usage_is_validated_and_counted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            synthetic = SyntheticQt4Run(root)
+            question_dir = synthetic.run_dirs["a6a"] / "questions" / "q1"
+            attempt_dir = question_dir / "attempts" / "attempt-0001"
+            attempt_dir.mkdir(parents=True)
+            failed_events = attempt_dir / "events.jsonl"
+            failed_events.write_text(
+                json.dumps(
+                    {
+                        "type": "turn.completed",
+                        "usage": {
+                            "input_tokens": 11,
+                            "cached_input_tokens": 3,
+                            "output_tokens": 4,
+                            "reasoning_output_tokens": 1,
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            attempt_path = attempt_dir / "attempt.json"
+            receipt = {
+                "kind": "qt4_attempt_completion",
+                "schema_version": "qt4-attempt-v2",
+                "controller_manifest_sha256": synthetic.controller_sha,
+                "arm": "a6a",
+                "question_id": "q1",
+                "packet_sha256": qt4_analysis.sha256_file(
+                    synthetic.packets["a6a"]
+                ),
+                "schema_sha256": json.loads(
+                    synthetic.controller.read_text(encoding="utf-8")
+                )["snapshots"]["schema"]["sha256"],
+                "model": "gpt-5.6-sol",
+                "reasoning_effort": "high",
+                "attempt_number": 1,
+                "harness_exit_code": 1,
+                "returncode": 1,
+                "status": "transient_failure",
+                "event_integrity": codex_harness.audit_event_log(failed_events),
+                "usage": {
+                    "input_tokens": 11,
+                    "cached_input_tokens": 3,
+                    "output_tokens": 4,
+                    "reasoning_output_tokens": 1,
+                },
+                "archived_files": {
+                    "events.jsonl": {
+                        "path": str(failed_events),
+                        "sha256": qt4_analysis.sha256_file(failed_events),
+                    }
+                },
+                "attempt_receipt_path": str(attempt_path),
+            }
+            write_json(attempt_path, receipt)
+            (question_dir / "attempts.jsonl").write_text(
+                json.dumps(receipt, ensure_ascii=False, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            completion_path = question_dir / "completion.json"
+            completion = json.loads(completion_path.read_text(encoding="utf-8"))
+            completion["attempt_number"] = 2
+            write_json(completion_path, completion)
+
+            grading_dir = root / "grading"
             self.prepare(synthetic, grading_dir)
             self.complete_panel(grading_dir)
+            result = self.assemble(synthetic, grading_dir)
 
-            with self.assertRaisesRegex(ValueError, "prompt does not match sealed"):
-                self.assemble(synthetic, grading_dir)
+        a6 = result["economics"]["arms"]["a6a"]
+        self.assertEqual(a6["attempts"]["retry_history"]["count"], 1)
+        self.assertEqual(a6["failed_attempt_tokens"]["input_tokens"]["total"], 11)
+        self.assertEqual(a6["all_attempt_tokens"]["total_tokens"]["total"], 365)
 
 
 if __name__ == "__main__":
