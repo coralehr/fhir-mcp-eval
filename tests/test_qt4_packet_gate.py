@@ -11,7 +11,26 @@ def _resource(resource_type: str, resource_id: str, **extra):
     return {"resourceType": resource_type, "id": resource_id, **extra}
 
 
-def _packet(resources, *, features=(), traversal=None, query="Observation?patient=p1"):
+def _micro_queries(*, patient="p1"):
+    return [
+        {
+            "resource_type": "Observation",
+            "path": f"Observation?patient={patient}&code:text={term.replace(' ', '%20')}",
+            "reason": "fixed microbiology display vocabulary (micro-v1)",
+            "relaxation_policy": "none",
+        }
+        for term in ("culture", "gram stain", "screen", "smear")
+    ]
+
+
+def _packet(
+    resources,
+    *,
+    features=(),
+    traversal=None,
+    query="Observation?patient=p1",
+    queries=None,
+):
     traversed_count = (
         int(traversal["stats"]["added_resource_count"])
         if isinstance(traversal, dict)
@@ -30,7 +49,8 @@ def _packet(resources, *, features=(), traversal=None, query="Observation?patien
         "source_resource_ids": sorted(
             f"{resource['resourceType']}/{resource['id']}" for resource in resources
         ),
-        "source_queries": [{"resource_type": "Observation", "path": query}],
+        "source_queries": queries
+        or [{"resource_type": query.split("?", 1)[0], "path": query}],
         "bounds": {"kept_count": root_count},
     }
     if traversal is not None:
@@ -49,8 +69,24 @@ def _record(question_id: str, packet, *, question: str):
     }
 
 
-def _traversal():
-    return {
+def _traversal(appended_resource):
+    receipts = [
+        {
+            "depth": 1,
+            "from": "Observation/g1",
+            "path": "Observation.hasMember[0].reference",
+            "to": "Observation/g2",
+            "status": "fetched",
+        },
+        {
+            "depth": 2,
+            "from": "Observation/g2",
+            "path": "Observation.hasMember[0].reference",
+            "to": "Observation/g1",
+            "status": "already_present",
+        },
+    ]
+    result = {
         "kind": "bounded_exact_reference_traversal",
         "version": "micro-traversal-v1",
         "limits": {
@@ -63,9 +99,9 @@ def _traversal():
         "stats": {
             "fetch_attempt_count": 1,
             "added_resource_count": 1,
-            "added_serialized_bytes": 48,
+            "added_serialized_bytes": gate._json_bytes(appended_resource),
             "path_receipt_count": 2,
-            "path_receipt_serialized_bytes": 200,
+            "path_receipt_serialized_bytes": gate._json_bytes(receipts),
             "path_receipts_omitted": 0,
             "path_status_counts": {
                 "fetched": 1,
@@ -75,23 +111,9 @@ def _traversal():
                 "max_serialized_bytes": 0,
             },
         },
-        "path_receipts": [
-            {
-                "depth": 1,
-                "from": "Observation/g1",
-                "path": "Observation.hasMember[0].reference",
-                "to": "Observation/g2",
-                "status": "fetched",
-            },
-            {
-                "depth": 2,
-                "from": "Observation/g2",
-                "path": "Observation.hasMember[0].reference",
-                "to": "Observation/g1",
-                "status": "already_present",
-            },
-        ],
+        "path_receipts": receipts,
     }
+    return result
 
 
 class Qt4PacketGateTests(unittest.TestCase):
@@ -133,6 +155,12 @@ class Qt4PacketGateTests(unittest.TestCase):
             ),
             common,
         ]
+        appended = _resource(
+            "Observation",
+            "g2",
+            valueString="E. coli",
+            hasMember=[{"reference": "Observation/g1"}],
+        )
         self.v_records = [
             _record(
                 "q-micro",
@@ -145,7 +173,7 @@ class Qt4PacketGateTests(unittest.TestCase):
                         )
                     ],
                     features=("micro-vocab",),
-                    query="Observation?patient=p1&code:text=culture",
+                    queries=_micro_queries(),
                 ),
                 question="What organism was found in the culture?",
             ),
@@ -161,11 +189,11 @@ class Qt4PacketGateTests(unittest.TestCase):
                             "g1",
                             hasMember=[{"reference": "Observation/g2"}],
                         ),
-                        _resource("Observation", "g2", valueString="E. coli"),
+                        appended,
                     ],
                     features=("micro-vocab", "micro-traversal"),
-                    traversal=_traversal(),
-                    query="Observation?patient=p1&code:text=culture",
+                    traversal=_traversal(appended),
+                    queries=_micro_queries(),
                 ),
                 question="What organism was found in the culture?",
             ),
@@ -203,6 +231,18 @@ class Qt4PacketGateTests(unittest.TestCase):
                 min_traversal_gold_gain=1,
             ),
         )
+
+    def _write_arm(self, arm, records):
+        self.paths[arm].write_text(
+            "".join(json.dumps(record, sort_keys=True) + "\n" for record in records),
+            encoding="utf-8",
+        )
+
+    def _assert_failed(self, gate_name):
+        report = self._report()
+        self.assertFalse(report["passed"])
+        self.assertIn(gate_name, report["failed_gates"])
+        return report
 
     def test_reports_noop_recall_footprint_and_traversal_metrics(self):
         report = self._report()
@@ -254,6 +294,241 @@ class Qt4PacketGateTests(unittest.TestCase):
             report["resource_footprint"]["arms"]["qt4t"]["resource_json_bytes"],
             report["resource_footprint"]["arms"]["qt4t"]["root_resource_json_bytes"],
         )
+        self.assertFalse(report["query_fetch_audit"]["supported"])
+        self.assertFalse(report["query_fetch_audit"]["hard_gate_applied"])
+        self.assertIn(
+            "do not preserve per-query fetch receipts",
+            report["query_fetch_audit"]["limitation"],
+        )
+
+    def test_dispatch_is_recomputed_from_question_text_not_analysis_label(self):
+        for arm, records in (
+            ("a6a", self.a6_records),
+            ("qt4v", self.v_records),
+            ("qt4t", self.t_records),
+        ):
+            changed = json.loads(json.dumps(records))
+            changed[1]["question"] = "Was a culture performed?"
+            self._write_arm(arm, changed)
+
+        report = self._assert_failed("micro_dispatch_v1_matches_analysis_stratum")
+        self.assertEqual(report["dispatch"]["analysis_non_microbiology_dispatched"], 1)
+
+    def test_nested_benchmark_answer_keys_are_rejected_without_copying_values(self):
+        for forbidden_key in sorted(gate.FORBIDDEN_PACKET_KEYS):
+            with self.subTest(forbidden_key=forbidden_key):
+                changed = json.loads(json.dumps(self.a6_records))
+                changed[0]["packet"]["resources"][0]["component"] = [
+                    {forbidden_key: "must-not-appear"}
+                ]
+                self._write_arm("a6a", changed)
+
+                report = self._assert_failed("packets_exclude_benchmark_answer_keys")
+                rendered = gate.render_json(report)
+                self.assertIn(
+                    f"packet.resources[0].component[0].{forbidden_key}", rendered
+                )
+                self.assertNotIn("must-not-appear", rendered)
+
+    def test_micro_query_term_order_is_hard_gated(self):
+        changed = json.loads(json.dumps(self.t_records))
+        queries = changed[0]["packet"]["source_queries"]
+        queries[0], queries[1] = queries[1], queries[0]
+        self._write_arm("qt4t", changed)
+
+        self._assert_failed("qt4t_micro_v1_observation_query_union")
+
+    def test_micro_query_patient_date_sort_params_must_match_a6a(self):
+        for arm, records in (("qt4v", self.v_records), ("qt4t", self.t_records)):
+            changed = json.loads(json.dumps(records))
+            for query in changed[0]["packet"]["source_queries"]:
+                query["path"] = query["path"].replace("patient=p1", "patient=p2")
+            self._write_arm(arm, changed)
+
+        self._assert_failed("qt4v_micro_v1_observation_query_union")
+        self._assert_failed("qt4t_micro_v1_observation_query_union")
+
+    def test_micro_query_relaxation_is_hard_gated(self):
+        changed = json.loads(json.dumps(self.v_records))
+        changed[0]["packet"]["source_queries"][0]["relaxation_policy"] = "fallback"
+        changed[0]["packet"]["source_queries"][1]["relaxation_attempts"] = [
+            "Observation?patient=p1"
+        ]
+        self._write_arm("qt4v", changed)
+
+        self._assert_failed("qt4v_micro_v1_observation_query_union")
+
+    def test_traversal_root_prefix_is_hard_gated(self):
+        changed = json.loads(json.dumps(self.t_records))
+        changed[0]["packet"]["resources"][0]["status"] = "tampered"
+        self._write_arm("qt4t", changed)
+
+        self._assert_failed("qt4t_traversal_resource_shape")
+
+    def test_traversal_appended_targets_must_be_sorted_and_deduplicated(self):
+        changed = json.loads(json.dumps(self.t_records))
+        packet = changed[0]["packet"]
+        extra = _resource("Observation", "a", valueString="extra")
+        packet["resources"].append(extra)
+        packet["resource_count"] = len(packet["resources"])
+        packet["source_resource_ids"] = sorted(
+            f"{resource['resourceType']}/{resource['id']}"
+            for resource in packet["resources"]
+        )
+        stats = packet["reference_traversal"]["stats"]
+        stats["fetch_attempt_count"] = 2
+        stats["added_resource_count"] = 2
+        stats["added_serialized_bytes"] += gate._json_bytes(extra)
+        stats["path_receipts_omitted"] = 1
+        stats["path_status_counts"]["fetched"] = 2
+        self._write_arm("qt4t", changed)
+
+        self._assert_failed("qt4t_traversal_resource_shape")
+
+        changed = json.loads(json.dumps(self.t_records))
+        packet = changed[0]["packet"]
+        packet["resources"].append(packet["resources"][1])
+        self._write_arm("qt4t", changed)
+        self._assert_failed("qt4t_traversal_resource_shape")
+
+    def test_traversal_added_byte_stat_is_recomputed_from_resources(self):
+        changed = json.loads(json.dumps(self.t_records))
+        changed[0]["packet"]["reference_traversal"]["stats"][
+            "added_serialized_bytes"
+        ] += 1
+        self._write_arm("qt4t", changed)
+
+        self._assert_failed("qt4t_traversal_resource_shape")
+
+    def test_traversal_receipt_counts_bytes_and_statuses_are_recomputed(self):
+        changed = json.loads(json.dumps(self.t_records))
+        stats = changed[0]["packet"]["reference_traversal"]["stats"]
+        stats["path_receipt_count"] += 1
+        stats["path_receipt_serialized_bytes"] += 1
+        stats["path_status_counts"]["missing"] += 1
+        self._write_arm("qt4t", changed)
+
+        self._assert_failed("qt4t_traversal_stats_consistency")
+
+    def test_malformed_traversal_stats_fail_closed_instead_of_crashing_report(self):
+        changed = json.loads(json.dumps(self.t_records))
+        stats = changed[0]["packet"]["reference_traversal"]["stats"]
+        stats["fetch_attempt_count"] = "twenty-four"
+        stats["path_status_counts"]["fetched"] = "one"
+        self._write_arm("qt4t", changed)
+
+        self._assert_failed("qt4t_traversal_stats_consistency")
+
+    def test_traversal_fetch_attempt_limit_is_hard_gated(self):
+        changed = json.loads(json.dumps(self.t_records))
+        changed[0]["packet"]["reference_traversal"]["stats"]["fetch_attempt_count"] = 25
+        self._write_arm("qt4t", changed)
+
+        self._assert_failed("qt4t_traversal_actual_limits")
+
+    def test_traversal_added_evidence_byte_limit_is_hard_gated(self):
+        changed = json.loads(json.dumps(self.t_records))
+        packet = changed[0]["packet"]
+        extra = _resource("Observation", "z", valueString="x" * 24_001)
+        packet["resources"].append(extra)
+        packet["resource_count"] = len(packet["resources"])
+        packet["source_resource_ids"] = sorted(
+            f"{resource['resourceType']}/{resource['id']}"
+            for resource in packet["resources"]
+        )
+        stats = packet["reference_traversal"]["stats"]
+        stats["fetch_attempt_count"] = 2
+        stats["added_resource_count"] = 2
+        stats["added_serialized_bytes"] += gate._json_bytes(extra)
+        stats["path_receipts_omitted"] = 1
+        stats["path_status_counts"]["fetched"] = 2
+        self._write_arm("qt4t", changed)
+
+        self._assert_failed("qt4t_traversal_actual_limits")
+
+    def test_traversal_receipt_count_limit_is_hard_gated(self):
+        changed = json.loads(json.dumps(self.t_records))
+        traversal = changed[0]["packet"]["reference_traversal"]
+        traversal["path_receipts"].extend(
+            [json.loads(json.dumps(traversal["path_receipts"][1])) for _ in range(47)]
+        )
+        stats = traversal["stats"]
+        stats["path_receipt_count"] = len(traversal["path_receipts"])
+        stats["path_receipt_serialized_bytes"] = gate._json_bytes(
+            traversal["path_receipts"]
+        )
+        stats["path_status_counts"]["already_present"] = 48
+        self._write_arm("qt4t", changed)
+
+        self._assert_failed("qt4t_traversal_actual_limits")
+
+    def test_traversal_receipt_byte_limit_is_recomputed_from_actual_array(self):
+        source_id = "s" * 64
+        references = [f"Observation/{index:02d}{'x' * 62}" for index in range(48)]
+        root = _resource(
+            "Observation",
+            source_id,
+            hasMember=[{"reference": target} for target in references],
+        )
+        receipts = [
+            {
+                "depth": 2,
+                "from": f"Observation/{source_id}",
+                "path": f"Observation.hasMember[{index}].reference",
+                "to": target,
+                "status": "max_serialized_bytes" if index < 24 else "max_resources",
+            }
+            for index, target in enumerate(references)
+        ]
+        self.assertGreater(gate._json_bytes(receipts), 12_000)
+
+        v_changed = json.loads(json.dumps(self.v_records))
+        v_changed[0]["packet"]["resources"] = [root]
+        v_changed[0]["packet"]["resource_count"] = 1
+        v_changed[0]["packet"]["source_resource_ids"] = [f"Observation/{source_id}"]
+        self._write_arm("qt4v", v_changed)
+
+        t_changed = json.loads(json.dumps(self.t_records))
+        packet = t_changed[0]["packet"]
+        packet["resources"] = [root]
+        packet["resource_count"] = 1
+        packet["source_resource_ids"] = [f"Observation/{source_id}"]
+        traversal = packet["reference_traversal"]
+        traversal["path_receipts"] = receipts
+        traversal["stats"] = {
+            "fetch_attempt_count": 24,
+            "added_resource_count": 0,
+            "added_serialized_bytes": 0,
+            "path_receipt_count": 48,
+            "path_receipt_serialized_bytes": gate._json_bytes(receipts),
+            "path_receipts_omitted": 0,
+            "path_status_counts": {
+                "fetched": 0,
+                "already_present": 0,
+                "missing": 0,
+                "max_resources": 24,
+                "max_serialized_bytes": 24,
+            },
+        }
+        self._write_arm("qt4t", t_changed)
+
+        self._assert_failed("qt4t_traversal_actual_limits")
+
+    def test_traversal_depth_limit_is_hard_gated(self):
+        changed = json.loads(json.dumps(self.t_records))
+        changed[0]["packet"]["reference_traversal"]["path_receipts"][1]["depth"] = 3
+        self._write_arm("qt4t", changed)
+
+        self._assert_failed("qt4t_traversal_actual_limits")
+
+    def test_traversal_receipts_must_point_to_allowlisted_actual_reference(self):
+        changed = json.loads(json.dumps(self.t_records))
+        changed[0]["packet"]["reference_traversal"]["path_receipts"][0]["path"] = (
+            "Observation.specimen.reference"
+        )
+        self._write_arm("qt4t", changed)
+
+        self._assert_failed("qt4t_traversal_receipt_integrity")
 
     def test_json_and_text_rendering_are_deterministic_and_explicitly_label_gold(self):
         report = self._report()
@@ -290,6 +565,11 @@ class Qt4PacketGateTests(unittest.TestCase):
 
         self.assertFalse(report["passed"])
         self.assertIn("qt4t_frozen_traversal_contract", report["failed_gates"])
+
+        changed = json.loads(json.dumps(self.t_records))
+        changed[0]["packet"]["reference_traversal"]["kind"] = "generic_graph_walk"
+        self._write_arm("qt4t", changed)
+        self._assert_failed("qt4t_frozen_traversal_contract")
 
     def test_cli_writes_both_outputs_and_returns_nonzero_on_gate_failure(self):
         json_out = self.root / "gate.json"

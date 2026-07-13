@@ -15,6 +15,7 @@ import hashlib
 import json
 import re
 import sys
+import urllib.parse
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,6 +42,7 @@ PATH_STATUSES = (
     "max_serialized_bytes",
 )
 FROZEN_TRAVERSAL_VERSION = "micro-traversal-v1"
+FROZEN_TRAVERSAL_KIND = "bounded_exact_reference_traversal"
 FROZEN_TRAVERSAL_LIMITS = {
     "max_depth": 2,
     "max_resources": 24,
@@ -48,6 +50,45 @@ FROZEN_TRAVERSAL_LIMITS = {
     "max_path_receipts": 48,
     "max_path_receipt_bytes": 12_000,
 }
+MICRO_DISPATCH_VERSION = "micro-dispatch-v1"
+MICRO_DISPATCH_TERMS = (
+    "microbiolog",
+    "microbial",
+    "culture",
+    "specimen",
+    "organism",
+    "smear",
+    "gram stain",
+    "screen",
+)
+MICRO_VOCABULARY_VERSION = "micro-v1"
+MICRO_CODE_TEXT_TERMS = ("culture", "gram stain", "screen", "smear")
+FORBIDDEN_PACKET_KEYS = frozenset(
+    {
+        "true_answer",
+        "true_fhir_ids",
+        "gold",
+        "gold_answer",
+        "expected_answer",
+        "proc_query",
+        "sql_query",
+    }
+)
+_FHIR_REFERENCE_RE = re.compile(
+    r"(?P<type>[A-Za-z][A-Za-z0-9]*)/(?P<id>[A-Za-z0-9\-.]{1,64})"
+)
+_RECEIPT_PATH_RE = re.compile(
+    r"(?P<source>Observation|DiagnosticReport)\."
+    r"(?P<field>hasMember|specimen|result)"
+    r"(?:\[(?P<index>\d+)\])?\.reference"
+)
+_ALLOWED_RECEIPT_TARGETS = {
+    ("Observation", "hasMember"): "Observation",
+    ("Observation", "specimen"): "Specimen",
+    ("DiagnosticReport", "result"): "Observation",
+    ("DiagnosticReport", "specimen"): "Specimen",
+}
+_FETCH_ATTEMPT_STATUSES = frozenset({"fetched", "missing", "max_serialized_bytes"})
 
 
 class GateInputError(ValueError):
@@ -409,6 +450,358 @@ def _path_family(path: Any) -> str:
     return normalized or "unknown"
 
 
+def _forbidden_packet_paths(value: Any, *, path: str = "packet") -> list[str]:
+    """Return key paths only; never copy benchmark values into the report."""
+    found: list[str] = []
+    if isinstance(value, dict):
+        for raw_key, child in sorted(value.items(), key=lambda item: str(item[0])):
+            key = str(raw_key)
+            child_path = f"{path}.{key}"
+            if key.lower() in FORBIDDEN_PACKET_KEYS:
+                found.append(child_path)
+            found.extend(_forbidden_packet_paths(child, path=child_path))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            found.extend(_forbidden_packet_paths(child, path=f"{path}[{index}]"))
+    return found
+
+
+def _question_text(record: dict[str, Any] | None) -> str | None:
+    if not record or not isinstance(record.get("question"), str):
+        return None
+    question = record["question"]
+    return question if question.strip() else None
+
+
+def _micro_dispatches(question: str | None) -> bool:
+    lowered = str(question or "").lower()
+    return any(term in lowered for term in MICRO_DISPATCH_TERMS)
+
+
+def _source_queries(record: dict[str, Any] | None) -> list[dict[str, Any]]:
+    queries = _packet(record).get("source_queries")
+    if not isinstance(queries, list):
+        return []
+    return [query for query in queries if isinstance(query, dict)]
+
+
+def _observation_query_signature(
+    item: dict[str, Any], *, expected_term: str | None
+) -> tuple[str, tuple[tuple[str, str], ...]] | None:
+    """Normalize only code:text, retaining every frozen patient/date/sort param."""
+    if item.get("resource_type") != "Observation":
+        return None
+    path = item.get("path")
+    if not isinstance(path, str) or "?" not in path:
+        return None
+    resource_type, query = path.split("?", 1)
+    if resource_type != "Observation" or "#" in query:
+        return None
+    pairs = urllib.parse.parse_qsl(query, keep_blank_values=True)
+    code_terms = [value for key, value in pairs if key == "code:text"]
+    if expected_term is not None and code_terms != [expected_term]:
+        return None
+    return resource_type, tuple(
+        (key, value) for key, value in pairs if key != "code:text"
+    )
+
+
+def _micro_vocab_query_issues(
+    baseline_record: dict[str, Any] | None,
+    treatment_record: dict[str, Any] | None,
+) -> list[str]:
+    """Validate the term-major four-query union against the A6a base signatures."""
+    baseline_observation = [
+        item
+        for item in _source_queries(baseline_record)
+        if item.get("resource_type") == "Observation"
+    ]
+    treatment_observation = [
+        item
+        for item in _source_queries(treatment_record)
+        if item.get("resource_type") == "Observation"
+    ]
+    issues: list[str] = []
+    if not baseline_observation:
+        issues.append("baseline_observation_query_missing")
+        return issues
+    expected_width = len(baseline_observation)
+    if len(treatment_observation) != len(MICRO_CODE_TEXT_TERMS) * expected_width:
+        issues.append("four_query_union_cardinality")
+        return issues
+
+    baseline_signatures = [
+        _observation_query_signature(item, expected_term=None)
+        for item in baseline_observation
+    ]
+    if any(signature is None for signature in baseline_signatures):
+        issues.append("baseline_observation_query_invalid")
+        return issues
+
+    for term_index, term in enumerate(MICRO_CODE_TEXT_TERMS):
+        start = term_index * expected_width
+        group = treatment_observation[start : start + expected_width]
+        signatures = [
+            _observation_query_signature(item, expected_term=term) for item in group
+        ]
+        if any(signature is None for signature in signatures):
+            issues.append(f"term_or_query_invalid:{term}")
+        elif signatures != baseline_signatures:
+            issues.append(f"patient_date_sort_params_changed:{term}")
+        if any(item.get("relaxation_policy") != "none" for item in group):
+            issues.append(f"relaxation_policy_not_none:{term}")
+        if any("relaxation_attempts" in item for item in group):
+            issues.append(f"relaxation_attempt_recorded:{term}")
+    return sorted(set(issues))
+
+
+def _nonnegative_int(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def _receipt_reference_matches(
+    receipt: dict[str, Any], resources_by_id: dict[str, dict[str, Any]]
+) -> bool:
+    source = receipt.get("from")
+    target = receipt.get("to")
+    path = receipt.get("path")
+    if not isinstance(source, str) or _FHIR_REFERENCE_RE.fullmatch(source) is None:
+        return False
+    target_match = (
+        _FHIR_REFERENCE_RE.fullmatch(target) if isinstance(target, str) else None
+    )
+    path_match = _RECEIPT_PATH_RE.fullmatch(path) if isinstance(path, str) else None
+    if target_match is None or path_match is None:
+        return False
+    source_type = source.split("/", 1)[0]
+    if source_type != path_match.group("source"):
+        return False
+    target_type = _ALLOWED_RECEIPT_TARGETS.get((source_type, path_match.group("field")))
+    if target_type != target_match.group("type"):
+        return False
+
+    resource = resources_by_id.get(source)
+    if resource is None:
+        return False
+    raw_reference = resource.get(path_match.group("field"))
+    raw_index = path_match.group("index")
+    if isinstance(raw_reference, list):
+        if raw_index is None:
+            return False
+        index = int(raw_index)
+        if index >= len(raw_reference):
+            return False
+        raw_reference = raw_reference[index]
+    elif raw_index is not None:
+        return False
+    return isinstance(raw_reference, dict) and raw_reference.get("reference") == target
+
+
+def _traversal_integrity_for_question(
+    v_record: dict[str, Any] | None,
+    t_record: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Recompute every traversal invariant observable from frozen packets."""
+    categories: dict[str, list[str]] = {
+        "resource_shape": [],
+        "actual_limits": [],
+        "stats_consistency": [],
+        "receipt_integrity": [],
+    }
+    traversal = _packet(t_record).get("reference_traversal")
+    if not isinstance(traversal, dict):
+        for issues in categories.values():
+            issues.append("reference_traversal_missing")
+        return {
+            "passed": {name: False for name in categories},
+            "issues": categories,
+        }
+
+    v_roots = _resources(v_record)
+    t_resources = _resources(t_record)
+    if t_resources[: len(v_roots)] != v_roots or len(t_resources) < len(v_roots):
+        categories["resource_shape"].append("qt4v_root_prefix_changed")
+    appended = t_resources[len(v_roots) :] if len(t_resources) >= len(v_roots) else []
+    root_ids = [_resource_id(resource) for resource in v_roots]
+    appended_ids = [_resource_id(resource) for resource in appended]
+    all_ids = [_resource_id(resource) for resource in t_resources]
+    valid_appended_ids = all(resource_id is not None for resource_id in appended_ids)
+    if not valid_appended_ids:
+        categories["resource_shape"].append("appended_resource_id_missing")
+    if valid_appended_ids and appended_ids != sorted(appended_ids):
+        categories["resource_shape"].append("appended_target_ids_not_sorted")
+    present_ids = [resource_id for resource_id in all_ids if resource_id is not None]
+    if len(present_ids) != len(set(present_ids)):
+        categories["resource_shape"].append("resource_ids_not_deduplicated")
+    if any(resource_id in set(root_ids) for resource_id in appended_ids):
+        categories["resource_shape"].append("appended_target_duplicates_root")
+
+    t_packet = _packet(t_record)
+    if t_packet.get("resource_count") != len(t_resources):
+        categories["resource_shape"].append("resource_count_mismatch")
+    if t_packet.get("source_resource_ids") != sorted(present_ids):
+        categories["resource_shape"].append("source_resource_id_ledger_mismatch")
+
+    stats = traversal.get("stats")
+    if not isinstance(stats, dict):
+        stats = {}
+        categories["stats_consistency"].append("stats_missing")
+    receipts = traversal.get("path_receipts")
+    if not isinstance(receipts, list) or not all(
+        isinstance(receipt, dict) for receipt in receipts
+    ):
+        receipts = []
+        categories["receipt_integrity"].append("path_receipts_invalid")
+
+    actual_added_bytes = sum(_json_bytes(resource) for resource in appended)
+    actual_receipt_bytes = _json_bytes(receipts)
+    numeric_names = (
+        "fetch_attempt_count",
+        "added_resource_count",
+        "added_serialized_bytes",
+        "path_receipt_count",
+        "path_receipt_serialized_bytes",
+        "path_receipts_omitted",
+    )
+    numbers = {name: _nonnegative_int(stats.get(name)) for name in numeric_names}
+    if any(value is None for value in numbers.values()):
+        categories["stats_consistency"].append("nonnegative_integer_stat_required")
+
+    if numbers["added_resource_count"] != len(appended):
+        categories["resource_shape"].append("added_resource_count_mismatch")
+    if numbers["added_serialized_bytes"] != actual_added_bytes:
+        categories["resource_shape"].append("added_serialized_bytes_mismatch")
+    if numbers["path_receipt_count"] != len(receipts):
+        categories["stats_consistency"].append("path_receipt_count_mismatch")
+    if numbers["path_receipt_serialized_bytes"] != actual_receipt_bytes:
+        categories["stats_consistency"].append("path_receipt_serialized_bytes_mismatch")
+
+    status_counts = stats.get("path_status_counts")
+    valid_status_counts = isinstance(status_counts, dict) and set(status_counts) == set(
+        PATH_STATUSES
+    )
+    if valid_status_counts:
+        normalized_status_counts = {
+            status: _nonnegative_int(status_counts.get(status))
+            for status in PATH_STATUSES
+        }
+        valid_status_counts = all(
+            value is not None for value in normalized_status_counts.values()
+        )
+    else:
+        normalized_status_counts = {status: None for status in PATH_STATUSES}
+    if not valid_status_counts:
+        categories["stats_consistency"].append("path_status_counts_invalid")
+
+    serialized_status_counts = Counter(
+        receipt.get("status")
+        for receipt in receipts
+        if receipt.get("status") in PATH_STATUSES
+    )
+    if valid_status_counts:
+        total_status_count = sum(
+            int(normalized_status_counts[status]) for status in PATH_STATUSES
+        )
+        omitted = numbers["path_receipts_omitted"]
+        if omitted is None or total_status_count != len(receipts) + omitted:
+            categories["stats_consistency"].append("status_total_omission_mismatch")
+        if any(
+            serialized_status_counts[status] > int(normalized_status_counts[status])
+            for status in PATH_STATUSES
+        ):
+            categories["stats_consistency"].append(
+                "serialized_status_exceeds_complete_count"
+            )
+        if normalized_status_counts["fetched"] != len(appended):
+            categories["stats_consistency"].append(
+                "fetched_status_added_resource_mismatch"
+            )
+        if omitted == 0 and any(
+            serialized_status_counts[status] != normalized_status_counts[status]
+            for status in PATH_STATUSES
+        ):
+            categories["stats_consistency"].append("complete_status_count_mismatch")
+
+    attempts = numbers["fetch_attempt_count"]
+    observed_attempt_targets = {
+        str(receipt.get("to"))
+        for receipt in receipts
+        if receipt.get("status") in _FETCH_ATTEMPT_STATUSES
+    }
+    if attempts is not None:
+        if attempts < len(observed_attempt_targets) or attempts < len(appended):
+            categories["stats_consistency"].append("fetch_attempt_count_too_small")
+        if numbers["path_receipts_omitted"] == 0 and attempts != len(
+            observed_attempt_targets
+        ):
+            categories["stats_consistency"].append("fetch_attempt_count_mismatch")
+
+    max_depth_observed = 0
+    resources_by_id = {
+        resource_id: resource
+        for resource in t_resources
+        if (resource_id := _resource_id(resource)) is not None
+    }
+    appended_id_set = {
+        resource_id for resource_id in appended_ids if resource_id is not None
+    }
+    all_id_set = set(resources_by_id)
+    expected_receipt_keys = {"depth", "from", "path", "to", "status"}
+    for receipt in receipts:
+        depth = _nonnegative_int(receipt.get("depth"))
+        if depth is None or depth < 1:
+            categories["receipt_integrity"].append("receipt_depth_invalid")
+        else:
+            max_depth_observed = max(max_depth_observed, depth)
+        if set(receipt) != expected_receipt_keys:
+            categories["receipt_integrity"].append("receipt_shape_invalid")
+        status = receipt.get("status")
+        if status not in PATH_STATUSES:
+            categories["receipt_integrity"].append("receipt_status_invalid")
+        if not _receipt_reference_matches(receipt, resources_by_id):
+            categories["receipt_integrity"].append(
+                "receipt_path_or_reference_not_allowed"
+            )
+        target = receipt.get("to")
+        if status == "fetched" and target not in appended_id_set:
+            categories["receipt_integrity"].append("fetched_target_not_appended")
+        if status == "already_present" and target not in all_id_set:
+            categories["receipt_integrity"].append("already_present_target_absent")
+        if (
+            status in {"missing", "max_resources", "max_serialized_bytes"}
+            and target in all_id_set
+        ):
+            categories["receipt_integrity"].append("unfetched_target_present")
+
+    if attempts is None or attempts > FROZEN_TRAVERSAL_LIMITS["max_resources"]:
+        categories["actual_limits"].append("fetch_attempt_limit_exceeded")
+    if len(appended) > FROZEN_TRAVERSAL_LIMITS["max_resources"]:
+        categories["actual_limits"].append("added_resource_limit_exceeded")
+    if actual_added_bytes > FROZEN_TRAVERSAL_LIMITS["max_serialized_bytes"]:
+        categories["actual_limits"].append("added_serialized_byte_limit_exceeded")
+    if len(receipts) > FROZEN_TRAVERSAL_LIMITS["max_path_receipts"]:
+        categories["actual_limits"].append("receipt_count_limit_exceeded")
+    if actual_receipt_bytes > FROZEN_TRAVERSAL_LIMITS["max_path_receipt_bytes"]:
+        categories["actual_limits"].append("receipt_byte_limit_exceeded")
+    if max_depth_observed > FROZEN_TRAVERSAL_LIMITS["max_depth"]:
+        categories["actual_limits"].append("receipt_depth_limit_exceeded")
+
+    categories = {name: sorted(set(issues)) for name, issues in categories.items()}
+    return {
+        "passed": {name: not issues for name, issues in categories.items()},
+        "issues": categories,
+        "observed": {
+            "appended_resource_count": len(appended),
+            "appended_serialized_bytes": actual_added_bytes,
+            "serialized_receipt_count": len(receipts),
+            "serialized_receipt_bytes": actual_receipt_bytes,
+            "max_serialized_depth": max_depth_observed,
+        },
+    }
+
+
 def _traversal_metrics(
     records: dict[str, dict[str, Any]], question_ids: Iterable[str]
 ) -> dict[str, Any]:
@@ -438,15 +831,17 @@ def _traversal_metrics(
             else {}
         )
         for status, count in raw_statuses.items():
-            try:
-                status_counts[str(status)] += int(count)
-            except (TypeError, ValueError):
-                continue
-        questions_with_fetched_target += int(int(raw_statuses.get("fetched") or 0) > 0)
-        fetch_attempt_count += int(stats.get("fetch_attempt_count") or 0)
-        added_resource_count += int(stats.get("added_resource_count") or 0)
-        added_serialized_bytes += int(stats.get("added_serialized_bytes") or 0)
-        omitted_receipts += int(stats.get("path_receipts_omitted") or 0)
+            normalized_count = _nonnegative_int(count)
+            if normalized_count is not None:
+                status_counts[str(status)] += normalized_count
+        fetched_count = _nonnegative_int(raw_statuses.get("fetched")) or 0
+        questions_with_fetched_target += int(fetched_count > 0)
+        fetch_attempt_count += _nonnegative_int(stats.get("fetch_attempt_count")) or 0
+        added_resource_count += _nonnegative_int(stats.get("added_resource_count")) or 0
+        added_serialized_bytes += (
+            _nonnegative_int(stats.get("added_serialized_bytes")) or 0
+        )
+        omitted_receipts += _nonnegative_int(stats.get("path_receipts_omitted")) or 0
         limits = (
             traversal.get("limits") if isinstance(traversal.get("limits"), dict) else {}
         )
@@ -637,6 +1032,54 @@ def compare_packet_arms(
         expected={arm: len(scheduled_ids) for arm in ARM_NAMES},
     )
 
+    question_text_failures: dict[str, dict[str, str | None]] = {}
+    recomputed_micro_ids: set[str] = set()
+    for question_id in scheduled_ids:
+        arm_questions = {
+            arm: _question_text(arms[arm].get(question_id)) for arm in ARM_NAMES
+        }
+        if (
+            any(question is None for question in arm_questions.values())
+            or len(set(arm_questions.values())) != 1
+        ):
+            question_text_failures[question_id] = arm_questions
+            continue
+        if _micro_dispatches(arm_questions["a6a"]):
+            recomputed_micro_ids.add(question_id)
+    _gate(
+        gates,
+        "micro_dispatch_v1_question_text_consistency",
+        not question_text_failures,
+        observed={
+            "matched": len(scheduled_ids) - len(question_text_failures),
+            "failures": question_text_failures,
+        },
+        expected={"matched": len(scheduled_ids), "failures": {}},
+    )
+    dispatch_false_positive_ids = sorted(recomputed_micro_ids - micro_ids)
+    dispatch_false_negative_ids = sorted(micro_ids - recomputed_micro_ids)
+    _gate(
+        gates,
+        "micro_dispatch_v1_matches_analysis_stratum",
+        not dispatch_false_positive_ids and not dispatch_false_negative_ids,
+        observed={
+            "dispatched": len(recomputed_micro_ids),
+            "analysis_microbiology_matched": len(recomputed_micro_ids & micro_ids),
+            "analysis_non_microbiology_dispatched": len(
+                recomputed_micro_ids - micro_ids
+            ),
+            "false_positive_ids": dispatch_false_positive_ids,
+            "false_negative_ids": dispatch_false_negative_ids,
+        },
+        expected={
+            "dispatched": len(micro_ids),
+            "analysis_microbiology_matched": len(micro_ids),
+            "analysis_non_microbiology_dispatched": 0,
+            "false_positive_ids": [],
+            "false_negative_ids": [],
+        },
+    )
+
     dispatch_sets = {
         arm: {
             question_id
@@ -676,6 +1119,44 @@ def compare_packet_arms(
             observed=sorted(dispatch_sets[arm]),
             expected=sorted(micro_ids),
         )
+
+    recomputed_dispatch_shapes = {
+        "a6a": all(
+            _features(arms["a6a"].get(question_id)) == ()
+            for question_id in scheduled_ids
+        ),
+        "qt4v": all(
+            _features(arms["qt4v"].get(question_id))
+            == (V_FEATURES if question_id in recomputed_micro_ids else ())
+            for question_id in scheduled_ids
+        ),
+        "qt4t": all(
+            _features(arms["qt4t"].get(question_id))
+            == (T_FEATURES if question_id in recomputed_micro_ids else ())
+            for question_id in scheduled_ids
+        ),
+    }
+    _gate(
+        gates,
+        "micro_dispatch_v1_feature_application",
+        all(recomputed_dispatch_shapes.values()),
+        observed=recomputed_dispatch_shapes,
+        expected={arm: True for arm in ARM_NAMES},
+    )
+
+    forbidden_paths: dict[str, dict[str, list[str]]] = {}
+    for arm in ARM_NAMES:
+        for question_id in scheduled_ids:
+            paths = _forbidden_packet_paths(_packet(arms[arm].get(question_id)))
+            if paths:
+                forbidden_paths.setdefault(arm, {})[question_id] = paths
+    _gate(
+        gates,
+        "packets_exclude_benchmark_answer_keys",
+        not forbidden_paths,
+        observed=forbidden_paths,
+        expected={},
+    )
 
     non_micro_packet_matches = 0
     non_micro_prompt_matches = 0
@@ -735,6 +1216,25 @@ def compare_packet_arms(
         expected=len(micro_ids),
     )
 
+    micro_query_audit: dict[str, dict[str, list[str]]] = {"qt4v": {}, "qt4t": {}}
+    for arm in ("qt4v", "qt4t"):
+        for question_id in sorted(micro_ids):
+            issues = _micro_vocab_query_issues(
+                arms["a6a"].get(question_id), arms[arm].get(question_id)
+            )
+            if issues:
+                micro_query_audit[arm][question_id] = issues
+        _gate(
+            gates,
+            f"{arm}_micro_v1_observation_query_union",
+            not micro_query_audit[arm],
+            observed={
+                "matched": len(micro_ids) - len(micro_query_audit[arm]),
+                "failures": micro_query_audit[arm],
+            },
+            expected={"matched": len(micro_ids), "failures": {}},
+        )
+
     all_ids = scheduled_ids
     recall = {
         "overall": {
@@ -754,15 +1254,17 @@ def compare_packet_arms(
         candidate = _packet(arms["qt4t"].get(question_id)).get("reference_traversal")
         if isinstance(candidate, dict):
             observed_contract = {
+                "kind": candidate.get("kind"),
                 "version": candidate.get("version"),
                 "limits": candidate.get("limits"),
             }
         else:
-            observed_contract = {"version": None, "limits": None}
+            observed_contract = {"kind": None, "version": None, "limits": None}
         traversal_contract_variants[_canonical_json(observed_contract)] += 1
         traversal_contract_matches += int(
             observed_contract
             == {
+                "kind": FROZEN_TRAVERSAL_KIND,
                 "version": FROZEN_TRAVERSAL_VERSION,
                 "limits": FROZEN_TRAVERSAL_LIMITS,
             }
@@ -771,6 +1273,7 @@ def compare_packet_arms(
         "matched": traversal_contract_matches,
         "total": len(micro_ids),
         "expected": {
+            "kind": FROZEN_TRAVERSAL_KIND,
             "version": FROZEN_TRAVERSAL_VERSION,
             "limits": FROZEN_TRAVERSAL_LIMITS,
         },
@@ -778,6 +1281,54 @@ def compare_packet_arms(
             {"contract": json.loads(contract), "count": count}
             for contract, count in sorted(traversal_contract_variants.items())
         ],
+    }
+    traversal_integrity_by_question = {
+        question_id: _traversal_integrity_for_question(
+            arms["qt4v"].get(question_id), arms["qt4t"].get(question_id)
+        )
+        for question_id in sorted(micro_ids)
+    }
+    integrity_category_gate_names = {
+        "resource_shape": "qt4t_traversal_resource_shape",
+        "actual_limits": "qt4t_traversal_actual_limits",
+        "stats_consistency": "qt4t_traversal_stats_consistency",
+        "receipt_integrity": "qt4t_traversal_receipt_integrity",
+    }
+    integrity_summary: dict[str, Any] = {}
+    for category, gate_name in integrity_category_gate_names.items():
+        failures = {
+            question_id: result["issues"][category]
+            for question_id, result in traversal_integrity_by_question.items()
+            if not result["passed"][category]
+        }
+        integrity_summary[category] = {
+            "matched": len(micro_ids) - len(failures),
+            "total": len(micro_ids),
+            "failures": failures,
+        }
+        _gate(
+            gates,
+            gate_name,
+            not failures,
+            observed=integrity_summary[category],
+            expected={
+                "matched": len(micro_ids),
+                "total": len(micro_ids),
+                "failures": {},
+            },
+        )
+    traversal["integrity"] = {
+        "categories": integrity_summary,
+        "per_question_observed": {
+            question_id: result.get("observed", {})
+            for question_id, result in traversal_integrity_by_question.items()
+        },
+        "visibility_limit": (
+            "When path_receipts_omitted is nonzero, serialized receipts cannot "
+            "independently identify every attempted target. The gate still hard-checks "
+            "complete-count arithmetic, serialized-receipt lower bounds, appended "
+            "resource counts/bytes, and every frozen limit observable in the packet."
+        ),
     }
     _gate(
         gates,
@@ -837,9 +1388,16 @@ def compare_packet_arms(
         "scheduled_question_ids": scheduled_ids,
         "inputs": input_metadata or {},
         "dispatch": {
+            "version": MICRO_DISPATCH_VERSION,
+            "question_terms": list(MICRO_DISPATCH_TERMS),
             "microbiology_questions": len(micro_ids),
             "non_microbiology_questions": len(non_micro_ids),
             "microbiology_question_ids": sorted(micro_ids),
+            "recomputed_microbiology_question_ids": sorted(recomputed_micro_ids),
+            "analysis_microbiology_matched": len(recomputed_micro_ids & micro_ids),
+            "analysis_non_microbiology_dispatched": len(
+                recomputed_micro_ids - micro_ids
+            ),
             "a6a_dispatched": len(dispatch_sets["a6a"]),
             "qt4v_dispatched": len(dispatch_sets["qt4v"]),
             "qt4t_dispatched": len(dispatch_sets["qt4t"]),
@@ -861,6 +1419,26 @@ def compare_packet_arms(
                 "matched": micro_root_matches,
                 "total": len(micro_ids),
             },
+            "micro_v1_query_union": {
+                arm: {
+                    "version": MICRO_VOCABULARY_VERSION,
+                    "terms": list(MICRO_CODE_TEXT_TERMS),
+                    "matched": len(micro_ids) - len(micro_query_audit[arm]),
+                    "total": len(micro_ids),
+                    "failures": micro_query_audit[arm],
+                }
+                for arm in ("qt4v", "qt4t")
+            },
+        },
+        "query_fetch_audit": {
+            "supported": False,
+            "hard_gate_applied": False,
+            "limitation": (
+                "Packets preserve the query plan and optional relaxation_attempts, but "
+                "do not preserve per-query fetch receipts, result counts, or errors. "
+                "OperationOutcome resources lose query provenance after union/deduplication, "
+                "so this gate does not invent a fetch-success assertion."
+            ),
         },
         "resource_footprint": resource_footprint,
         "traversal": traversal,
@@ -990,6 +1568,11 @@ def render_text(report: dict[str, Any]) -> str:
             ),
         ]
     )
+    if not report.get("query_fetch_audit", {}).get("supported"):
+        lines.append(
+            "query fetch receipt/error audit: unavailable in current packet format "
+            "(no hard gate invented)"
+        )
     if report["failed_gates"]:
         lines.append("failed gates: " + ", ".join(report["failed_gates"]))
     return "\n".join(lines) + "\n"
