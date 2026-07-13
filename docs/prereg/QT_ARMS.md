@@ -218,17 +218,28 @@ or any packet bound. It adds the following integrity and spend controls:
    stratum gate. A bounded query may stop once its pre-registered per-query cap
    is reached; reaching an arbitrary backend page ceiling does not count as
    success.
-7. The live controller snapshots the exact input, gate, schema, harness, code,
-   and three packet JSONLs under a locked run bundle. Its manifest is immutable;
-   resume requires an audited per-question completion receipt bound to that
-   manifest and the prompt/answer/event/packet hashes. Contamination, stale
-   output, aliased arm directories, runtime drift, and partial capped runs
-   cannot count as completed pairs.
+7. Before importing experiment code, the live controller takes the singleton
+   lock, copies the runner, harness, packet gate, and lock module into an
+   immutable hash-verified bootstrap, and re-executes that staged runner while
+   retaining the same lock. It then snapshots the exact input, gate, schema,
+   harness, code, and three packet JSONLs under the locked run bundle. Its
+   manifest is immutable; resume requires an audited per-question completion
+   receipt bound to that manifest and the prompt/answer/event/packet hashes.
+   Contamination, stale output, aliased arm directories, runtime drift, and
+   partial capped runs cannot count as completed pairs.
 8. Panel grading uses one three-arm queue with deterministic opaque item IDs and
    interleaved arms. The judge never receives an arm name or benchmark question
-   ID. Vote caches are content-addressed over the judged text, prompt/protocol,
-   model, effort, runtime, and vote configuration; legacy or mismatched caches
-   are invalid rather than reusable.
+   ID. The registered panel is exactly three votes per item, batches of 20,
+   `gpt-5.6-sol` at `high` effort, a 600-second process timeout, and the same
+   controller-pinned Codex binary path and version as answering. Its registered
+   configuration is `panel-cache-v2`, `panel-judge-v2`,
+   `opaque-content-config-v1`, and `opaque-round-robin-v1`; the judge preamble
+   SHA-256 is
+   `abed333c02251ef78ec0d35b79207ed5d1ba6e55e8b26355c90b0bdf952b319c`
+   and output-schema SHA-256 is
+   `1d23dbf29dcea0e66f917fc7f7a32b43e316477c3998fc802f3e8b842c78a63c`.
+   Vote caches are content-addressed over the judged text and this entire
+   configuration; legacy or mismatched caches are invalid rather than reusable.
 9. The current qo-v2 microbiology selector produces Observation roots, so this
    screen can directly exercise forward `Observation.hasMember` and
    `Observation.specimen` traversal. Registered DiagnosticReport paths remain

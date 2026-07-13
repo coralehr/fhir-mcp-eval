@@ -206,6 +206,8 @@ class SyntheticQt4Run:
             "execution": {
                 "model": "gpt-5.6-sol",
                 "reasoning_effort": "high",
+                "codex_bin": "/test/codex",
+                "codex_version": "codex-test 1",
             },
             "outputs": {
                 arm: str(self.run_dirs[arm].resolve()) for arm in ARMS
@@ -323,7 +325,7 @@ class Qt4AnalysisTests(unittest.TestCase):
         config = panel_grade.build_judge_config(
             model="gpt-5.6-sol",
             effort="high",
-            batch_size=10,
+            batch_size=20,
             votes=3,
             timeout=600,
             codex_bin="/test/codex",
@@ -497,6 +499,26 @@ class Qt4AnalysisTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "fully voted"):
                 self.assemble(synthetic, grading_dir)
 
+    def test_unregistered_self_consistent_panel_config_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            synthetic = SyntheticQt4Run(root)
+            grading_dir = root / "grading"
+            self.prepare(synthetic, grading_dir)
+            self.complete_panel(grading_dir)
+            cache_path = grading_dir / "panel_votes.json"
+            cache = json.loads(cache_path.read_text(encoding="utf-8"))
+            config = cache["manifest"]["judge_config"]
+            config["judge_protocol_version"] = "unregistered-protocol"
+            config["judge_preamble_sha256"] = "0" * 64
+            cache["manifest"]["judge_config_sha256"] = qt4_analysis.sha256_json(
+                config
+            )
+            panel_grade.write_cache(cache_path, cache)
+
+            with self.assertRaisesRegex(ValueError, "not the registered QT-4 config"):
+                self.assemble(synthetic, grading_dir)
+
     def test_rehashed_prompt_with_different_packet_rendering_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -589,6 +611,15 @@ class Qt4AnalysisTests(unittest.TestCase):
             self.prepare(synthetic, grading_dir)
             self.complete_panel(grading_dir)
             result = self.assemble(synthetic, grading_dir)
+
+            receipt["usage"]["input_tokens"] = 999
+            write_json(attempt_path, receipt)
+            (question_dir / "attempts.jsonl").write_text(
+                json.dumps(receipt, ensure_ascii=False, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "archived attempt usage changed"):
+                self.prepare(synthetic, root / "grading-tampered-retry")
 
         a6 = result["economics"]["arms"]["a6a"]
         self.assertEqual(a6["attempts"]["retry_history"]["count"], 1)

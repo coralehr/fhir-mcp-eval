@@ -1,7 +1,10 @@
 import contextlib
 import csv
+import fcntl
 import hashlib
 import json
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -89,6 +92,122 @@ def _full_gate_fixture(root: Path):
 
 
 class Qt4ExperimentRunnerTests(unittest.TestCase):
+    def test_bootstrap_bundle_is_complete_and_tamper_evident(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            controller = Path(tmp) / "controller" / "manifest.json"
+            runner = qt4._stage_bootstrap_bundle(controller)
+            stage_dir = controller.parent / "bootstrap"
+
+            self.assertEqual(
+                runner.resolve(),
+                (stage_dir / "run_qt4_experiment.py").resolve(),
+            )
+            manifest = json.loads(
+                (stage_dir / "bootstrap-manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(set(manifest["files"]), set(qt4._BOOTSTRAP_FILES))
+            self.assertEqual(
+                qt4._verify_bootstrap_bundle(stage_dir).resolve(),
+                runner.resolve(),
+            )
+
+            runner.write_text("tampered\n", encoding="utf-8")
+            with self.assertRaisesRegex(SystemExit, "bootstrap file changed"):
+                qt4._verify_bootstrap_bundle(stage_dir)
+
+    def test_staged_child_adopts_preimport_lock_without_self_deadlock(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            lock_path = Path(tmp) / "controller.lock"
+            fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            os.set_inheritable(fd, True)
+            environment = {
+                qt4._BOOTSTRAPPED_ENV: "1",
+                qt4._PRELOCK_FD_ENV: str(fd),
+                qt4._PRELOCK_PATH_ENV: str(lock_path.resolve()),
+            }
+            with mock.patch.dict(os.environ, environment, clear=False):
+                with qt4._acquire_live_instance_lock(lock_path):
+                    self.assertFalse(os.get_inheritable(fd))
+                    contender = os.open(lock_path, os.O_RDWR)
+                    try:
+                        with self.assertRaises(BlockingIOError):
+                            fcntl.flock(
+                                contender,
+                                fcntl.LOCK_EX | fcntl.LOCK_NB,
+                            )
+                    finally:
+                        os.close(contender)
+
+            contender = os.open(lock_path, os.O_RDWR)
+            try:
+                fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(contender, fcntl.LOCK_UN)
+            finally:
+                os.close(contender)
+
+    def test_status_fails_closed_when_controller_bootstrap_is_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            controller = Path(tmp) / "controller" / "manifest.json"
+            controller.parent.mkdir(parents=True)
+            controller.write_text("{}\n", encoding="utf-8")
+            argv = [
+                "run_qt4_experiment.py",
+                "--controller-manifest",
+                str(controller),
+                "--status",
+            ]
+            with (
+                mock.patch.object(sys, "argv", argv),
+                self.assertRaisesRegex(SystemExit, "without its immutable bootstrap"),
+            ):
+                qt4._exec_immutable_bootstrap(live=False)
+
+    def test_live_cli_reexecs_under_lock_without_locking_itself_out(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            controller = root / "controller" / "manifest.json"
+            lock_path = root / "controller.lock"
+            runner = Path(qt4.__file__).resolve()
+            command = [
+                sys.executable,
+                str(runner),
+                "--spec",
+                str(root / "missing-spec.json"),
+                "--gate-report",
+                str(root / "missing-gate.json"),
+                "--a6a-packets",
+                str(root / "missing-a.jsonl"),
+                "--qt4v-packets",
+                str(root / "missing-v.jsonl"),
+                "--qt4t-packets",
+                str(root / "missing-t.jsonl"),
+                "--a6a-out",
+                str(root / "out-a"),
+                "--qt4v-out",
+                str(root / "out-v"),
+                "--qt4t-out",
+                str(root / "out-t"),
+                "--controller-manifest",
+                str(controller),
+                "--lock",
+                str(lock_path),
+                "--live",
+            ]
+
+            result = subprocess.run(command, capture_output=True, text=True)
+
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertNotIn("ALREADY_RUNNING", result.stdout)
+            self.assertIn("FileNotFoundError", result.stderr)
+            self.assertTrue((controller.parent / "bootstrap" / runner.name).is_file())
+            contender = os.open(lock_path, os.O_RDWR)
+            try:
+                fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(contender, fcntl.LOCK_UN)
+            finally:
+                os.close(contender)
+
     def test_live_controller_takes_lock_before_source_validation(self):
         locked = False
 

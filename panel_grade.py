@@ -382,6 +382,10 @@ def run_vote(batch: list[dict], *, codex_bin: str, timeout: int, model: str, eff
         cmd += ["-c", f'model_reasoning_effort="{effort}"']
         cmd.append(batch_prompt(batch))
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"panel process failed (rc={proc.returncode}): {proc.stderr[-200:]}"
+            )
         if not out_path.exists():
             raise RuntimeError(f"no panel output (rc={proc.returncode}): {proc.stderr[-200:]}")
         document = json.loads(out_path.read_text(encoding="utf-8"))

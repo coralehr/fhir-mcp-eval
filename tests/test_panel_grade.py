@@ -275,6 +275,34 @@ class PanelBlindnessTests(unittest.TestCase):
         self.assertIn("--ignore-user-config", commands[0])
         self.assertIn("--ignore-rules", commands[0])
 
+    def test_run_vote_rejects_schema_valid_output_after_nonzero_exit(self):
+        blinded = panel_grade.prepare_blinded_items(
+            [queue_item("a6a", "q1")], judge_config()
+        )
+        opaque_id = blinded[0]["opaque_id"]
+
+        def fake_run(command, **_kwargs):
+            output_path = Path(
+                command[command.index("--output-last-message") + 1]
+            )
+            output_path.write_text(
+                json.dumps(
+                    {"verdicts": [{"item_id": opaque_id, "correct": True}]}
+                ),
+                encoding="utf-8",
+            )
+            return SimpleNamespace(returncode=1, stderr="judge failed")
+
+        with mock.patch("panel_grade.subprocess.run", side_effect=fake_run):
+            with self.assertRaisesRegex(RuntimeError, "panel process failed"):
+                panel_grade.run_vote(
+                    blinded,
+                    codex_bin="codex",
+                    timeout=30,
+                    model="gpt-test",
+                    effort="high",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

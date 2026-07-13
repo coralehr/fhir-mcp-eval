@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import csv
 import datetime as dt
+import fcntl
 import hashlib
 import json
 import os
@@ -22,15 +23,152 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from codex_harness import (
+
+_BOOTSTRAPPED_ENV = "QT4_IMMUTABLE_BOOTSTRAP"
+_PRELOCK_FD_ENV = "QT4_PREIMPORT_LOCK_FD"
+_PRELOCK_PATH_ENV = "QT4_PREIMPORT_LOCK_PATH"
+_BOOTSTRAP_FILES = (
+    "run_qt4_experiment.py",
+    "codex_harness.py",
+    "qt4_packet_gate.py",
+    "run_lock.py",
+)
+
+
+def _cli_path(flag: str, default: str) -> Path:
+    try:
+        index = sys.argv.index(flag)
+    except ValueError:
+        return Path(default)
+    if index + 1 >= len(sys.argv):
+        raise SystemExit(f"{flag} requires a path")
+    return Path(sys.argv[index + 1])
+
+
+def _sha256_bytes(value: bytes) -> str:
+    return hashlib.sha256(value).hexdigest()
+
+
+def _verify_bootstrap_bundle(stage_dir: Path) -> Path:
+    manifest_path = stage_dir / "bootstrap-manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"invalid immutable bootstrap manifest: {manifest_path}") from exc
+    files = manifest.get("files") if isinstance(manifest, dict) else None
+    if not isinstance(files, dict) or set(files) != set(_BOOTSTRAP_FILES):
+        raise SystemExit("immutable bootstrap file inventory is incomplete")
+    for name in _BOOTSTRAP_FILES:
+        path = stage_dir / name
+        if not path.is_file() or _sha256_bytes(path.read_bytes()) != files[name]:
+            raise SystemExit(f"immutable bootstrap file changed: {path}")
+    return stage_dir / "run_qt4_experiment.py"
+
+
+def _stage_bootstrap_bundle(controller_manifest: Path) -> Path:
+    stage_dir = controller_manifest.resolve().parent / "bootstrap"
+    if stage_dir.exists():
+        return _verify_bootstrap_bundle(stage_dir)
+    source_dir = Path(__file__).resolve().parent
+    temporary = stage_dir.with_name(f".bootstrap.{os.getpid()}.tmp")
+    temporary.mkdir(parents=True, exist_ok=False)
+    files: dict[str, str] = {}
+    try:
+        for name in _BOOTSTRAP_FILES:
+            payload = (source_dir / name).read_bytes()
+            (temporary / name).write_bytes(payload)
+            files[name] = _sha256_bytes(payload)
+        manifest = {
+            "kind": "qt4_immutable_preimport_bootstrap",
+            "schema_version": "qt4-bootstrap-v1",
+            "files": files,
+        }
+        (temporary / "bootstrap-manifest.json").write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        stage_dir.parent.mkdir(parents=True, exist_ok=True)
+        temporary.rename(stage_dir)
+    except BaseException:
+        shutil.rmtree(temporary, ignore_errors=True)
+        raise
+    return _verify_bootstrap_bundle(stage_dir)
+
+
+def _exec_immutable_bootstrap(*, live: bool) -> None:
+    controller = _cli_path(
+        "--controller-manifest", "runs/qt4-micro42-controller/manifest.json"
+    )
+    stage_dir = controller.resolve().parent / "bootstrap"
+    if not live and not stage_dir.exists():
+        if controller.resolve().exists():
+            raise SystemExit(
+                "controller manifest exists without its immutable bootstrap"
+            )
+        return
+
+    lock_fd: int | None = None
+    environment = os.environ.copy()
+    if live:
+        lock_path = _cli_path("--lock", "runs/.run_qt4_micro42.lock").resolve()
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            owner = os.read(lock_fd, 256).decode("utf-8", errors="replace").strip()
+            os.close(lock_fd)
+            print(f"ALREADY_RUNNING: {lock_path} is held by {owner or 'unknown PID'}")
+            raise SystemExit(75)
+        os.ftruncate(lock_fd, 0)
+        os.write(lock_fd, f"pid={os.getpid()}\n".encode("utf-8"))
+        os.fsync(lock_fd)
+        os.set_inheritable(lock_fd, True)
+        environment[_PRELOCK_FD_ENV] = str(lock_fd)
+        environment[_PRELOCK_PATH_ENV] = str(lock_path)
+
+    runner = _stage_bootstrap_bundle(controller)
+    environment[_BOOTSTRAPPED_ENV] = "1"
+    try:
+        os.execve(
+            sys.executable,
+            [sys.executable, str(runner), *sys.argv[1:]],
+            environment,
+        )
+    except BaseException:
+        if lock_fd is not None:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
+        raise
+
+
+def _bootstrap_before_project_imports() -> None:
+    if __name__ != "__main__":
+        return
+    if os.environ.get(_BOOTSTRAPPED_ENV) == "1":
+        _verify_bootstrap_bundle(Path(__file__).resolve().parent)
+        return
+    if "--live" in sys.argv:
+        _exec_immutable_bootstrap(live=True)
+    elif "--status" in sys.argv:
+        _exec_immutable_bootstrap(live=False)
+
+
+_bootstrap_before_project_imports()
+
+from codex_harness import (  # noqa: E402 - immutable bootstrap runs first
     answer_matches_schema,
     audit_event_log,
     run_version,
     slugify,
     terminal_question_status,
 )
-from qt4_packet_gate import GateExpectations, compare_packet_files
-from run_lock import AlreadyRunning, LOCK_BUSY_EXIT, acquire_single_instance
+from qt4_packet_gate import GateExpectations, compare_packet_files  # noqa: E402
+from run_lock import (  # noqa: E402 - immutable bootstrap runs first
+    AlreadyRunning,
+    LOCK_BUSY_EXIT,
+    acquire_single_instance,
+)
 
 
 REGISTERED_MODEL = "gpt-5.6-sol"
@@ -77,6 +215,70 @@ REQUIRED_GATE_NAMES = {
     "qt4t_frozen_traversal_contract",
     "qt4t_minimum_traversal_gold_gain",
 }
+
+
+class _InheritedInstanceLock:
+    """Own a bootstrap-acquired flock until the staged runner exits."""
+
+    def __init__(self, path: Path, fd: int) -> None:
+        self.path = path
+        self._fd: int | None = fd
+
+    def close(self) -> None:
+        if self._fd is None:
+            return
+        fd, self._fd = self._fd, None
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+    def __enter__(self) -> _InheritedInstanceLock:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
+
+
+def _acquire_live_instance_lock(path: Path) -> Any:
+    """Adopt the pre-import lock in a staged child, or acquire it in tests.
+
+    A real ``--live`` CLI invocation is re-executed from the immutable
+    bootstrap before project imports. That child must keep the inherited open
+    file description instead of opening the lock file again: on macOS, a
+    second ``flock`` from the same process conflicts with the first one.
+    """
+
+    raw_fd = os.environ.get(_PRELOCK_FD_ENV)
+    recorded_path = os.environ.get(_PRELOCK_PATH_ENV)
+    if raw_fd is None and recorded_path is None:
+        if os.environ.get(_BOOTSTRAPPED_ENV) == "1":
+            raise RuntimeError("immutable bootstrap child has no inherited lock")
+        return acquire_single_instance(path)
+    if raw_fd is None or recorded_path is None:
+        raise RuntimeError("incomplete immutable bootstrap lock handoff")
+
+    resolved_path = path.resolve()
+    if Path(recorded_path).resolve() != resolved_path:
+        raise RuntimeError("immutable bootstrap lock path does not match --lock")
+    try:
+        fd = int(raw_fd)
+        descriptor_stat = os.fstat(fd)
+        path_stat = resolved_path.stat()
+    except (OSError, TypeError, ValueError) as exc:
+        raise RuntimeError("invalid immutable bootstrap lock descriptor") from exc
+    if fd < 0 or (descriptor_stat.st_dev, descriptor_stat.st_ino) != (
+        path_stat.st_dev,
+        path_stat.st_ino,
+    ):
+        raise RuntimeError("immutable bootstrap lock descriptor targets another file")
+
+    # The controller owns the descriptor, but model/harness subprocesses must
+    # not keep the lock alive after the controller exits.
+    os.set_inheritable(fd, False)
+    os.environ.pop(_PRELOCK_FD_ENV, None)
+    os.environ.pop(_PRELOCK_PATH_ENV, None)
+    return _InheritedInstanceLock(resolved_path, fd)
 
 
 @dataclass(frozen=True)
@@ -1146,7 +1348,11 @@ def main() -> int:
     )
     parser.add_argument("--lock", type=Path, default=Path("runs/.run_qt4_micro42.lock"))
     parser.add_argument("--schema", type=Path, default=Path("schemas/codex_answer.schema.json"))
-    parser.add_argument("--harness", type=Path, default=Path("codex_harness.py"))
+    parser.add_argument(
+        "--harness",
+        type=Path,
+        default=Path(__file__).resolve().with_name("codex_harness.py"),
+    )
     parser.add_argument("--codex-bin", default=os.environ.get("CODEX_BIN", "codex"))
     parser.add_argument("--model", default=REGISTERED_MODEL)
     parser.add_argument(
@@ -1236,7 +1442,7 @@ def main() -> int:
         raise SystemExit("model execution requires --live; use --status for progress")
 
     try:
-        instance_lock = acquire_single_instance(args.lock)
+        instance_lock = _acquire_live_instance_lock(args.lock)
     except AlreadyRunning as exc:
         print(f"ALREADY_RUNNING: {exc}")
         return LOCK_BUSY_EXIT

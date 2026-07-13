@@ -40,6 +40,8 @@ MAX_ATTEMPTS_PER_ITEM = 3
 REGISTERED_PANEL_VOTES = 3
 REGISTERED_PANEL_MODEL = "gpt-5.6-sol"
 REGISTERED_PANEL_EFFORT = "high"
+REGISTERED_PANEL_BATCH_SIZE = 20
+REGISTERED_PANEL_TIMEOUT = 600
 REQUIRED_SNAPSHOTS = {
     "spec",
     "gate_report",
@@ -353,6 +355,33 @@ def _load_events(path: Path) -> list[dict[str, Any]]:
     return events
 
 
+def _archived_event_usage(path: Path) -> dict[str, int | float]:
+    """Recompute the numeric usage runner v2 records for one failed attempt."""
+    completed: list[dict[str, Any]] = []
+    for line_number, line in enumerate(
+        path.read_text(encoding="utf-8", errors="strict").splitlines(), start=1
+    ):
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"malformed archived event log {path}:{line_number}") from exc
+        if not isinstance(event, dict):
+            raise ValueError(f"non-object archived event {path}:{line_number}")
+        if event.get("type") == "turn.completed":
+            completed.append(event)
+    if len(completed) > 1:
+        raise ValueError(f"archived event log has multiple completed turns: {path}")
+    if not completed or not isinstance(completed[0].get("usage"), dict):
+        return {}
+    return {
+        str(key): value
+        for key, value in completed[0]["usage"].items()
+        if isinstance(value, (int, float)) and not isinstance(value, bool)
+    }
+
+
 def _validate_failed_attempt_ledgers(
     *,
     question_ids: list[str],
@@ -430,12 +459,16 @@ def _validate_failed_attempt_ledgers(
                         or metadata.get("sha256") != sha256_file(archived_path)
                     ):
                         raise ValueError(f"{arm}/{question_id} archived attempt file changed")
-                usage = receipt.get("usage")
-                if not isinstance(usage, dict) or any(
-                    not isinstance(value, (int, float)) or isinstance(value, bool)
-                    for value in usage.values()
-                ):
-                    raise ValueError(f"{arm}/{question_id} attempt usage is malformed")
+                events_metadata = archived_files.get("events.jsonl")
+                recomputed_usage = (
+                    _archived_event_usage(Path(str(events_metadata["path"])))
+                    if isinstance(events_metadata, dict)
+                    else {}
+                )
+                if receipt.get("usage") != recomputed_usage:
+                    raise ValueError(
+                        f"{arm}/{question_id} archived attempt usage changed"
+                    )
                 result[arm].append(receipt)
     return result
 
@@ -804,7 +837,10 @@ def _verify_grading_artifacts(
 
 
 def _verify_panel(
-    *, grading_dir: Path, queue: list[dict[str, Any]]
+    *,
+    grading_dir: Path,
+    queue: list[dict[str, Any]],
+    controller: Mapping[str, Any],
 ) -> dict[str, int]:
     cache_path = grading_dir / "panel_votes.json"
     verdict_path = grading_dir / "panel_verdicts.json"
@@ -820,18 +856,18 @@ def _verify_panel(
     )
     if not isinstance(judge_config, dict):
         raise ValueError("panel cache has no bound judge configuration")
-    if judge_config.get("requested_votes") != REGISTERED_PANEL_VOTES:
-        raise ValueError(
-            f"QT-4 panel requires exactly {REGISTERED_PANEL_VOTES} votes per item"
-        )
-    if (
-        judge_config.get("model") != REGISTERED_PANEL_MODEL
-        or judge_config.get("reasoning_effort") != REGISTERED_PANEL_EFFORT
-    ):
-        raise ValueError(
-            f"QT-4 panel is pinned to {REGISTERED_PANEL_MODEL}@"
-            f"{REGISTERED_PANEL_EFFORT}"
-        )
+    execution = controller["execution"]
+    registered_config = panel_grade.build_judge_config(
+        model=REGISTERED_PANEL_MODEL,
+        effort=REGISTERED_PANEL_EFFORT,
+        batch_size=REGISTERED_PANEL_BATCH_SIZE,
+        votes=REGISTERED_PANEL_VOTES,
+        timeout=REGISTERED_PANEL_TIMEOUT,
+        codex_bin=str(execution["codex_bin"]),
+        codex_version=str(execution["codex_version"]),
+    )
+    if judge_config != registered_config:
+        raise ValueError("panel judge configuration is not the registered QT-4 config")
     blinded = panel_grade.prepare_blinded_items(queue, judge_config)
     expected_manifest = panel_grade.build_cache_manifest(blinded, judge_config)
     validated_cache = panel_grade.load_or_initialize_cache(
@@ -1526,7 +1562,11 @@ def assemble_result(
     deterministic, queue, grading_manifest = _verify_grading_artifacts(
         validated, grading_dir
     )
-    panel_verdicts = _verify_panel(grading_dir=grading_dir, queue=queue)
+    panel_verdicts = _verify_panel(
+        grading_dir=grading_dir,
+        queue=queue,
+        controller=validated.controller,
+    )
     labels = _labels_from_artifacts(
         question_ids=validated.question_ids,
         deterministic=deterministic,
