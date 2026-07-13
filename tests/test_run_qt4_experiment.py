@@ -106,14 +106,54 @@ class Qt4ExperimentRunnerTests(unittest.TestCase):
                 (stage_dir / "bootstrap-manifest.json").read_text(encoding="utf-8")
             )
             self.assertEqual(set(manifest["files"]), set(qt4._BOOTSTRAP_FILES))
+            self.assertEqual(stage_dir.stat().st_mode & 0o222, 0)
+            self.assertTrue(
+                all(path.stat().st_mode & 0o222 == 0 for path in stage_dir.iterdir())
+            )
             self.assertEqual(
                 qt4._verify_bootstrap_bundle(stage_dir).resolve(),
                 runner.resolve(),
             )
 
+            runner.chmod(0o644)
             runner.write_text("tampered\n", encoding="utf-8")
+            runner.chmod(0o444)
             with self.assertRaisesRegex(SystemExit, "bootstrap file changed"):
                 qt4._verify_bootstrap_bundle(stage_dir)
+            stage_dir.chmod(0o755)
+            for path in stage_dir.iterdir():
+                path.chmod(0o644)
+
+    def test_loaded_sources_must_match_verified_bootstrap_hashes(self):
+        source_paths = {
+            "runner": Path(qt4.__file__).resolve(),
+            "harness": Path(qt4.sys.modules["codex_harness"].__file__).resolve(),
+            "gate_code": Path(qt4.sys.modules["qt4_packet_gate"].__file__).resolve(),
+            "run_lock": Path(qt4.sys.modules["run_lock"].__file__).resolve(),
+        }
+        source_hashes = {name: _sha(path) for name, path in source_paths.items()}
+        bootstrap_hashes = {
+            filename: source_hashes[source_name]
+            for source_name, filename in qt4._BOOTSTRAP_SOURCE_BINDINGS.items()
+        }
+        with mock.patch.object(
+            qt4,
+            "_VERIFIED_BOOTSTRAP_HASHES",
+            bootstrap_hashes,
+        ):
+            qt4._validate_loaded_bootstrap_binding(source_hashes)
+            changed = {**source_hashes, "harness": "0" * 64}
+            with self.assertRaisesRegex(ValueError, "bootstrap manifest"):
+                qt4._validate_loaded_bootstrap_binding(changed)
+
+    def test_registered_harness_path_rejects_even_identical_override(self):
+        expected = Path(qt4.__file__).resolve().with_name("codex_harness.py")
+        qt4.validate_registered_harness_path(expected)
+        with tempfile.TemporaryDirectory() as tmp:
+            override = Path(tmp) / "codex_harness.py"
+            override.write_bytes(expected.read_bytes())
+            with self.assertRaisesRegex(ValueError, "pinned to the staged path"):
+                qt4.validate_registered_harness_path(override)
 
     def test_staged_child_adopts_preimport_lock_without_self_deadlock(self):
         with tempfile.TemporaryDirectory() as tmp:

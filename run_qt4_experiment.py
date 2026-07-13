@@ -17,6 +17,7 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -33,6 +34,13 @@ _BOOTSTRAP_FILES = (
     "qt4_packet_gate.py",
     "run_lock.py",
 )
+_VERIFIED_BOOTSTRAP_HASHES: dict[str, str] | None = None
+_BOOTSTRAP_SOURCE_BINDINGS = {
+    "runner": "run_qt4_experiment.py",
+    "harness": "codex_harness.py",
+    "gate_code": "qt4_packet_gate.py",
+    "run_lock": "run_lock.py",
+}
 
 
 def _cli_path(flag: str, default: str) -> Path:
@@ -49,7 +57,7 @@ def _sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
-def _verify_bootstrap_bundle(stage_dir: Path) -> Path:
+def _read_verified_bootstrap_hashes(stage_dir: Path) -> dict[str, str]:
     manifest_path = stage_dir / "bootstrap-manifest.json"
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -58,10 +66,24 @@ def _verify_bootstrap_bundle(stage_dir: Path) -> Path:
     files = manifest.get("files") if isinstance(manifest, dict) else None
     if not isinstance(files, dict) or set(files) != set(_BOOTSTRAP_FILES):
         raise SystemExit("immutable bootstrap file inventory is incomplete")
+    if stat.S_IMODE(stage_dir.stat().st_mode) & 0o222:
+        raise SystemExit(f"immutable bootstrap directory is writable: {stage_dir}")
     for name in _BOOTSTRAP_FILES:
         path = stage_dir / name
-        if not path.is_file() or _sha256_bytes(path.read_bytes()) != files[name]:
+        expected = files[name]
+        if not isinstance(expected, str) or len(expected) != 64:
+            raise SystemExit("immutable bootstrap hash inventory is malformed")
+        if not path.is_file() or _sha256_bytes(path.read_bytes()) != expected:
             raise SystemExit(f"immutable bootstrap file changed: {path}")
+        if stat.S_IMODE(path.stat().st_mode) & 0o222:
+            raise SystemExit(f"immutable bootstrap file is writable: {path}")
+    if stat.S_IMODE(manifest_path.stat().st_mode) & 0o222:
+        raise SystemExit(f"immutable bootstrap manifest is writable: {manifest_path}")
+    return {str(name): str(value) for name, value in files.items()}
+
+
+def _verify_bootstrap_bundle(stage_dir: Path) -> Path:
+    _read_verified_bootstrap_hashes(stage_dir)
     return stage_dir / "run_qt4_experiment.py"
 
 
@@ -72,6 +94,7 @@ def _stage_bootstrap_bundle(controller_manifest: Path) -> Path:
     source_dir = Path(__file__).resolve().parent
     temporary = stage_dir.with_name(f".bootstrap.{os.getpid()}.tmp")
     temporary.mkdir(parents=True, exist_ok=False)
+    renamed = False
     files: dict[str, str] = {}
     try:
         for name in _BOOTSTRAP_FILES:
@@ -87,10 +110,19 @@ def _stage_bootstrap_bundle(controller_manifest: Path) -> Path:
             json.dumps(manifest, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
+        for path in temporary.iterdir():
+            path.chmod(0o444)
         stage_dir.parent.mkdir(parents=True, exist_ok=True)
         temporary.rename(stage_dir)
+        renamed = True
+        stage_dir.chmod(0o555)
     except BaseException:
-        shutil.rmtree(temporary, ignore_errors=True)
+        cleanup_target = stage_dir if renamed else temporary
+        if cleanup_target.exists():
+            cleanup_target.chmod(0o755)
+            for path in cleanup_target.iterdir():
+                path.chmod(0o644)
+        shutil.rmtree(cleanup_target, ignore_errors=True)
         raise
     return _verify_bootstrap_bundle(stage_dir)
 
@@ -143,10 +175,14 @@ def _exec_immutable_bootstrap(*, live: bool) -> None:
 
 
 def _bootstrap_before_project_imports() -> None:
+    global _VERIFIED_BOOTSTRAP_HASHES
+
     if __name__ != "__main__":
         return
     if os.environ.get(_BOOTSTRAPPED_ENV) == "1":
-        _verify_bootstrap_bundle(Path(__file__).resolve().parent)
+        _VERIFIED_BOOTSTRAP_HASHES = _read_verified_bootstrap_hashes(
+            Path(__file__).resolve().parent
+        )
         return
     if "--live" in sys.argv:
         _exec_immutable_bootstrap(live=True)
@@ -550,6 +586,36 @@ def _critical_source_paths(
     }
 
 
+def validate_registered_harness_path(harness_path: Path) -> None:
+    expected = Path(__file__).resolve().with_name("codex_harness.py")
+    if harness_path.resolve() != expected:
+        raise ValueError(f"QT-4 harness is pinned to the staged path {expected}")
+
+
+def _validate_loaded_bootstrap_binding(source_hashes: dict[str, str]) -> None:
+    """Bind loaded experiment modules to the verified read-only bootstrap."""
+
+    if _VERIFIED_BOOTSTRAP_HASHES is None:
+        return
+    stage_dir = Path(__file__).resolve().parent
+    module_origins = {
+        "runner": Path(__file__).resolve(),
+        "harness": Path(str(sys.modules["codex_harness"].__file__)).resolve(),
+        "gate_code": Path(str(sys.modules["qt4_packet_gate"].__file__)).resolve(),
+        "run_lock": Path(str(sys.modules["run_lock"].__file__)).resolve(),
+    }
+    for source_name, filename in _BOOTSTRAP_SOURCE_BINDINGS.items():
+        expected_path = (stage_dir / filename).resolve()
+        if module_origins[source_name] != expected_path:
+            raise ValueError(
+                f"loaded {source_name} did not originate in immutable bootstrap"
+            )
+        if source_hashes.get(source_name) != _VERIFIED_BOOTSTRAP_HASHES[filename]:
+            raise ValueError(
+                f"loaded {source_name} no longer matches immutable bootstrap manifest"
+            )
+
+
 def validate_and_bind_sources(
     *,
     spec_path: Path,
@@ -574,6 +640,7 @@ def validate_and_bind_sources(
         harness_path=harness_path,
     )
     before = {name: _sha256_file(path) for name, path in sources.items()}
+    _validate_loaded_bootstrap_binding(before)
     question_ids = validate_registered_question_spec(spec_path, input_path)
     preflight = validate_preflight(
         question_ids=question_ids,
@@ -1372,6 +1439,7 @@ def main() -> int:
     args = parser.parse_args()
 
     validate_registered_execution(model=args.model, reasoning_effort=args.reasoning_effort)
+    validate_registered_harness_path(args.harness)
     source_arms = [
         Arm("a6a", args.a6a_packets, args.a6a_out),
         Arm("qt4v", args.qt4v_packets, args.qt4v_out),
