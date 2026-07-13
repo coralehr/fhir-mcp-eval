@@ -100,7 +100,77 @@ class SyntheticQt4Run:
         runner = supporting / "runner.py"
         runner.write_text("# synthetic runner\n", encoding="utf-8")
         gate = supporting / "gate.json"
-        gate.write_text('{"passed":true}\n', encoding="utf-8")
+        recall_arm = {
+            "questions_with_gold": 2,
+            "gold_id_occurrences": 2,
+            "retrieved_gold_id_occurrences": 1,
+            "id_weighted_recall": 0.5,
+            "macro_recall": 0.5,
+            "any_coverage_count": 1,
+            "any_coverage": 0.5,
+            "all_coverage_count": 1,
+            "all_coverage": 0.5,
+        }
+        write_json(
+            gate,
+            {
+                "schema_version": "qt4-zero-model-packet-gate-v1",
+                "passed": True,
+                "failed_gates": [],
+                "inputs": {
+                    "question_spec": {
+                        "sha256": qt4_analysis.sha256_file(self.input)
+                    },
+                    **{
+                        arm: {"sha256": qt4_analysis.sha256_file(self.packets[arm])}
+                        for arm in ARMS
+                    },
+                },
+                "evaluation_only_gold_metrics": {
+                    "recall": {
+                        "microbiology": {arm: recall_arm for arm in ARMS},
+                        "overall": {arm: recall_arm for arm in ARMS},
+                    },
+                    "vocabulary_gold_change": {
+                        "gold_id_occurrences_gained": 2,
+                        "gold_id_occurrences_lost": 0,
+                    },
+                    "traversal_gold_gain": {
+                        "gold_id_occurrences_gained": 1,
+                        "gold_id_occurrences_lost": 0,
+                    },
+                },
+                "traversal": {
+                    "target_outcomes": {
+                        "fetched": 1,
+                        "already_present": 0,
+                        "missing": 2,
+                        "resource_capped": 3,
+                        "byte_capped": 0,
+                    },
+                    "fetch_attempt_count": 3,
+                    "added_resource_count": 1,
+                    "added_serialized_bytes": 100,
+                    "path_receipts_omitted": 0,
+                    "questions_with_fetched_target": 1,
+                    "serialized_path_family_counts": {
+                        "Observation.hasMember": 1
+                    },
+                    "diagnostic_report_path_use": {"total": 0},
+                },
+                "resource_footprint": {
+                    "arms": {
+                        arm: {"packet_count": 2, "resource_count": 2}
+                        for arm in ARMS
+                    },
+                    "deltas": {},
+                },
+                "equivalence": {
+                    "non_micro_packet": {"matched": 0, "total": 0},
+                    "non_micro_prompt": {"matched": 0, "total": 0},
+                },
+            },
+        )
 
         snapshots: dict[str, dict[str, str]] = {}
         snapshot_sources = {
@@ -155,6 +225,11 @@ class SyntheticQt4Run:
             "qt4v": [(150, 15, 25, 6), (250, 25, 35, 7)],
             "qt4t": [(175, 17, 28, 8), (275, 27, 38, 9)],
         }
+        packet_records = {
+            arm: qt4_analysis.load_packet_records(self.packets[arm], self.qids)
+            for arm in ARMS
+        }
+        input_rows = qt4_analysis.load_gold_rows(self.input, self.qids)
         for arm in ARMS:
             for index, qid in enumerate(self.qids):
                 qdir = self.run_dirs[arm] / "questions" / qid
@@ -166,9 +241,11 @@ class SyntheticQt4Run:
                     "insufficiency_reason": None,
                 }
                 write_json(qdir / "answer.json", answer)
-                (qdir / "prompt.txt").write_text(
-                    f"sealed prompt {arm} {qid}\n", encoding="utf-8"
+                prompt = codex_harness.build_prompt(
+                    {**input_rows[qid], **packet_records[arm][qid]},
+                    mode="packet",
                 )
+                (qdir / "prompt.txt").write_text(prompt, encoding="utf-8")
                 inp, cached, out, reasoning = usage[arm][index]
                 usage_value = {
                     "input_tokens": inp,
@@ -364,6 +441,22 @@ class Qt4AnalysisTests(unittest.TestCase):
 
         self.assertEqual(a6["model_visible_packet_bytes"]["total"], expected_packet_bytes)
         self.assertNotEqual(expected_packet_bytes, 999_999 * 2)
+        self.assertEqual(
+            result["mechanism_outcomes"]["traversal"]["target_outcomes"][
+                "resource_capped"
+            ],
+            3,
+        )
+        self.assertTrue(
+            result["promotion_assessment"]["contrasts"]["qt4v_minus_a6a"][
+                "confirmatory_run_candidate"
+            ]
+        )
+        self.assertFalse(
+            result["promotion_assessment"]["contrasts"]["qt4v_minus_a6a"][
+                "promoted"
+            ]
+        )
         self.assertEqual(first_bytes, second_bytes)
         self.assertEqual(result, result_again)
 
@@ -397,6 +490,30 @@ class Qt4AnalysisTests(unittest.TestCase):
             write_json(cache_path, cache)
 
             with self.assertRaisesRegex(ValueError, "fully voted"):
+                self.assemble(synthetic, grading_dir)
+
+    def test_rehashed_prompt_with_different_packet_rendering_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            synthetic = SyntheticQt4Run(root)
+            grading_dir = root / "grading"
+            question_dir = synthetic.run_dirs["a6a"] / "questions" / "q1"
+            prompt_path = question_dir / "prompt.txt"
+            prompt_path.write_text(
+                prompt_path.read_text(encoding="utf-8").replace(
+                    "µ-positive", "tampered-packet-text"
+                ),
+                encoding="utf-8",
+            )
+            receipt_path = question_dir / "completion.json"
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            receipt["prompt_sha256"] = qt4_analysis.sha256_file(prompt_path)
+            write_json(receipt_path, receipt)
+
+            self.prepare(synthetic, grading_dir)
+            self.complete_panel(grading_dir)
+
+            with self.assertRaisesRegex(ValueError, "prompt does not match sealed"):
                 self.assemble(synthetic, grading_dir)
 
 

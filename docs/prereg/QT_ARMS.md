@@ -234,6 +234,22 @@ or any packet bound. It adds the following integrity and spend controls:
    `Observation.specimen` traversal. Registered DiagnosticReport paths remain
    measured, but zero use cannot support a claim about them. DiagnosticReport
    root selection or reverse traversal requires a separately versioned arm.
+10. The 42-row refresh may replace only each record's nested `packet`; all
+    prompt metadata remains sourced from the frozen 409-row CSV. A hard gate
+    renders the effective CSV-plus-packet prompt for every arm and rejects any
+    question, patient, assumption, or other prompt-affecting metadata drift.
+11. Operational retries are capped at three attempts per arm/question. Every
+    failed non-contaminated attempt is retained in an append-only ledger with
+    its prompt, event log, return code, audit, usage, and hashes; only a clean
+    accepted answer receives canonical `completion.json`. Contamination,
+    orphaned output, stale prompts, and cross-controller receipts remain hard
+    failures rather than retryable events.
+12. Packet-byte economics use the same indented, sorted JSON renderer embedded
+    in the answering prompt and are reverified against accepted `prompt.txt`.
+    Final analysis must also carry forward the sealed gate's gold recall,
+    traversal outcomes, and packet-resource counts before assessing whether an
+    arm is merely a confirmation candidate. The 42-question screen cannot by
+    itself satisfy the pooled-accuracy promotion condition.
 
 The query-validity and question-routing repairs discovered in the run-2
 failure audit are deliberately excluded from QT-4. They change the frozen

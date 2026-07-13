@@ -210,9 +210,9 @@ def load_packet_records(
 
 
 def canonical_model_packet_bytes(packet: dict[str, Any]) -> int:
-    """Canonical UTF-8 bytes of exactly the packet object the model may see."""
-    visible = codex_harness.model_visible_packet(packet)
-    return len(canonical_json(visible).encode("utf-8"))
+    """UTF-8 bytes of the exact pretty-JSON packet embedded in the prompt."""
+    rendered = codex_harness.render_model_visible_packet(packet)
+    return len(rendered.encode("utf-8"))
 
 
 def _validate_arms(arms: Mapping[str, ArmArtifacts]) -> None:
@@ -356,6 +356,8 @@ def _validate_completions(
     question_ids: list[str],
     controller_sha: str,
     arms: Mapping[str, ArmArtifacts],
+    input_rows: Mapping[str, dict[str, str]],
+    packet_records: Mapping[str, Mapping[str, dict[str, Any]]],
 ) -> tuple[dict[str, list[AcceptedCompletion]], dict[str, Any]]:
     expected_set = set(question_ids)
     accepted: dict[str, list[AcceptedCompletion]] = {}
@@ -406,6 +408,14 @@ def _validate_completions(
                 raise ValueError(f"{arm}/{question_id} completion receipt is not accepted")
             if any(receipt.get(key) != sha256_file(path) for key, path in paths.items()):
                 raise ValueError(f"{arm}/{question_id} sealed artifact hash changed")
+            expected_prompt = codex_harness.build_prompt(
+                {**input_rows[question_id], **packet_records[arm][question_id]},
+                mode="packet",
+            )
+            if paths["prompt_sha256"].read_text(encoding="utf-8") != expected_prompt:
+                raise ValueError(
+                    f"{arm}/{question_id} prompt does not match sealed input and packet"
+                )
             if (
                 (question_dir / "contamination.json").exists()
                 or (question_dir / "answer.contaminated.json").exists()
@@ -484,6 +494,8 @@ def validate_sealed_run(
         question_ids=question_ids,
         controller_sha=controller_sha,
         arms=arms,
+        input_rows=gold,
+        packet_records=packet_records,
     )
     input_hashes["implementations"] = _implementation_hashes()
     return ValidatedRun(
@@ -916,15 +928,35 @@ def _metric_summary(records: list[dict[str, Any]], name: str) -> dict[str, Any]:
 
 
 def _packet_byte_summary(
-    records: Mapping[str, dict[str, Any]], question_ids: list[str]
+    records: Mapping[str, dict[str, Any]],
+    question_ids: list[str],
+    completions: Iterable[AcceptedCompletion],
 ) -> dict[str, Any]:
-    by_question = {
-        question_id: canonical_model_packet_bytes(records[question_id]["packet"])
-        for question_id in question_ids
-    }
+    completion_by_id = {item.question_id: item for item in completions}
+    if set(completion_by_id) != set(question_ids):
+        raise ValueError("packet-byte accounting requires one accepted prompt per question")
+    by_question: dict[str, int] = {}
+    for question_id in question_ids:
+        rendered = codex_harness.render_model_visible_packet(
+            records[question_id]["packet"]
+        )
+        prompt = completion_by_id[question_id].prompt_path.read_text(encoding="utf-8")
+        exact_fragment = (
+            "Frozen clinical packet:\n"
+            + rendered
+            + "\n\nUse this packet as read-only evidence."
+        )
+        if prompt.count(exact_fragment) != 1:
+            raise ValueError(
+                f"{question_id} accepted prompt does not contain the exact sealed packet"
+            )
+        by_question[question_id] = len(rendered.encode("utf-8"))
     values = list(by_question.values())
     return {
-        "measurement": "canonical compact JSON UTF-8 bytes after codex_harness.model_visible_packet",
+        "measurement": (
+            "exact indent=2 sorted JSON UTF-8 bytes embedded by "
+            "codex_harness.render_model_visible_packet and reverified in prompt.txt"
+        ),
         "by_question": by_question,
         "total": sum(values),
         "mean": sum(values) / len(values),
@@ -968,7 +1000,9 @@ def _arm_economics(validated: ValidatedRun, arm: str) -> dict[str, Any]:
             },
         },
         "model_visible_packet_bytes": _packet_byte_summary(
-            validated.packet_records[arm], validated.question_ids
+            validated.packet_records[arm],
+            validated.question_ids,
+            validated.accepted[arm],
         ),
         "unavailable_dimensions": sorted(set(unavailable)),
     }
@@ -1009,6 +1043,141 @@ def _contrast_economics(
             arms[treatment]["tokens"][metric], arms[reference]["tokens"][metric]
         )
         for metric in token_names
+    }
+
+
+def _sealed_mechanism_outcomes(validated: ValidatedRun) -> dict[str, Any]:
+    """Validate and expose the preregistered zero-model mechanism outcomes."""
+    snapshot = validated.controller["snapshots"]["gate_report"]
+    gate_path = Path(str(snapshot["snapshot_path"]))
+    gate = _read_json(gate_path)
+    if (
+        not isinstance(gate, dict)
+        or gate.get("schema_version") != "qt4-zero-model-packet-gate-v1"
+        or gate.get("passed") is not True
+        or gate.get("failed_gates") != []
+    ):
+        raise ValueError("sealed gate report is not an accepted QT-4 gate")
+    gate_inputs = gate.get("inputs")
+    if not isinstance(gate_inputs, dict):
+        raise ValueError("sealed gate report has no bound input hashes")
+    expected_hashes = {
+        "question_spec": validated.input_hashes["input"],
+        **validated.input_hashes["packets"],
+    }
+    for name, expected_sha in expected_hashes.items():
+        entry = gate_inputs.get(name)
+        if not isinstance(entry, dict) or entry.get("sha256") != expected_sha:
+            raise ValueError(f"sealed gate {name} hash does not match the analyzed run")
+
+    gold = gate.get("evaluation_only_gold_metrics")
+    traversal = gate.get("traversal")
+    footprint = gate.get("resource_footprint")
+    equivalence = gate.get("equivalence")
+    if not all(isinstance(value, dict) for value in (gold, traversal, footprint, equivalence)):
+        raise ValueError("sealed gate omits registered mechanism outcomes")
+    recall = gold.get("recall")
+    vocabulary = gold.get("vocabulary_gold_change")
+    traversal_gold = gold.get("traversal_gold_gain")
+    targets = traversal.get("target_outcomes")
+    footprint_arms = footprint.get("arms")
+    if not all(
+        isinstance(value, dict)
+        for value in (recall, vocabulary, traversal_gold, targets, footprint_arms)
+    ):
+        raise ValueError("sealed gate mechanism outcome shape is incomplete")
+    for stratum in ("microbiology", "overall"):
+        if not isinstance(recall.get(stratum), dict) or set(recall[stratum]) != set(
+            ARM_NAMES
+        ):
+            raise ValueError(f"sealed gate recall is incomplete for {stratum}")
+    if set(footprint_arms) != set(ARM_NAMES):
+        raise ValueError("sealed gate packet-resource counts are incomplete")
+    required_targets = {
+        "fetched",
+        "already_present",
+        "missing",
+        "resource_capped",
+        "byte_capped",
+    }
+    if not required_targets.issubset(targets):
+        raise ValueError("sealed gate traversal target outcomes are incomplete")
+
+    return {
+        "gate_report_sha256": sha256_file(gate_path),
+        "gold_resource_recall": recall,
+        "vocabulary_gold_change": vocabulary,
+        "traversal_gold_gain": traversal_gold,
+        "traversal": {
+            "target_outcomes": targets,
+            "fetch_attempt_count": traversal.get("fetch_attempt_count"),
+            "added_resource_count": traversal.get("added_resource_count"),
+            "added_serialized_bytes": traversal.get("added_serialized_bytes"),
+            "path_receipts_omitted": traversal.get("path_receipts_omitted"),
+            "questions_with_fetched_target": traversal.get(
+                "questions_with_fetched_target"
+            ),
+            "serialized_path_family_counts": traversal.get(
+                "serialized_path_family_counts"
+            ),
+            "diagnostic_report_path_use": traversal.get(
+                "diagnostic_report_path_use"
+            ),
+        },
+        "packet_resource_footprint": footprint,
+        "negative_control_equivalence": {
+            "packet": equivalence.get("non_micro_packet"),
+            "prompt": equivalence.get("non_micro_prompt"),
+        },
+    }
+
+
+def _promotion_assessment(
+    contrasts: Mapping[str, dict[str, Any]], mechanisms: Mapping[str, Any]
+) -> dict[str, Any]:
+    vocabulary_gain = _coerce_nonnegative_int(
+        mechanisms["vocabulary_gold_change"].get("gold_id_occurrences_gained")
+    )
+    traversal_gain = _coerce_nonnegative_int(
+        mechanisms["traversal_gold_gain"].get("gold_id_occurrences_gained")
+    )
+    fetched = _coerce_nonnegative_int(
+        mechanisms["traversal"]["target_outcomes"].get("fetched")
+    )
+    if vocabulary_gain is None or traversal_gain is None or fetched is None:
+        raise ValueError("sealed mechanism gains must be nonnegative integers")
+    vocabulary_changed = vocabulary_gain > 0
+    traversal_changed = (
+        traversal_gain > 0 and fetched > 0
+    )
+    mechanism_by_contrast = {
+        "qt4v_minus_a6a": vocabulary_changed,
+        "qt4t_minus_qt4v": traversal_changed,
+    }
+    assessments: dict[str, Any] = {}
+    for name, mechanism_changed in mechanism_by_contrast.items():
+        favorable = contrasts[name]["accuracy_difference"] > 0
+        confirmation_candidate = favorable and mechanism_changed
+        assessments[name] = {
+            "favorable_accuracy_point_estimate": favorable,
+            "expected_mechanism_metric_changed": mechanism_changed,
+            "pooled_accuracy_degradation_measured": False,
+            "confirmatory_run_candidate": confirmation_candidate,
+            "promoted": False,
+            "decision": (
+                "eligible_for_full_set_or_untouched_holdout_confirmation"
+                if confirmation_candidate
+                else "drop_after_microbiology_screen"
+            ),
+            "reason": (
+                "The 42-question screen cannot satisfy the preregistered pooled "
+                "accuracy degradation condition; promotion requires confirmation."
+            ),
+        }
+    return {
+        "screen_scope": "42 microbiology questions; 367 controls were not answered",
+        "persistent_graph_storage_claim_supported": False,
+        "contrasts": assessments,
     }
     wall = _difference_metric(
         arms[treatment]["wall_time_seconds"], arms[reference]["wall_time_seconds"]
@@ -1071,6 +1240,28 @@ def _text_report(result: dict[str, Any]) -> str:
             f"{contrast['discordant_reference_only']}; McNemar {p_text}; "
             f"cluster CI [{bootstrap['ci_low']:+.3%}, {bootstrap['ci_high']:+.3%}]"
         )
+    mechanisms = result["mechanism_outcomes"]
+    targets = mechanisms["traversal"]["target_outcomes"]
+    lines.extend(
+        [
+            "",
+            "REGISTERED MECHANISM OUTCOMES (sealed zero-model gate)",
+            (
+                "vocabulary gold IDs gained/lost: "
+                f"{mechanisms['vocabulary_gold_change']['gold_id_occurrences_gained']}/"
+                f"{mechanisms['vocabulary_gold_change']['gold_id_occurrences_lost']}"
+            ),
+            (
+                "traversal gold IDs gained/lost: "
+                f"{mechanisms['traversal_gold_gain']['gold_id_occurrences_gained']}/"
+                f"{mechanisms['traversal_gold_gain']['gold_id_occurrences_lost']}"
+            ),
+            (
+                "traversal targets: "
+                + ", ".join(f"{key}={value}" for key, value in targets.items())
+            ),
+        ]
+    )
     lines.extend(["", "ECONOMICS (accepted completion logs only)"])
     for arm in ARM_NAMES:
         economics = result["economics"]["arms"][arm]
@@ -1159,6 +1350,8 @@ def assemble_result(
         )
         for name, treatment, reference in REGISTERED_CONTRASTS
     }
+    mechanism_outcomes = _sealed_mechanism_outcomes(validated)
+    promotion_assessment = _promotion_assessment(contrasts, mechanism_outcomes)
     result_input_hashes = {
         **validated.input_hashes,
         "grading_manifest": sha256_file(grading_dir / "grading_manifest.json"),
@@ -1190,6 +1383,8 @@ def assemble_result(
         "sealed_completion": validated.completion_summary,
         "accuracy_by_arm": accuracy_by_arm,
         "contrasts": contrasts,
+        "mechanism_outcomes": mechanism_outcomes,
+        "promotion_assessment": promotion_assessment,
         "economics": {
             "scope": "accepted completion event logs and sealed model-visible packets only",
             "arms": arm_economics,
