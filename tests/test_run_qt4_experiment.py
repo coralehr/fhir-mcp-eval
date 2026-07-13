@@ -1,6 +1,8 @@
+import contextlib
 import csv
 import hashlib
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -87,6 +89,49 @@ def _full_gate_fixture(root: Path):
 
 
 class Qt4ExperimentRunnerTests(unittest.TestCase):
+    def test_live_controller_takes_lock_before_source_validation(self):
+        locked = False
+
+        @contextlib.contextmanager
+        def fake_lock():
+            nonlocal locked
+            locked = True
+            try:
+                yield
+            finally:
+                locked = False
+
+        class ValidationReached(RuntimeError):
+            pass
+
+        def validate_inside_lock(**_kwargs):
+            self.assertTrue(locked)
+            raise ValidationReached
+
+        argv = [
+            "run_qt4_experiment.py",
+            "--spec",
+            "spec.json",
+            "--gate-report",
+            "gate.json",
+            "--a6a-packets",
+            "a.jsonl",
+            "--qt4v-packets",
+            "v.jsonl",
+            "--qt4t-packets",
+            "t.jsonl",
+            "--live",
+        ]
+        with (
+            mock.patch.object(sys, "argv", argv),
+            mock.patch.object(qt4, "acquire_single_instance", return_value=fake_lock()),
+            mock.patch.object(
+                qt4, "validate_and_bind_sources", side_effect=validate_inside_lock
+            ),
+            self.assertRaises(ValidationReached),
+        ):
+            qt4.main()
+
     def test_frozen_micro42_spec_matches_dataset_rule_and_hash_order(self):
         repo = Path(__file__).resolve().parents[1]
         spec_path = repo / "docs" / "prereg" / "qt4_micro42_spec.json"
@@ -243,6 +288,63 @@ class Qt4ExperimentRunnerTests(unittest.TestCase):
                         input_path=input_path,
                     )
 
+    def test_source_binding_detects_post_validation_packet_mutation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            input_path, micro_ids, arms, gate_path, gate = _full_gate_fixture(root)
+            ordered_ids = sorted(
+                micro_ids,
+                key=lambda qid: hashlib.sha256(
+                    f"{qt4.REGISTERED_ORDER_SALT}{qid}".encode("utf-8")
+                ).hexdigest(),
+            )
+            spec_path = root / "spec.json"
+            spec_path.write_text(
+                json.dumps(
+                    {
+                        "kind": qt4.REGISTERED_SPEC_KIND,
+                        "version": qt4.REGISTERED_SPEC_VERSION,
+                        "order_method": qt4.REGISTERED_ORDER_METHOD,
+                        "expected_question_count": qt4.EXPECTED_MICRO,
+                        "question_ids": ordered_ids,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            def mutate_packet():
+                arms[0].packet_path.write_bytes(
+                    arms[0].packet_path.read_bytes() + b"\n"
+                )
+
+            with mock.patch(
+                "run_qt4_experiment.compare_packet_files", return_value=gate
+            ):
+                with self.assertRaisesRegex(ValueError, "packet_a6a"):
+                    qt4.validate_and_bind_sources(
+                        spec_path=spec_path,
+                        gate_report_path=gate_path,
+                        input_path=input_path,
+                        arms=arms,
+                        post_validation_hook=mutate_packet,
+                    )
+
+    def test_snapshot_copy_rejects_mutated_source_bytes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.jsonl"
+            destination = root / "snapshot.jsonl"
+            source.write_text("original\n", encoding="utf-8")
+            entry = {
+                "source_path": str(source),
+                "snapshot_path": str(destination),
+                "sha256": _sha(source),
+            }
+            source.write_text("mutated\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "source changed"):
+                qt4._copy_or_verify_snapshot(entry)
+
     def test_output_directories_cannot_alias_or_nest(self):
         arms = [
             qt4.Arm("a6a", Path("a"), Path("runs/shared")),
@@ -292,6 +394,174 @@ class Qt4ExperimentRunnerTests(unittest.TestCase):
                 )
             )
             self.assertTrue(qt4._attempt_failure_exists(arm, "q1"))
+            self.assertEqual(
+                qt4._blocking_artifact_reason(
+                    arm,
+                    "q1",
+                    controller_manifest_sha256="manifest-sha",
+                ),
+                "contamination_marker",
+            )
+
+    def test_orphan_answer_and_cross_controller_receipt_are_hard_blocking(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            packet_path = root / "packets.jsonl"
+            packet_path.write_text("{}\n", encoding="utf-8")
+            arm = qt4.Arm("a6a", packet_path, root / "run")
+            qdir = arm.out_dir / "questions" / "q1"
+            qdir.mkdir(parents=True)
+            (qdir / "answer.json").write_text("{}\n", encoding="utf-8")
+            self.assertEqual(
+                qt4._blocking_artifact_reason(
+                    arm, "q1", controller_manifest_sha256="current"
+                ),
+                "orphan_canonical_artifacts",
+            )
+            (qdir / "answer.json").unlink()
+            (qdir / "completion.json").write_text(
+                json.dumps(
+                    {
+                        "status": "answered",
+                        "controller_manifest_sha256": "other",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                qt4._blocking_artifact_reason(
+                    arm, "q1", controller_manifest_sha256="current"
+                ),
+                "invalid_or_cross_controller_completion",
+            )
+
+    def test_transient_attempt_is_archived_then_clean_retry_can_complete(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            packet_path = root / "packets.jsonl"
+            packet_path.write_text("{}\n", encoding="utf-8")
+            arm = qt4.Arm("qt4v", packet_path, root / "run")
+            qdir = arm.out_dir / "questions" / "q1"
+            qdir.mkdir(parents=True)
+            (qdir / "prompt.txt").write_text("prompt one", encoding="utf-8")
+            (qdir / "events.jsonl").write_text(
+                json.dumps(
+                    {
+                        "type": "turn.completed",
+                        "usage": {"input_tokens": 11, "output_tokens": 2},
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            first = qt4._write_attempt_receipt(
+                arm=arm,
+                question_id="q1",
+                controller_manifest_sha256="manifest-sha",
+                returncode=1,
+                attempt_number=1,
+            )
+            self.assertEqual(
+                qt4._failed_attempt_status(first, qdir), "transient_failure"
+            )
+            archived = qt4._archive_failed_attempt(
+                arm=arm,
+                question_id="q1",
+                receipt={**first, "status": "transient_failure"},
+            )
+            archive_dir = qdir / "attempts" / "attempt-0001"
+            self.assertEqual(archived["usage"]["input_tokens"], 11)
+            self.assertTrue((archive_dir / "prompt.txt").exists())
+            self.assertTrue((archive_dir / "events.jsonl").exists())
+            self.assertTrue((archive_dir / "attempt.json").exists())
+            self.assertEqual(
+                len((qdir / "attempts.jsonl").read_text().splitlines()), 1
+            )
+            self.assertIsNone(
+                qt4._blocking_artifact_reason(
+                    arm, "q1", controller_manifest_sha256="manifest-sha"
+                )
+            )
+
+            (qdir / "prompt.txt").write_text("prompt two", encoding="utf-8")
+            (qdir / "events.jsonl").write_text(
+                json.dumps(
+                    {
+                        "type": "turn.completed",
+                        "usage": {"input_tokens": 13, "output_tokens": 3},
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (qdir / "answer.json").write_text(
+                json.dumps(
+                    {
+                        "answer": "42",
+                        "source_resource_ids": [],
+                        "evidence_summary": "evidence",
+                        "insufficiency_reason": None,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            second = qt4._write_attempt_receipt(
+                arm=arm,
+                question_id="q1",
+                controller_manifest_sha256="manifest-sha",
+                returncode=0,
+                attempt_number=2,
+            )
+            self.assertEqual(second["status"], "answered")
+            self.assertTrue(
+                qt4.is_terminal_attempt(
+                    arm, "q1", controller_manifest_sha256="manifest-sha"
+                )
+            )
+            progress = qt4._progress(
+                ["q1"], [arm], controller_manifest_sha256="manifest-sha"
+            )
+            self.assertEqual(progress["attempts_by_arm"]["qt4v"], 2)
+            self.assertEqual(
+                progress["archived_token_usage_by_arm"]["qt4v"]["input_tokens"],
+                11,
+            )
+            self.assertEqual(
+                progress["accepted_token_usage_by_arm"]["qt4v"]["input_tokens"],
+                13,
+            )
+
+    def test_retry_cap_is_pinned_and_survives_resume(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            packet_path = root / "packets.jsonl"
+            packet_path.write_text("{}\n", encoding="utf-8")
+            arm = qt4.Arm("qt4t", packet_path, root / "run")
+            qdir = arm.out_dir / "questions" / "q1"
+            qdir.mkdir(parents=True)
+            for attempt_number in range(1, qt4.MAX_ATTEMPTS_PER_ITEM + 1):
+                (qdir / "prompt.txt").write_text(
+                    f"prompt {attempt_number}", encoding="utf-8"
+                )
+                (qdir / "events.jsonl").write_text(
+                    json.dumps({"type": "turn.completed"}) + "\n",
+                    encoding="utf-8",
+                )
+                receipt = qt4._write_attempt_receipt(
+                    arm=arm,
+                    question_id="q1",
+                    controller_manifest_sha256="manifest-sha",
+                    returncode=1,
+                    attempt_number=attempt_number,
+                )
+                qt4._archive_failed_attempt(
+                    arm=arm,
+                    question_id="q1",
+                    receipt={**receipt, "status": "transient_failure"},
+                )
+
+            self.assertTrue(qt4._retry_cap_reached(arm, "q1"))
+            self.assertEqual(len(qt4._attempt_receipts(arm, "q1")), 3)
 
     def test_completion_receipt_binds_clean_answer_and_file_hashes(self):
         with tempfile.TemporaryDirectory() as tmp:

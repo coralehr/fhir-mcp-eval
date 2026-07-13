@@ -20,9 +20,15 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
-from codex_harness import audit_event_log, run_version, terminal_question_status
+from codex_harness import (
+    answer_matches_schema,
+    audit_event_log,
+    run_version,
+    slugify,
+    terminal_question_status,
+)
 from qt4_packet_gate import GateExpectations, compare_packet_files
 from run_lock import AlreadyRunning, LOCK_BUSY_EXIT, acquire_single_instance
 
@@ -38,6 +44,8 @@ EXPECTED_TOTAL = 409
 EXPECTED_MICRO = 42
 EXPECTED_NON_MICRO = 367
 PARTIAL_RUN_EXIT = 3
+MAX_ATTEMPTS_PER_ITEM = 3
+ATTEMPT_SCHEMA_VERSION = "qt4-attempt-v2"
 
 REQUIRED_GATE_NAMES = {
     "scheduled_question_sets",
@@ -318,6 +326,74 @@ def validate_preflight(
     }
 
 
+def _critical_source_paths(
+    *,
+    spec_path: Path,
+    gate_report_path: Path,
+    input_path: Path,
+    arms: list[Arm],
+    schema_path: Path,
+    harness_path: Path,
+) -> dict[str, Path]:
+    return {
+        "spec": spec_path,
+        "gate_report": gate_report_path,
+        "input": input_path,
+        "schema": schema_path,
+        "harness": harness_path,
+        "runner": Path(__file__).resolve(),
+        "run_lock": Path(__file__).resolve().with_name("run_lock.py"),
+        "gate_code": Path(__file__).resolve().with_name("qt4_packet_gate.py"),
+        **{f"packet_{arm.name}": arm.packet_path for arm in arms},
+    }
+
+
+def validate_and_bind_sources(
+    *,
+    spec_path: Path,
+    gate_report_path: Path,
+    input_path: Path,
+    arms: list[Arm],
+    schema_path: Path = Path("schemas/codex_answer.schema.json"),
+    harness_path: Path = Path("codex_harness.py"),
+    post_validation_hook: Callable[[], None] | None = None,
+) -> tuple[list[str], dict[str, Any], dict[str, str]]:
+    """Validate frozen sources and bind validation to their exact bytes.
+
+    The optional hook exists only to make the validation-to-snapshot race
+    testable. Production callers leave it unset.
+    """
+    sources = _critical_source_paths(
+        spec_path=spec_path,
+        gate_report_path=gate_report_path,
+        input_path=input_path,
+        arms=arms,
+        schema_path=schema_path,
+        harness_path=harness_path,
+    )
+    before = {name: _sha256_file(path) for name, path in sources.items()}
+    question_ids = validate_registered_question_spec(spec_path, input_path)
+    preflight = validate_preflight(
+        question_ids=question_ids,
+        arms=arms,
+        gate_report_path=gate_report_path,
+        input_path=input_path,
+    )
+    if post_validation_hook is not None:
+        post_validation_hook()
+    after = {name: _sha256_file(path) for name, path in sources.items()}
+    if after != before:
+        changed = sorted(name for name in sources if before[name] != after[name])
+        raise ValueError(
+            "validated source changed before controller sealing: " + ",".join(changed)
+        )
+    bound_preflight = {
+        **preflight,
+        "validated_source_sha256": before,
+    }
+    return question_ids, bound_preflight, before
+
+
 def interleaved_schedule(
     question_ids: Iterable[str], arms: list[Arm]
 ) -> list[tuple[str, Arm]]:
@@ -381,6 +457,7 @@ def _snapshot_plan(
     arms: list[Arm],
     schema_path: Path,
     harness_path: Path,
+    validated_source_hashes: dict[str, str],
 ) -> dict[str, dict[str, str]]:
     artifact_dir = controller_manifest.parent / "artifacts"
     sources = {
@@ -405,14 +482,20 @@ def _snapshot_plan(
         "gate_code": ".py",
         **{f"packet_{arm.name}": ".jsonl" for arm in arms},
     }
-    return {
-        name: {
+    plan: dict[str, dict[str, str]] = {}
+    for name, path in sources.items():
+        observed_sha = _sha256_file(path)
+        if name not in validated_source_hashes:
+            raise ValueError(f"snapshot source was not bound during validation: {name}")
+        expected_sha = validated_source_hashes[name]
+        if observed_sha != expected_sha:
+            raise ValueError(f"validated source changed before snapshot plan: {name}")
+        plan[name] = {
             "source_path": str(path.resolve()),
             "snapshot_path": str((artifact_dir / f"{name}{suffixes[name]}").resolve()),
-            "sha256": _sha256_file(path),
+            "sha256": expected_sha,
         }
-        for name, path in sources.items()
-    }
+    return plan
 
 
 def build_controller_identity(
@@ -430,7 +513,21 @@ def build_controller_identity(
     timeout: int,
     codex_bin: str,
     preflight: dict[str, Any],
+    validated_source_hashes: dict[str, str],
 ) -> dict[str, Any]:
+    expected_bound_sources = {
+        "spec",
+        "gate_report",
+        "input",
+        "schema",
+        "harness",
+        "runner",
+        "run_lock",
+        "gate_code",
+        *(f"packet_{arm.name}" for arm in arms),
+    }
+    if set(validated_source_hashes) != expected_bound_sources:
+        raise ValueError("controller source binding is incomplete or has unknown inputs")
     resolved_codex = shutil.which(codex_bin) or str(Path(codex_bin).resolve())
     snapshots = _snapshot_plan(
         controller_manifest=controller_manifest,
@@ -440,6 +537,7 @@ def build_controller_identity(
         arms=arms,
         schema_path=schema_path,
         harness_path=harness_path,
+        validated_source_hashes=validated_source_hashes,
     )
     return {
         "kind": "qt4_micro_interleaved_controller_manifest",
@@ -469,9 +567,7 @@ def build_controller_identity(
 def _terminal_files_exist(arms: list[Arm]) -> bool:
     for arm in arms:
         questions = arm.out_dir / "questions"
-        if any(questions.glob("*/answer.json")) or any(
-            questions.glob("*/contamination.json")
-        ):
+        if questions.exists() and any(path.is_file() for path in questions.rglob("*")):
             return True
     return False
 
@@ -542,8 +638,20 @@ def seal_controller_bundle(
     )
 
 
+def _question_dir(arm: Arm, question_id: str) -> Path:
+    return arm.out_dir / "questions" / slugify(question_id)
+
+
 def _completion_path(arm: Arm, question_id: str) -> Path:
-    return arm.out_dir / "questions" / question_id / "completion.json"
+    return _question_dir(arm, question_id) / "completion.json"
+
+
+def _attempts_dir(arm: Arm, question_id: str) -> Path:
+    return _question_dir(arm, question_id) / "attempts"
+
+
+def _attempt_ledger_path(arm: Arm, question_id: str) -> Path:
+    return _question_dir(arm, question_id) / "attempts.jsonl"
 
 
 def _valid_answer_shape(path: Path) -> bool:
@@ -567,7 +675,7 @@ def _valid_answer_shape(path: Path) -> bool:
 def is_terminal_attempt(
     arm: Arm, question_id: str, *, controller_manifest_sha256: str
 ) -> bool:
-    question_dir = arm.out_dir / "questions" / question_id
+    question_dir = _question_dir(arm, question_id)
     completion_path = _completion_path(arm, question_id)
     if not completion_path.exists():
         return False
@@ -575,7 +683,15 @@ def is_terminal_attempt(
         receipt = _read_json(completion_path)
     except (OSError, json.JSONDecodeError):
         return False
-    if not isinstance(receipt, dict) or receipt.get("status") != "answered":
+    if (
+        not isinstance(receipt, dict)
+        or receipt.get("kind") != "qt4_attempt_completion"
+        or receipt.get("schema_version") != ATTEMPT_SCHEMA_VERSION
+        or receipt.get("status") != "answered"
+        or receipt.get("model") != REGISTERED_MODEL
+        or receipt.get("reasoning_effort") != REGISTERED_REASONING_EFFORT
+        or not isinstance(receipt.get("attempt_number"), int)
+    ):
         return False
     if (
         receipt.get("controller_manifest_sha256") != controller_manifest_sha256
@@ -603,8 +719,13 @@ def is_terminal_attempt(
 
 
 def _attempt_failure_exists(arm: Arm, question_id: str) -> bool:
-    question_dir = arm.out_dir / "questions" / question_id
-    if (question_dir / "contamination.json").exists():
+    question_dir = _question_dir(arm, question_id)
+    if any(
+        (question_dir / marker).exists()
+        for marker in ("contamination.json", "stale_artifact.json")
+    ):
+        return True
+    if any(_attempts_dir(arm, question_id).glob("attempt-*/attempt.json")):
         return True
     completion = _completion_path(arm, question_id)
     if not completion.exists():
@@ -615,14 +736,234 @@ def _attempt_failure_exists(arm: Arm, question_id: str) -> bool:
         return True
 
 
+def _retry_cap_reached(arm: Arm, question_id: str) -> bool:
+    return len(_attempt_receipts(arm, question_id)) >= MAX_ATTEMPTS_PER_ITEM
+
+
+def _extract_event_usage(event_path: Path) -> dict[str, int | float]:
+    usage: dict[str, int | float] = {}
+    if not event_path.exists():
+        return usage
+    for line in event_path.read_text(
+        encoding="utf-8", errors="replace"
+    ).splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(event, dict) or event.get("type") != "turn.completed":
+            continue
+        candidate = event.get("usage")
+        if isinstance(candidate, dict):
+            usage = {
+                str(key): value
+                for key, value in candidate.items()
+                if isinstance(value, (int, float)) and not isinstance(value, bool)
+            }
+    return usage
+
+
+def _harness_question_result(arm: Arm, question_id: str) -> dict[str, Any] | None:
+    summary_path = arm.out_dir / "summary.json"
+    if not summary_path.exists():
+        return None
+    try:
+        summary = _read_json(summary_path)
+    except (OSError, json.JSONDecodeError):
+        return None
+    questions = summary.get("questions") if isinstance(summary, dict) else None
+    if not isinstance(questions, list):
+        return None
+    for item in questions:
+        if isinstance(item, dict) and str(item.get("question_id")) == question_id:
+            return item
+    return None
+
+
+def _attempt_receipts(arm: Arm, question_id: str) -> list[dict[str, Any]]:
+    receipts: list[dict[str, Any]] = []
+    attempts_dir = _attempts_dir(arm, question_id)
+    if not attempts_dir.exists():
+        return receipts
+    for path in sorted(attempts_dir.glob("attempt-*/attempt.json")):
+        try:
+            value = _read_json(path)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(value, dict):
+            receipts.append(value)
+    return receipts
+
+
+def _ledger_receipts(arm: Arm, question_id: str) -> list[dict[str, Any]]:
+    path = _attempt_ledger_path(arm, question_id)
+    if not path.exists():
+        return []
+    receipts: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(value, dict):
+            return []
+        receipts.append(value)
+    return receipts
+
+
+def _append_attempt_ledger(path: Path, receipt: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = (json.dumps(receipt, ensure_ascii=False, sort_keys=True) + "\n").encode(
+        "utf-8"
+    )
+    descriptor = os.open(path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
+    try:
+        os.write(descriptor, payload)
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _archive_failed_attempt(
+    *,
+    arm: Arm,
+    question_id: str,
+    receipt: dict[str, Any],
+) -> dict[str, Any]:
+    """Move one failed attempt into an immutable numbered provenance bundle."""
+    question_dir = _question_dir(arm, question_id)
+    attempt_number = int(receipt["attempt_number"])
+    attempt_dir = _attempts_dir(arm, question_id) / f"attempt-{attempt_number:04d}"
+    if attempt_dir.exists():
+        raise ValueError(f"attempt archive already exists: {attempt_dir}")
+    attempt_dir.mkdir(parents=True)
+    archived_files: dict[str, dict[str, str]] = {}
+    movable_names = (
+        "prompt.txt",
+        "events.jsonl",
+        "command.json",
+        "answer.json",
+        "answer.failed.json",
+        "answer.contaminated.json",
+        "answer.stale.json",
+    )
+    for name in movable_names:
+        source = question_dir / name
+        if not source.exists():
+            continue
+        destination = attempt_dir / name
+        source.replace(destination)
+        archived_files[name] = {
+            "path": str(destination),
+            "sha256": _sha256_file(destination),
+        }
+    for name in ("contamination.json", "stale_artifact.json"):
+        source = question_dir / name
+        if not source.exists():
+            continue
+        destination = attempt_dir / name
+        shutil.copyfile(source, destination)
+        archived_files[name] = {
+            "path": str(destination),
+            "sha256": _sha256_file(destination),
+        }
+    archived = {
+        **receipt,
+        "archived_files": archived_files,
+        "attempt_receipt_path": str(attempt_dir / "attempt.json"),
+    }
+    _write_json_atomic(attempt_dir / "attempt.json", archived)
+    _append_attempt_ledger(_attempt_ledger_path(arm, question_id), archived)
+    return archived
+
+
+def _blocking_artifact_reason(
+    arm: Arm,
+    question_id: str,
+    *,
+    controller_manifest_sha256: str,
+) -> str | None:
+    """Return why an item cannot be safely resumed, without adopting artifacts."""
+    question_dir = _question_dir(arm, question_id)
+    if (question_dir / "contamination.json").exists():
+        return "contamination_marker"
+    if (question_dir / "stale_artifact.json").exists():
+        return "stale_artifact_marker"
+
+    completion = _completion_path(arm, question_id)
+    completion_valid = False
+    if completion.exists():
+        completion_valid = is_terminal_attempt(
+            arm,
+            question_id,
+            controller_manifest_sha256=controller_manifest_sha256,
+        )
+        if not completion_valid:
+            return "invalid_or_cross_controller_completion"
+
+    canonical_artifacts = (
+        "answer.json",
+        "answer.failed.json",
+        "answer.contaminated.json",
+        "answer.stale.json",
+        "prompt.txt",
+        "events.jsonl",
+        "command.json",
+    )
+    if not completion_valid and any(
+        (question_dir / name).exists() for name in canonical_artifacts
+    ):
+        return "orphan_canonical_artifacts"
+
+    archived = _attempt_receipts(arm, question_id)
+    archive_dirs = sorted(_attempts_dir(arm, question_id).glob("attempt-*"))
+    ledger = _ledger_receipts(arm, question_id)
+    if len(archive_dirs) != len(archived) or archived != ledger:
+        return "malformed_or_nonappend_attempt_ledger"
+    if [receipt.get("attempt_number") for receipt in archived] != list(
+        range(1, len(archived) + 1)
+    ):
+        return "noncontiguous_attempt_ledger"
+    for receipt in archived:
+        if (
+            receipt.get("kind") != "qt4_attempt_completion"
+            or receipt.get("schema_version") != ATTEMPT_SCHEMA_VERSION
+            or receipt.get("status")
+            not in {"transient_failure", "contaminated", "stale_artifact"}
+            or receipt.get("model") != REGISTERED_MODEL
+            or receipt.get("reasoning_effort") != REGISTERED_REASONING_EFFORT
+        ):
+            return "malformed_attempt_receipt"
+        if receipt.get("controller_manifest_sha256") != controller_manifest_sha256:
+            return "cross_controller_attempt_archive"
+        if receipt.get("arm") != arm.name or receipt.get("question_id") != question_id:
+            return "misbound_attempt_archive"
+        if receipt.get("packet_sha256") != _sha256_file(arm.packet_path):
+            return "stale_packet_attempt_archive"
+        archived_files = receipt.get("archived_files")
+        if not isinstance(archived_files, dict):
+            return "malformed_attempt_archive_files"
+        for metadata in archived_files.values():
+            if not isinstance(metadata, dict):
+                return "malformed_attempt_archive_files"
+            path = Path(str(metadata.get("path") or ""))
+            if not path.is_file() or metadata.get("sha256") != _sha256_file(path):
+                return "changed_attempt_archive"
+    return None
+
+
 def _write_attempt_receipt(
     *,
     arm: Arm,
     question_id: str,
     controller_manifest_sha256: str,
     returncode: int,
+    model: str = REGISTERED_MODEL,
+    reasoning_effort: str = REGISTERED_REASONING_EFFORT,
+    attempt_number: int | None = None,
+    schema_path: Path = Path("schemas/codex_answer.schema.json"),
 ) -> dict[str, Any]:
-    question_dir = arm.out_dir / "questions" / question_id
+    question_dir = _question_dir(arm, question_id)
     answer_path = question_dir / "answer.json"
     event_path = question_dir / "events.jsonl"
     prompt_path = question_dir / "prompt.txt"
@@ -630,28 +971,65 @@ def _write_attempt_receipt(
     answered = (
         returncode == 0
         and terminal_question_status(question_dir) == "answered"
-        and _valid_answer_shape(answer_path)
+        and answer_matches_schema(answer_path, schema_path)
         and not audit["contaminated"]
     )
+    if attempt_number is None:
+        attempt_number = len(_attempt_receipts(arm, question_id)) + 1
     receipt: dict[str, Any] = {
         "kind": "qt4_attempt_completion",
-        "schema_version": "qt4-attempt-v1",
+        "schema_version": ATTEMPT_SCHEMA_VERSION,
         "controller_manifest_sha256": controller_manifest_sha256,
         "arm": arm.name,
         "question_id": question_id,
         "packet_sha256": _sha256_file(arm.packet_path),
-        "returncode": returncode,
+        "schema_sha256": _sha256_file(schema_path),
+        "model": model,
+        "reasoning_effort": reasoning_effort,
+        "attempt_number": attempt_number,
+        "harness_exit_code": returncode,
         "status": "answered" if answered else "invalid",
         "event_integrity": audit,
+        "usage": _extract_event_usage(event_path),
     }
+    harness_result = _harness_question_result(arm, question_id)
+    receipt["harness_result"] = harness_result
+    receipt["returncode"] = (
+        harness_result.get("returncode")
+        if isinstance(harness_result, dict)
+        else returncode
+    )
     for key, path in {
         "answer_sha256": answer_path,
         "event_log_sha256": event_path,
         "prompt_sha256": prompt_path,
     }.items():
         receipt[key] = _sha256_file(path) if path.exists() else None
-    _write_json_atomic(_completion_path(arm, question_id), receipt)
+    if answered:
+        _write_json_atomic(_completion_path(arm, question_id), receipt)
     return receipt
+
+
+def _failed_attempt_status(receipt: dict[str, Any], question_dir: Path) -> str:
+    if (question_dir / "stale_artifact.json").exists():
+        return "stale_artifact"
+    if (question_dir / "contamination.json").exists() or receipt.get(
+        "event_integrity", {}
+    ).get("contaminated"):
+        return "contaminated"
+    return "transient_failure"
+
+
+def _sum_usage(receipts: Iterable[dict[str, Any]]) -> dict[str, int | float]:
+    totals: dict[str, int | float] = {}
+    for receipt in receipts:
+        usage = receipt.get("usage")
+        if not isinstance(usage, dict):
+            continue
+        for key, value in usage.items():
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                totals[str(key)] = totals.get(str(key), 0) + value
+    return totals
 
 
 def _progress(
@@ -669,6 +1047,12 @@ def _progress(
                 is_terminal_attempt(
                     arm, qid, controller_manifest_sha256=controller_manifest_sha256
                 )
+                and _blocking_artifact_reason(
+                    arm,
+                    qid,
+                    controller_manifest_sha256=controller_manifest_sha256,
+                )
+                is None
                 for qid in question_ids
             )
             for arm in arms
@@ -678,17 +1062,54 @@ def _progress(
                 is_terminal_attempt(
                     arm, qid, controller_manifest_sha256=controller_manifest_sha256
                 )
+                and _blocking_artifact_reason(
+                    arm,
+                    qid,
+                    controller_manifest_sha256=controller_manifest_sha256,
+                )
+                is None
                 for arm in arms
             )
             for qid in question_ids
         )
+    archived_by_arm = {
+        arm.name: [
+            receipt
+            for qid in question_ids
+            for receipt in _attempt_receipts(arm, qid)
+        ]
+        for arm in arms
+    }
+    accepted_by_arm: dict[str, list[dict[str, Any]]] = {}
+    for arm in arms:
+        receipts: list[dict[str, Any]] = []
+        for qid in question_ids:
+            completion = _completion_path(arm, qid)
+            if not completion.exists():
+                continue
+            try:
+                value = _read_json(completion)
+            except (OSError, json.JSONDecodeError):
+                continue
+            if isinstance(value, dict) and value.get("status") == "answered":
+                receipts.append(value)
+        accepted_by_arm[arm.name] = receipts
     return {
         "scheduled": len(question_ids),
         "fully_paired": fully_paired,
         "completed_by_arm": completed,
         "failed_attempts": {
-            arm.name: sum(_attempt_failure_exists(arm, qid) for qid in question_ids)
+            arm.name: len(archived_by_arm[arm.name]) for arm in arms
+        },
+        "attempts_by_arm": {
+            arm.name: len(archived_by_arm[arm.name]) + len(accepted_by_arm[arm.name])
             for arm in arms
+        },
+        "archived_token_usage_by_arm": {
+            arm.name: _sum_usage(archived_by_arm[arm.name]) for arm in arms
+        },
+        "accepted_token_usage_by_arm": {
+            arm.name: _sum_usage(accepted_by_arm[arm.name]) for arm in arms
         },
     }
 
@@ -738,39 +1159,43 @@ def main() -> int:
     parser.add_argument("--live", action="store_true")
     args = parser.parse_args()
 
-    validate_registered_execution(
-        model=args.model, reasoning_effort=args.reasoning_effort
-    )
-    question_ids = validate_registered_question_spec(args.spec, args.input)
+    validate_registered_execution(model=args.model, reasoning_effort=args.reasoning_effort)
     source_arms = [
         Arm("a6a", args.a6a_packets, args.a6a_out),
         Arm("qt4v", args.qt4v_packets, args.qt4v_out),
         Arm("qt4t", args.qt4t_packets, args.qt4t_out),
     ]
     validate_output_directories(source_arms)
-    preflight = validate_preflight(
-        question_ids=question_ids,
-        arms=source_arms,
-        gate_report_path=args.gate_report,
-        input_path=args.input,
-    )
-    identity = build_controller_identity(
-        controller_manifest=args.controller_manifest,
-        spec_path=args.spec,
-        gate_report_path=args.gate_report,
-        input_path=args.input,
-        question_ids=question_ids,
-        arms=source_arms,
-        schema_path=args.schema,
-        harness_path=args.harness,
-        model=args.model,
-        reasoning_effort=args.reasoning_effort,
-        timeout=args.timeout,
-        codex_bin=args.codex_bin,
-        preflight=preflight,
-    )
+
+    def prepare() -> tuple[list[str], dict[str, Any]]:
+        question_ids, preflight, validated_source_hashes = validate_and_bind_sources(
+            spec_path=args.spec,
+            gate_report_path=args.gate_report,
+            input_path=args.input,
+            arms=source_arms,
+            schema_path=args.schema,
+            harness_path=args.harness,
+        )
+        identity = build_controller_identity(
+            controller_manifest=args.controller_manifest,
+            spec_path=args.spec,
+            gate_report_path=args.gate_report,
+            input_path=args.input,
+            question_ids=question_ids,
+            arms=source_arms,
+            schema_path=args.schema,
+            harness_path=args.harness,
+            model=args.model,
+            reasoning_effort=args.reasoning_effort,
+            timeout=args.timeout,
+            codex_bin=args.codex_bin,
+            preflight=preflight,
+            validated_source_hashes=validated_source_hashes,
+        )
+        return question_ids, identity
 
     if args.status:
+        question_ids, identity = prepare()
         if not args.controller_manifest.exists():
             print(
                 json.dumps(
@@ -811,6 +1236,10 @@ def main() -> int:
         return LOCK_BUSY_EXIT
 
     with instance_lock:
+        # No frozen source is read before the live singleton lock is held.
+        # Validation hashes are then carried through snapshot copy and the
+        # immutable manifest, closing the gate-to-launch TOCTOU window.
+        question_ids, identity = prepare()
         # Seal only while holding the lock. A lock-losing invocation can never
         # write or replace the controller manifest or snapshots.
         bundle = seal_controller_bundle(
@@ -831,48 +1260,104 @@ def main() -> int:
         )
         attempts = 0
         for question_id, arm in interleaved_schedule(question_ids, bundle.arms):
+            blocking_reason = _blocking_artifact_reason(
+                arm,
+                question_id,
+                controller_manifest_sha256=bundle.manifest_sha256,
+            )
+            if blocking_reason is not None:
+                print(
+                    f"BLOCKED_ARTIFACT question={question_id} arm={arm.name} "
+                    f"reason={blocking_reason}",
+                    flush=True,
+                )
+                return 1
             if is_terminal_attempt(
                 arm,
                 question_id,
                 controller_manifest_sha256=bundle.manifest_sha256,
             ):
                 continue
-            if _attempt_failure_exists(arm, question_id):
+            prior_attempts = len(_attempt_receipts(arm, question_id))
+            if _retry_cap_reached(arm, question_id):
                 print(
-                    f"BLOCKED_INVALID_ATTEMPT question={question_id} arm={arm.name}",
+                    f"BLOCKED_RETRY_CAP question={question_id} arm={arm.name} "
+                    f"attempts={prior_attempts}",
                     flush=True,
                 )
                 return 1
-            if args.max_attempts is not None and attempts >= args.max_attempts:
-                print("MAX_ATTEMPTS_REACHED_INCOMPLETE", flush=True)
-                return PARTIAL_RUN_EXIT
-            command = build_harness_command(
-                arm=arm,
-                question_id=question_id,
-                input_path=bundle.input_path,
-                schema_path=bundle.schema_path,
-                timeout=args.timeout,
-                model=args.model,
-                reasoning_effort=args.reasoning_effort,
-                codex_bin=identity["execution"]["codex_bin"],
-                harness_path=bundle.harness_path,
-            )
-            print(f"RUN question={question_id} arm={arm.name}", flush=True)
-            result = subprocess.run(command, check=False)
-            attempts += 1
-            receipt = _write_attempt_receipt(
-                arm=arm,
-                question_id=question_id,
-                controller_manifest_sha256=bundle.manifest_sha256,
-                returncode=result.returncode,
-            )
-            if receipt["status"] != "answered":
+
+            while True:
+                if args.max_attempts is not None and attempts >= args.max_attempts:
+                    print("MAX_ATTEMPTS_REACHED_INCOMPLETE", flush=True)
+                    return PARTIAL_RUN_EXIT
+                attempt_number = len(_attempt_receipts(arm, question_id)) + 1
+                if attempt_number > MAX_ATTEMPTS_PER_ITEM:
+                    print(
+                        f"BLOCKED_RETRY_CAP question={question_id} arm={arm.name} "
+                        f"attempts={attempt_number - 1}",
+                        flush=True,
+                    )
+                    return 1
+                command = build_harness_command(
+                    arm=arm,
+                    question_id=question_id,
+                    input_path=bundle.input_path,
+                    schema_path=bundle.schema_path,
+                    timeout=args.timeout,
+                    model=args.model,
+                    reasoning_effort=args.reasoning_effort,
+                    codex_bin=bundle.manifest["execution"]["codex_bin"],
+                    harness_path=bundle.harness_path,
+                )
                 print(
-                    f"STOP_INVALID question={question_id} arm={arm.name} "
-                    f"returncode={result.returncode}",
+                    f"RUN question={question_id} arm={arm.name} "
+                    f"attempt={attempt_number}",
                     flush=True,
                 )
-                return result.returncode or 1
+                result = subprocess.run(command, check=False)
+                attempts += 1
+                receipt = _write_attempt_receipt(
+                    arm=arm,
+                    question_id=question_id,
+                    controller_manifest_sha256=bundle.manifest_sha256,
+                    returncode=result.returncode,
+                    model=bundle.manifest["execution"]["model"],
+                    reasoning_effort=bundle.manifest["execution"][
+                        "reasoning_effort"
+                    ],
+                    attempt_number=attempt_number,
+                    schema_path=bundle.schema_path,
+                )
+                if receipt["status"] == "answered":
+                    break
+                failure_status = _failed_attempt_status(
+                    receipt, _question_dir(arm, question_id)
+                )
+                archived = _archive_failed_attempt(
+                    arm=arm,
+                    question_id=question_id,
+                    receipt={**receipt, "status": failure_status},
+                )
+                if failure_status != "transient_failure":
+                    print(
+                        f"BLOCKED_{failure_status.upper()} question={question_id} "
+                        f"arm={arm.name} attempt={attempt_number}",
+                        flush=True,
+                    )
+                    return result.returncode or 1
+                if attempt_number >= MAX_ATTEMPTS_PER_ITEM:
+                    print(
+                        f"RETRY_CAP_REACHED question={question_id} arm={arm.name} "
+                        f"attempt_receipt={archived['attempt_receipt_path']}",
+                        flush=True,
+                    )
+                    return result.returncode or 1
+                print(
+                    f"RETRY_TRANSIENT question={question_id} arm={arm.name} "
+                    f"attempt_receipt={archived['attempt_receipt_path']}",
+                    flush=True,
+                )
 
         progress = _progress(
             question_ids,

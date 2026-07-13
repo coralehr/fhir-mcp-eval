@@ -203,6 +203,11 @@ def model_visible_packet(packet: dict[str, Any]) -> dict[str, Any]:
     return visible
 
 
+def render_model_visible_packet(packet: dict[str, Any]) -> str:
+    """Render the exact packet JSON inserted into a packet-mode prompt."""
+    return _json_block(model_visible_packet(packet))
+
+
 def build_prompt(
     row: dict[str, Any],
     *,
@@ -251,13 +256,16 @@ def build_prompt(
         lines.extend(["", "Additional run instruction:", extra_instruction.strip()])
 
     if mode == "packet":
-        if isinstance(packet, dict):
-            packet = model_visible_packet(packet)
+        rendered_packet = (
+            render_model_visible_packet(packet)
+            if isinstance(packet, dict)
+            else _json_block(packet if packet is not None else safe_row)
+        )
         lines.extend(
             [
                 "",
                 "Frozen clinical packet:",
-                _json_block(packet if packet is not None else safe_row),
+                rendered_packet,
                 "",
                 "Use this packet as read-only evidence. Do not request external data.",
                 "Do not call tools, execute commands, inspect the filesystem, or read files; any such event invalidates the answer.",
@@ -439,6 +447,80 @@ def enforce_packet_event_integrity(*, event_log_path: Path, answer_path: Path) -
         receipt_path = answer_path.with_name("contamination.json")
         receipt_path.write_text(_json_block(receipt) + "\n", encoding="utf-8")
     return receipt
+
+
+def _matches_json_schema(value: Any, schema: dict[str, Any]) -> bool:
+    """Validate the small JSON-Schema subset used by Codex answer schemas."""
+    declared_type = schema.get("type")
+    if isinstance(declared_type, list):
+        return any(_matches_json_schema(value, {**schema, "type": item}) for item in declared_type)
+    if declared_type == "null":
+        return value is None
+    if declared_type == "string":
+        return isinstance(value, str)
+    if declared_type == "array":
+        if not isinstance(value, list):
+            return False
+        item_schema = schema.get("items")
+        return not isinstance(item_schema, dict) or all(
+            _matches_json_schema(item, item_schema) for item in value
+        )
+    if declared_type == "object":
+        if not isinstance(value, dict):
+            return False
+        required = schema.get("required", [])
+        if not isinstance(required, list) or any(key not in value for key in required):
+            return False
+        properties = schema.get("properties", {})
+        if not isinstance(properties, dict):
+            return False
+        if schema.get("additionalProperties") is False and set(value) - set(properties):
+            return False
+        return all(
+            key not in value
+            or not isinstance(child_schema, dict)
+            or _matches_json_schema(value[key], child_schema)
+            for key, child_schema in properties.items()
+        )
+    return True
+
+
+def answer_matches_schema(answer_path: Path, schema_path: Path) -> bool:
+    """Return whether an existing answer is parseable and matches its output schema."""
+    try:
+        answer = json.loads(answer_path.read_text(encoding="utf-8"))
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(schema, dict) and _matches_json_schema(answer, schema)
+
+
+def quarantine_stale_packet_answer(
+    *,
+    answer_path: Path,
+    prompt_path: Path,
+    expected_prompt: str,
+    reason: str,
+) -> dict[str, Any]:
+    """Quarantine an answer whose rendered prompt/schema binding is stale."""
+    marker_path = answer_path.with_name("stale_artifact.json")
+    quarantine_path = answer_path.with_name("answer.stale.json")
+    if quarantine_path.exists():
+        raise ValueError(f"stale answer quarantine already exists: {quarantine_path}")
+    if answer_path.exists():
+        answer_path.replace(quarantine_path)
+    actual_prompt_sha256 = (
+        sha256_file(prompt_path) if prompt_path.exists() else None
+    )
+    marker = {
+        "kind": "stale_packet_answer",
+        "reason": reason,
+        "expected_prompt_sha256": sha256_text(expected_prompt),
+        "actual_prompt_sha256": actual_prompt_sha256,
+        "quarantine_path": str(quarantine_path) if quarantine_path.exists() else None,
+    }
+    _write_json_atomic(marker_path, marker)
+    return marker
 
 
 def load_rows(input_path: Path, limit: int | None = None, question_ids: set[str] | None = None) -> list[dict[str, Any]]:
@@ -729,6 +811,7 @@ def main() -> int:
         )
         paths = paths_for_question(args.out_dir, qid)
         contamination_path = paths.answer_path.with_name("contamination.json")
+        stale_artifact_path = paths.answer_path.with_name("stale_artifact.json")
         integrity = None
         if args.skip_existing and contamination_path.exists():
             record(
@@ -743,6 +826,19 @@ def main() -> int:
                         contamination_path.read_text(encoding="utf-8")
                     ),
                     "error": "packet answer previously quarantined after event-log integrity failure",
+                }
+            )
+            continue
+        if args.skip_existing and stale_artifact_path.exists():
+            record(
+                {
+                    "question_id": qid,
+                    "status": "stale_artifact",
+                    "returncode": None,
+                    "answer_path": str(paths.answer_path),
+                    "event_log_path": str(paths.event_log_path),
+                    "stale_artifact_path": str(stale_artifact_path),
+                    "error": "packet answer previously quarantined after stale prompt/schema validation",
                 }
             )
             continue
@@ -763,6 +859,52 @@ def main() -> int:
                             "contamination_path": str(contamination_path),
                             "event_integrity": integrity,
                             "error": "packet answer quarantined after event-log integrity failure",
+                        }
+                    )
+                    continue
+                prompt_matches = (
+                    paths.prompt_path.exists()
+                    and paths.prompt_path.read_bytes() == prompt.encode("utf-8")
+                )
+                if not prompt_matches:
+                    stale = quarantine_stale_packet_answer(
+                        answer_path=paths.answer_path,
+                        prompt_path=paths.prompt_path,
+                        expected_prompt=prompt,
+                        reason="prompt_missing_or_mismatch",
+                    )
+                    record(
+                        {
+                            "question_id": qid,
+                            "status": "stale_artifact",
+                            "returncode": None,
+                            "answer_path": str(paths.answer_path),
+                            "event_log_path": str(paths.event_log_path),
+                            "stale_artifact_path": str(stale_artifact_path),
+                            "stale_artifact": stale,
+                            "event_integrity": integrity,
+                            "error": "existing packet answer prompt does not match freshly rendered prompt",
+                        }
+                    )
+                    continue
+                if not answer_matches_schema(paths.answer_path, args.schema):
+                    stale = quarantine_stale_packet_answer(
+                        answer_path=paths.answer_path,
+                        prompt_path=paths.prompt_path,
+                        expected_prompt=prompt,
+                        reason="answer_schema_invalid",
+                    )
+                    record(
+                        {
+                            "question_id": qid,
+                            "status": "stale_artifact",
+                            "returncode": None,
+                            "answer_path": str(paths.answer_path),
+                            "event_log_path": str(paths.event_log_path),
+                            "stale_artifact_path": str(stale_artifact_path),
+                            "stale_artifact": stale,
+                            "event_integrity": integrity,
+                            "error": "existing packet answer does not match the output schema",
                         }
                     )
                     continue

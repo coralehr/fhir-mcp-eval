@@ -1,12 +1,33 @@
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import codex_harness
 
 
 class CodexHarnessTests(unittest.TestCase):
+    def test_public_packet_renderer_is_exact_prompt_payload(self):
+        packet = {
+            "kind": "bounded_fhir_packet",
+            "resources": [{"resourceType": "Observation", "id": "o1"}],
+            "sha256": "hidden",
+        }
+        rendered = codex_harness.render_model_visible_packet(packet)
+        prompt = codex_harness.build_prompt(
+            {
+                "question_id": "q1",
+                "question": "What was measured?",
+                "packet": packet,
+            },
+            mode="packet",
+        )
+
+        self.assertIn(f"Frozen clinical packet:\n{rendered}\n", prompt)
+        self.assertNotIn("hidden", rendered)
+
     def test_packet_prompt_excludes_gold_and_includes_manifest_fields(self):
         packet = {
             "question_id": "q1",
@@ -393,6 +414,88 @@ class CodexHarnessTests(unittest.TestCase):
                     mode="mcp",
                 )
             )
+
+    def test_skip_existing_stale_prompt_is_quarantined_and_never_recertified(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            input_path = root / "input.csv"
+            input_path.write_text(
+                "question_id,question,patient_fhir_id\nq1,What was measured?,Patient/p1\n",
+                encoding="utf-8",
+            )
+            packet_path = root / "packets.jsonl"
+            packet_record = {
+                "question_id": "q1",
+                "packet": {
+                    "resources": [{"resourceType": "Observation", "id": "o1"}]
+                },
+            }
+            packet_path.write_text(json.dumps(packet_record) + "\n", encoding="utf-8")
+            schema_path = root / "schema.json"
+            schema_path.write_text(
+                (Path(codex_harness.__file__).parent / "schemas/codex_answer.schema.json").read_text(
+                    encoding="utf-8"
+                ),
+                encoding="utf-8",
+            )
+            out_dir = root / "run"
+            paths = codex_harness.paths_for_question(out_dir, "q1")
+            paths.prompt_path.write_text("stale prompt\n", encoding="utf-8")
+            paths.answer_path.write_text(
+                json.dumps(
+                    {
+                        "answer": "value",
+                        "source_resource_ids": ["Observation/o1"],
+                        "evidence_summary": "evidence",
+                        "insufficiency_reason": None,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            paths.event_log_path.write_text(
+                json.dumps({"type": "turn.completed", "usage": {"input_tokens": 3}})
+                + "\n",
+                encoding="utf-8",
+            )
+            argv = [
+                "codex_harness.py",
+                "--mode",
+                "packet",
+                "--input",
+                str(input_path),
+                "--packet-json",
+                str(packet_path),
+                "--schema",
+                str(schema_path),
+                "--out-dir",
+                str(out_dir),
+                "--question-id",
+                "q1",
+                "--live",
+                "--skip-existing",
+            ]
+            with (
+                mock.patch.object(sys, "argv", argv),
+                mock.patch.object(codex_harness, "run_version", return_value="codex test"),
+                mock.patch.object(
+                    codex_harness,
+                    "git_commit_and_dirty",
+                    return_value=("commit", False),
+                ),
+                mock.patch.object(codex_harness, "run_question") as run_question,
+            ):
+                result = codex_harness.main()
+
+            self.assertEqual(result, 1)
+            run_question.assert_not_called()
+            self.assertFalse(paths.answer_path.exists())
+            self.assertTrue(paths.answer_path.with_name("answer.stale.json").exists())
+            marker = json.loads(
+                paths.answer_path.with_name("stale_artifact.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(marker["reason"], "prompt_missing_or_mismatch")
 
 
 if __name__ == "__main__":
