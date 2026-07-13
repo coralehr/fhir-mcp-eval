@@ -22,6 +22,7 @@ from pathlib import Path
 
 import os
 
+from codex_harness import terminal_question_status
 from run_lock import AlreadyRunning, LOCK_BUSY_EXIT, acquire_single_instance
 
 RUN_SUFFIX = os.environ.get("A6A_RUN_SUFFIX", "")  # e.g. "-run2" for the prompt-fix rerun
@@ -46,8 +47,12 @@ def qids_for(packets: Path) -> list[str]:
     return [json.loads(line)["question_id"] for line in packets.open()]
 
 
-def answered(out_dir: Path) -> set[str]:
-    return {p.parent.name for p in out_dir.glob("questions/*/answer.json")}
+def terminal_question_ids(out_dir: Path) -> set[str]:
+    return {
+        question_dir.name
+        for question_dir in out_dir.glob("questions/*")
+        if terminal_question_status(question_dir) is not None
+    }
 
 
 def failed_marker(out_dir: Path, qid: str) -> bool:
@@ -85,7 +90,7 @@ def run_chunk(arm: dict, chunk: list[str], *, timeout: int) -> bool:
         cmd += ["--question-id", qid]
     subprocess.run(cmd, check=False)
     # quota detection: every question in the chunk failed with a usage-limit event
-    done = answered(arm["out_dir"])
+    done = terminal_question_ids(arm["out_dir"])
     missing = [q for q in chunk if q not in done]
     if missing and all(failed_marker(arm["out_dir"], q) for q in missing):
         return False
@@ -106,9 +111,9 @@ def main() -> int:
             print(f"ERROR: {arm['packets']} missing — build confirmatory packets first")
             return 2
         qids = qids_for(arm["packets"])
-        done = answered(arm["out_dir"])
+        done = terminal_question_ids(arm["out_dir"])
         state.append({"arm": arm, "qids": qids, "done": done})
-        print(f"{arm['name']}: {len(done)}/{len(qids)} answered")
+        print(f"{arm['name']}: {len(done)}/{len(qids)} terminal attempts")
     if args.status:
         return 0
 
@@ -123,7 +128,11 @@ def main() -> int:
         while True:
             progressed = False
             for st in state:
-                remaining = [q for q in st["qids"] if q not in answered(st["arm"]["out_dir"])]
+                remaining = [
+                    q
+                    for q in st["qids"]
+                    if q not in terminal_question_ids(st["arm"]["out_dir"])
+                ]
                 if not remaining:
                     continue
                 chunk = remaining[: args.chunk_size]
@@ -142,7 +151,8 @@ def main() -> int:
 
         print("ALL_COMPLETE")
         for st in state:
-            print(f"{st['arm']['name']}: {len(answered(st['arm']['out_dir']))}/{len(st['qids'])}")
+            done = terminal_question_ids(st["arm"]["out_dir"])
+            print(f"{st['arm']['name']}: {len(done)}/{len(st['qids'])} terminal attempts")
         return 0
 
 

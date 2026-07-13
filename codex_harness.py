@@ -9,6 +9,7 @@ Codex CLI version, prompt/schema hashes, event logs, and final structured answer
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
 import datetime as dt
 import hashlib
@@ -18,9 +19,10 @@ import platform
 import re
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 
 GOLD_FIELD_NAMES = {
@@ -33,6 +35,37 @@ GOLD_FIELD_NAMES = {
     "sql_query",
     "true_answer",
     "true_fhir_ids",
+}
+
+# These fields are useful for artifact provenance but are not clinical
+# evidence. Keeping them out of the rendered packet prevents a no-op treatment
+# from revealing its arm or producing a different prompt solely because its
+# packet hash was recomputed.
+MODEL_HIDDEN_PACKET_FIELDS = {
+    "features",
+    "pinned_reference_targets",
+    "sha256",
+}
+
+# Codex JSONL item types that prove the answering process reached outside the
+# frozen packet. Packet-mode answers containing any of these are invalid even
+# when Codex ultimately emitted schema-valid JSON.
+TOOL_EVENT_TYPES = {
+    "code_interpreter_call",
+    "command_execution",
+    "computer_action",
+    "computer_call",
+    "dynamic_tool_call",
+    "file_change",
+    "file_search_call",
+    "function_call",
+    "local_shell_call",
+    "mcp_call",
+    "mcp_tool_call",
+    "shell_call",
+    "tool_call",
+    "web_search",
+    "web_search_call",
 }
 
 
@@ -79,12 +112,35 @@ def paths_for_question(out_dir: Path, question_id: Any) -> QuestionPaths:
     )
 
 
+def terminal_question_status(question_dir: Path) -> str | None:
+    """Return the durable terminal outcome recorded for one question.
+
+    ``contamination.json`` takes precedence so a quarantined attempt can never
+    become resumable merely because a stray answer file also exists.
+    """
+    if (question_dir / "contamination.json").exists():
+        return "contaminated"
+    if (question_dir / "answer.json").exists():
+        return "answered"
+    return None
+
+
 def strip_gold_fields(row: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in row.items() if k not in GOLD_FIELD_NAMES}
 
 
 def _json_block(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2)
+
+
+def model_visible_packet(packet: dict[str, Any]) -> dict[str, Any]:
+    """Return only packet fields that can be shown to the answering model."""
+    return {
+        key: value
+        for key, value in packet.items()
+        if key not in MODEL_HIDDEN_PACKET_FIELDS
+        and not (key == "aggregate_summary" and value is None)
+    }
 
 
 def build_prompt(
@@ -136,10 +192,7 @@ def build_prompt(
 
     if mode == "packet":
         if isinstance(packet, dict):
-            # Bookkeeping fields never reach the model: a question where a
-            # feature is a no-op must produce a byte-identical prompt to the
-            # baseline arm (QT_ARMS.md no-op invariant).
-            packet = {k: v for k, v in packet.items() if k not in ("features", "pinned_reference_targets") and not (k == "aggregate_summary" and v is None)}
+            packet = model_visible_packet(packet)
         lines.extend(
             [
                 "",
@@ -147,6 +200,7 @@ def build_prompt(
                 _json_block(packet if packet is not None else safe_row),
                 "",
                 "Use this packet as read-only evidence. Do not request external data.",
+                "Do not call tools, execute commands, inspect the filesystem, or read files; any such event invalidates the answer.",
             ]
         )
     elif mode == "mcp":
@@ -178,6 +232,13 @@ def build_codex_command(
     sandbox: str = "read-only",
     approval: str = "never",
 ) -> CodexCommand:
+    # Codex changes directory before loading the schema and writing the final
+    # message. Resolve host-side paths so packet-mode isolation cannot break
+    # either artifact.
+    schema_path = schema_path.resolve()
+    output_path = output_path.resolve()
+    event_log_path = event_log_path.resolve()
+    cwd = cwd.resolve()
     args = [
         codex_bin,
         "exec",
@@ -201,6 +262,103 @@ def build_codex_command(
         args.extend(["-p", profile])
     args.append("-")
     return CodexCommand(args=args, stdout_path=event_log_path)
+
+
+@contextlib.contextmanager
+def question_working_directory(*, mode: str, requested_cwd: Path) -> Iterator[Path]:
+    """Yield an empty, non-repository cwd for frozen-packet answering.
+
+    MCP mode keeps its configured cwd because its tool server may deliberately
+    depend on repository configuration. Packet mode has no such dependency and
+    must not begin in a directory containing benchmark answers or prior runs.
+    """
+    if mode != "packet":
+        yield requested_cwd.resolve()
+        return
+    with tempfile.TemporaryDirectory(prefix="fhir-agentbench-packet-") as tmp:
+        yield Path(tmp).resolve()
+
+
+def _normalized_event_type(value: Any) -> str:
+    return re.sub(r"[.:-]+", "_", str(value or "").strip().lower())
+
+
+def _is_tool_event_type(value: Any) -> bool:
+    event_type = _normalized_event_type(value)
+    if event_type in TOOL_EVENT_TYPES:
+        return True
+    return (
+        ("command" in event_type and "execution" in event_type)
+        or ("tool" in event_type and "call" in event_type)
+        or ("shell" in event_type and "call" in event_type)
+        or event_type.startswith("mcp_")
+    )
+
+
+def audit_event_log(event_log_path: Path) -> dict[str, Any]:
+    """Audit a Codex JSONL log for packet-contaminating tool events.
+
+    The returned details intentionally contain event types and line numbers,
+    never command text or tool output, so the audit receipt cannot duplicate
+    benchmark data read by a contaminated process.
+    """
+    findings: list[dict[str, Any]] = []
+    parse_errors: list[int] = []
+    if not event_log_path.exists():
+        return {
+            "contaminated": False,
+            "event_log_exists": False,
+            "findings": findings,
+            "parse_error_lines": parse_errors,
+        }
+    for line_number, line in enumerate(
+        event_log_path.read_text(encoding="utf-8", errors="replace").splitlines(),
+        start=1,
+    ):
+        try:
+            event = json.loads(line)
+        except Exception:
+            parse_errors.append(line_number)
+            continue
+        if not isinstance(event, dict):
+            continue
+        event_type = _normalized_event_type(event.get("type"))
+        item = event.get("item") if isinstance(event.get("item"), dict) else {}
+        item_type = _normalized_event_type(item.get("type"))
+        if _is_tool_event_type(event_type) or _is_tool_event_type(item_type):
+            findings.append(
+                {
+                    "line": line_number,
+                    "event_type": event_type or None,
+                    "item_type": item_type or None,
+                    "item_id": str(item.get("id")) if item.get("id") is not None else None,
+                }
+            )
+    return {
+        # A malformed line makes the audit unverifiable. Fail closed rather
+        # than accepting an answer whose tool history may have been truncated.
+        "contaminated": bool(findings or parse_errors),
+        "event_log_exists": True,
+        "findings": findings,
+        "parse_error_lines": parse_errors,
+    }
+
+
+def enforce_packet_event_integrity(*, event_log_path: Path, answer_path: Path) -> dict[str, Any]:
+    """Quarantine a packet answer when its event log contains any tool use."""
+    audit = audit_event_log(event_log_path)
+    quarantine_path: Path | None = None
+    if audit["contaminated"] and answer_path.exists():
+        quarantine_path = answer_path.with_name("answer.contaminated.json")
+        answer_path.replace(quarantine_path)
+    receipt = {
+        **audit,
+        "quarantine_path": str(quarantine_path) if quarantine_path else None,
+    }
+    if audit["contaminated"]:
+        receipt_path = answer_path.with_name("contamination.json")
+        receipt_path.write_text(_json_block(receipt) + "\n", encoding="utf-8")
+    return receipt
 
 
 def load_rows(input_path: Path, limit: int | None = None, question_ids: set[str] | None = None) -> list[dict[str, Any]]:
@@ -388,6 +546,7 @@ def main() -> int:
         "sandbox": args.sandbox,
         "approval": args.approval,
         "mcp_server_name": args.mcp_server_name if args.mode == "mcp" else None,
+        "packet_cwd_isolated": args.mode == "packet",
         "dry_run": args.dry_run,
         "live": args.live,
         "question_count": len(rows),
@@ -415,25 +574,81 @@ def main() -> int:
             extra_instruction=args.extra_instruction,
         )
         paths = paths_for_question(args.out_dir, qid)
+        contamination_path = paths.answer_path.with_name("contamination.json")
+        if args.skip_existing and contamination_path.exists():
+            summary.append(
+                {
+                    "question_id": qid,
+                    "status": "contaminated",
+                    "returncode": None,
+                    "answer_path": str(paths.answer_path),
+                    "event_log_path": str(paths.event_log_path),
+                    "contamination_path": str(contamination_path),
+                    "error": "packet answer previously quarantined after tool/command use",
+                }
+            )
+            continue
         if args.skip_existing and paths.answer_path.exists():
+            if args.mode == "packet":
+                integrity = enforce_packet_event_integrity(
+                    event_log_path=paths.event_log_path,
+                    answer_path=paths.answer_path,
+                )
+                if integrity["contaminated"]:
+                    summary.append(
+                        {
+                            "question_id": qid,
+                            "status": "contaminated",
+                            "returncode": None,
+                            "answer_path": str(paths.answer_path),
+                            "event_log_path": str(paths.event_log_path),
+                            "contamination_path": str(contamination_path),
+                            "event_integrity": integrity,
+                            "error": "packet answer quarantined after tool/command use",
+                        }
+                    )
+                    continue
             summary.append({"question_id": qid, "status": "skipped"})
             continue
         paths.prompt_path.write_text(prompt, encoding="utf-8")
-        command = build_codex_command(
-            prompt=prompt,
-            schema_path=args.schema,
-            output_path=paths.answer_path,
-            event_log_path=paths.event_log_path,
-            cwd=args.cwd,
-            codex_bin=args.codex_bin,
-            model=args.model,
-            profile=args.profile,
-            reasoning_effort=args.reasoning_effort,
-            sandbox=args.sandbox,
-            approval=args.approval,
-        )
-        paths.command_path.write_text(_json_block({"args": command.args, "stdout_path": str(command.stdout_path)}) + "\n", encoding="utf-8")
-        result = run_question(command, prompt, timeout=args.timeout, dry_run=args.dry_run)
+        with question_working_directory(mode=args.mode, requested_cwd=args.cwd) as command_cwd:
+            command = build_codex_command(
+                prompt=prompt,
+                schema_path=args.schema,
+                output_path=paths.answer_path,
+                event_log_path=paths.event_log_path,
+                cwd=command_cwd,
+                codex_bin=args.codex_bin,
+                model=args.model,
+                profile=args.profile,
+                reasoning_effort=args.reasoning_effort,
+                sandbox=args.sandbox,
+                approval=args.approval,
+            )
+            paths.command_path.write_text(
+                _json_block(
+                    {
+                        "args": command.args,
+                        "stdout_path": str(command.stdout_path),
+                        "isolated_packet_cwd": args.mode == "packet",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            result = run_question(command, prompt, timeout=args.timeout, dry_run=args.dry_run)
+        integrity = None
+        if args.mode == "packet" and not args.dry_run:
+            integrity = enforce_packet_event_integrity(
+                event_log_path=paths.event_log_path,
+                answer_path=paths.answer_path,
+            )
+            if integrity["contaminated"]:
+                result = {
+                    "status": "contaminated",
+                    "returncode": result.get("returncode"),
+                    "error": "packet answer quarantined after tool/command use",
+                }
         item = {
             "question_id": qid,
             "status": result["status"],
@@ -444,6 +659,10 @@ def main() -> int:
         }
         if result.get("error"):
             item["error"] = result["error"]
+        if integrity is not None:
+            item["event_integrity"] = integrity
+            if integrity["contaminated"]:
+                item["contamination_path"] = str(contamination_path)
         summary.append(item)
 
     (args.out_dir / "summary.json").write_text(_json_block({"manifest": manifest, "questions": summary}) + "\n", encoding="utf-8")

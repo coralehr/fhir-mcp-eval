@@ -19,6 +19,7 @@ import subprocess
 import sys
 import time
 
+from codex_harness import terminal_question_status
 from run_lock import AlreadyRunning, LOCK_BUSY_EXIT, acquire_single_instance
 
 ROOT = pathlib.Path.home() / "fhir-mcp-eval-qt"
@@ -74,13 +75,18 @@ def wait_for_reset() -> None:
     time.sleep(delay)
 
 
-def answered(out_dir: str) -> int:
-    return len(list(pathlib.Path(out_dir).glob("questions/*/answer.json")))
+def terminal_attempts(out_dir: str) -> int:
+    question_dirs = pathlib.Path(out_dir).glob("questions/*")
+    return sum(
+        1
+        for question_dir in question_dirs
+        if terminal_question_status(question_dir) is not None
+    )
 
 
 def drive(label: str, cmd: list[str], out_dirs: list[str], target: int, env: dict | None = None) -> None:
     while True:
-        before = sum(answered(d) for d in out_dirs)
+        before = sum(terminal_attempts(d) for d in out_dirs)
         if before >= target:
             log(f"{label}: COMPLETE ({before}/{target})")
             return
@@ -90,7 +96,7 @@ def drive(label: str, cmd: list[str], out_dirs: list[str], target: int, env: dic
             log(f"{label}: another controller owns the run lock; retrying in 30s")
             time.sleep(30)
             continue
-        after = sum(answered(d) for d in out_dirs)
+        after = sum(terminal_attempts(d) for d in out_dirs)
         if after >= target:
             log(f"{label}: COMPLETE ({after}/{target})")
             return
@@ -122,12 +128,31 @@ def run_grading(label: str, cmd: list[str], done_marker: pathlib.Path) -> None:
 PANEL_PIN = ["--model", PIN_MODEL, "--reasoning-effort", PIN_EFFORT]
 
 
-def grade_pair(tag: str, a_dir: str, b_dir: str) -> None:
+def grade_pair(
+    tag: str,
+    a_dir: str,
+    b_dir: str,
+    *,
+    question_spec: pathlib.Path | None = None,
+    a_packets: pathlib.Path | str | None = None,
+    b_packets: pathlib.Path | str | None = None,
+) -> None:
     """Full grading for a pair of answer dirs: det pass -> pinned panel -> assembly."""
     gdir = ROOT / f"runs/{tag}-grading"
+    selection_args = ["--question-spec", str(question_spec)] if question_spec else []
     run_grading(
         f"{tag}:det",
-        [PY, "grade_a6a_confirmatory.py", "--a6a-dir", a_dir, "--a0prime-dir", b_dir, "--out", str(gdir)],
+        [
+            PY,
+            "grade_a6a_confirmatory.py",
+            "--a6a-dir",
+            a_dir,
+            "--a0prime-dir",
+            b_dir,
+            "--out",
+            str(gdir),
+            *selection_args,
+        ],
         gdir / "det_verdicts.json",
     )
     run_grading(
@@ -135,9 +160,24 @@ def grade_pair(tag: str, a_dir: str, b_dir: str) -> None:
         [PY, "panel_grade.py", "--queue", str(gdir / "panel_queue.jsonl"), "--cache", str(gdir / "panel_votes.json"), "--live", *PANEL_PIN],
         gdir / "panel_verdicts.json",
     )
+    assemble_cmd = [
+        PY,
+        "final_confirmatory_result.py",
+        "--grading-dir",
+        str(gdir),
+        "--a6a-dir",
+        a_dir,
+        "--a0prime-dir",
+        b_dir,
+        *selection_args,
+    ]
+    if a_packets is not None:
+        assemble_cmd += ["--a6a-packets", str(a_packets)]
+    if b_packets is not None:
+        assemble_cmd += ["--a0prime-packets", str(b_packets)]
     run_grading(
         f"{tag}:assemble",
-        [PY, "final_confirmatory_result.py", "--grading-dir", str(gdir), "--a6a-dir", a_dir, "--a0prime-dir", b_dir],
+        assemble_cmd,
         gdir / "final_result.json",
     )
 
@@ -173,7 +213,13 @@ for feat in ("include-pinning", "agg-summary", "endpoint-reserve"):
         cmd += ["--question-id", q]
     drive(f"qt-{feat}", cmd, [out], len(qids))
     # Stage 2b: grade this QT arm paired against the run-2 A6a baseline
-    grade_pair(f"qt-{feat}", out, "runs/codex-a6a-test409-run2")
+    grade_pair(
+        f"qt-{feat}",
+        out,
+        "runs/codex-a6a-test409-run2",
+        a_packets=pkt,
+        b_packets=ROOT / "runs/a6a_test409_packets.jsonl",
+    )
 
 # Stage 3: generality grid, if spec present
 grid_spec = ROOT / "grid_spec.json"
@@ -202,6 +248,9 @@ if grid_spec.exists():
             f"grid-{mtag}-{effort}",
             f"runs/grid-a6a-{mtag}-{effort}",
             f"runs/grid-a0prime-{mtag}-{effort}",
+            question_spec=grid_spec,
+            a_packets=ROOT / "runs/a6a_test409_packets.jsonl",
+            b_packets=ROOT / "runs/a0prime_test409_packets.jsonl",
         )
 else:
     log("no grid_spec.json — grid stage skipped")

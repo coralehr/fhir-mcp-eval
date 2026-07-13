@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Assemble the A6a-vs-A0' primary confirmatory result (prereg §2, §6, §7).
 
-Combines deterministic verdicts + panel majority verdicts into full-409
-per-arm labels (failures already scored 0 by the deterministic pass), then
-emits the pre-registered paired analysis plus the exploratory strata and
-secondary metrics.
+Combines deterministic verdicts + panel majority verdicts into per-arm labels
+(failures already scored 0 by the deterministic pass), then emits the
+pre-registered paired analysis plus the exploratory strata and secondary
+metrics. By default this uses the full input; an explicit schedule restricts
+every metric to that question set.
 """
 
 from __future__ import annotations
@@ -14,10 +15,64 @@ import csv
 import json
 from pathlib import Path
 
+import codex_harness
 from grade_a6a_confirmatory import gold_type
 from paired_stats import paired_summary
+from question_selection import load_scheduled_question_ids, select_question_rows
 
 ARMS = ("a6a", "a0prime")
+
+
+def packet_char_counts(packet_path: Path, question_ids: list[str]) -> list[int]:
+    """Return packet sizes for exactly the scheduled questions."""
+    requested = set(question_ids)
+    counts: dict[str, int] = {}
+    for line in packet_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        record = json.loads(line)
+        question_id = str(record.get("question_id"))
+        if question_id not in requested:
+            continue
+        if question_id in counts:
+            raise ValueError(f"duplicate packet for scheduled question_id {question_id}: {packet_path}")
+        packet = record.get("packet") or {}
+        counts[question_id] = int((packet.get("bounds") or {}).get("char_count", 0))
+    missing = [question_id for question_id in question_ids if question_id not in counts]
+    if missing:
+        preview = ", ".join(missing[:10])
+        suffix = "..." if len(missing) > 10 else ""
+        raise ValueError(
+            f"packet file is missing {len(missing)} scheduled question_id(s): {preview}{suffix} ({packet_path})"
+        )
+    return [counts[question_id] for question_id in question_ids]
+
+
+def arm_secondary(run_dir: Path, packets: Path, question_ids: list[str]) -> dict:
+    """Compute answer and packet economics on one explicit question set."""
+    abstentions = 0
+    answered = 0
+    for question_id in question_ids:
+        question_dir = run_dir / "questions" / question_id
+        answer_path = question_dir / "answer.json"
+        if codex_harness.terminal_question_status(question_dir) == "contaminated":
+            continue
+        if not answer_path.exists():
+            continue
+        if codex_harness.audit_event_log(question_dir / "events.jsonl")[
+            "contaminated"
+        ]:
+            continue
+        answered += 1
+        if json.loads(answer_path.read_text(encoding="utf-8")).get("insufficiency_reason"):
+            abstentions += 1
+    chars = sorted(packet_char_counts(packets, question_ids))
+    return {
+        "answered": answered,
+        "abstentions": abstentions,
+        "packet_chars_median": chars[len(chars) // 2],
+        "packet_chars_total": sum(chars),
+    }
 
 
 def main() -> int:
@@ -28,9 +83,20 @@ def main() -> int:
     ap.add_argument("--a0prime-packets", type=Path, default=Path("runs/a0prime_test409_packets.jsonl"))
     ap.add_argument("--a6a-dir", type=Path, default=Path("runs/codex-a6a-test409"))
     ap.add_argument("--a0prime-dir", type=Path, default=Path("runs/codex-a0prime-test409"))
+    ap.add_argument("--question-spec", type=Path, default=None, help="JSON list or object containing scheduled question_ids")
+    ap.add_argument("--question-id", action="append", default=[], help="restrict assembly to this scheduled question ID (repeatable)")
     args = ap.parse_args()
 
-    gold = {r["question_id"]: r for r in csv.DictReader(args.input.open())}
+    try:
+        scheduled_ids = load_scheduled_question_ids(
+            spec_path=args.question_spec,
+            repeated_ids=args.question_id,
+        )
+        with args.input.open(newline="", encoding="utf-8") as handle:
+            all_gold = {r["question_id"]: r for r in csv.DictReader(handle)}
+        gold = select_question_rows(all_gold, scheduled_ids)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        ap.error(str(exc))
     det = json.loads((args.grading_dir / "det_verdicts.json").read_text())
     panel = json.loads((args.grading_dir / "panel_verdicts.json").read_text())
 
@@ -73,33 +139,15 @@ def main() -> int:
             if len(v) >= 5
         }
 
-    # secondary metrics: abstentions + packet economics
-    def arm_secondary(run_dir: Path, packets: Path) -> dict:
-        abst = 0
-        answered = 0
-        for qid in qids:
-            p = run_dir / "questions" / qid / "answer.json"
-            if not p.exists():
-                continue
-            answered += 1
-            if json.loads(p.read_text()).get("insufficiency_reason"):
-                abst += 1
-        chars = [
-            (json.loads(line)["packet"].get("bounds") or {}).get("char_count", 0)
-            for line in packets.open()
-        ]
-        chars.sort()
-        return {
-            "answered": answered,
-            "abstentions": abst,
-            "packet_chars_median": chars[len(chars) // 2],
-            "packet_chars_total": sum(chars),
+    # secondary metrics: abstentions + packet economics, restricted to the
+    # same scheduled IDs as the primary/bootstrap/strata analysis.
+    try:
+        secondary = {
+            "a6a": arm_secondary(args.a6a_dir, args.a6a_packets, qids),
+            "a0prime": arm_secondary(args.a0prime_dir, args.a0prime_packets, qids),
         }
-
-    secondary = {
-        "a6a": arm_secondary(args.a6a_dir, args.a6a_packets),
-        "a0prime": arm_secondary(args.a0prime_dir, args.a0prime_packets),
-    }
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        ap.error(str(exc))
 
     result = {
         "prereg": "docs/prereg/A6A.md v1.0 + Amendment 1 (freeze tag a6a-freeze-1)",
@@ -109,11 +157,17 @@ def main() -> int:
         "strata_exploratory": strata,
         "secondary": secondary,
     }
+    if scheduled_ids is not None:
+        result["question_selection"] = {
+            "explicit": True,
+            "question_ids": qids,
+        }
     out = args.grading_dir / "final_result.json"
     out.write_text(json.dumps(result, indent=1) + "\n")
 
     p = primary
-    print(f"PRIMARY (all 409, canonical): A6a {p['acc_a']:.1%} vs A0' {p['acc_b']:.1%}")
+    scope = f"scheduled n={len(qids)}" if scheduled_ids is not None else f"all {len(qids)}, canonical"
+    print(f"PRIMARY ({scope}): A6a {p['acc_a']:.1%} vs A0' {p['acc_b']:.1%}")
     print(f"  diff {p['diff']:+.1%} | discordant {p['discordant_a_only']} vs {p['discordant_b_only']} | McNemar p={p['mcnemar_p']:.2e}")
     cb = p["cluster_bootstrap"]
     print(f"  cluster bootstrap 95% CI [{cb['ci_low']:+.1%}, {cb['ci_high']:+.1%}] over {cb['n_clusters']} patients")

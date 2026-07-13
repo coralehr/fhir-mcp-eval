@@ -44,6 +44,23 @@ def load_summary(run_dir: Path) -> list[dict[str, Any]]:
     return questions
 
 
+def load_run_mode(run_dir: Path) -> str | None:
+    """Read the recorded harness mode without requiring a new manifest shape."""
+    summary_path = run_dir / "summary.json"
+    if summary_path.exists():
+        data = json.loads(summary_path.read_text(encoding="utf-8"))
+        mode = ((data.get("manifest") or {}).get("run_config") or {}).get("mode")
+        if mode:
+            return str(mode)
+    manifest_path = run_dir / "manifest.json"
+    if manifest_path.exists():
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        mode = (data.get("run_config") or {}).get("mode")
+        if mode:
+            return str(mode)
+    return None
+
+
 def parse_answer(path: Path) -> tuple[dict[str, Any] | None, str | None]:
     if not path.exists():
         return None, "missing_answer"
@@ -158,11 +175,36 @@ def summary_event_log_path(run_dir: Path, item: dict[str, Any], qid: str) -> Pat
     return run_dir / "questions" / codex_harness.slugify(qid) / "events.jsonl"
 
 
-def build_result_record(row: dict[str, Any], item: dict[str, Any], run_dir: Path) -> dict[str, Any]:
+def build_result_record(
+    row: dict[str, Any],
+    item: dict[str, Any],
+    run_dir: Path,
+    *,
+    mode: str | None = None,
+) -> dict[str, Any]:
     qid = str(row.get("question_id"))
     answer_path = summary_answer_path(run_dir, item, qid)
     event_log_path = summary_event_log_path(run_dir, item, qid)
     answer, parse_error = parse_answer(answer_path)
+    event_integrity = None
+    if mode == "packet":
+        event_integrity = codex_harness.audit_event_log(event_log_path)
+        durable_contamination = (
+            codex_harness.terminal_question_status(answer_path.parent) == "contaminated"
+        )
+        if durable_contamination:
+            event_integrity = {
+                **event_integrity,
+                "contaminated": True,
+                "durable_contamination_marker": True,
+            }
+            answer = None
+            parse_error = (
+                "contamination_marker: packet answer was previously quarantined"
+            )
+        elif event_integrity["contaminated"]:
+            answer = None
+            parse_error = "contaminated_event_log: packet answer used a tool or command"
     status = item.get("status")
     returncode = item.get("returncode")
     errors = []
@@ -187,7 +229,7 @@ def build_result_record(row: dict[str, Any], item: dict[str, Any], run_dir: Path
     if answer and answer.get("insufficiency_reason"):
         trace.append({"role": "assistant", "content": "insufficiency_reason: " + str(answer["insufficiency_reason"])})
 
-    return {
+    record = {
         "question_id": row.get("question_id"),
         "question": row.get("question"),
         "true_answer": row.get("true_answer"),
@@ -199,11 +241,15 @@ def build_result_record(row: dict[str, Any], item: dict[str, Any], run_dir: Path
         "usage": extract_usage(event_log_path),
         "error": "; ".join(errors),
     }
+    if event_integrity is not None:
+        record["event_integrity"] = event_integrity
+    return record
 
 
 def collect_results(*, input_path: Path, run_dir: Path, question_ids: set[str] | None = None) -> list[dict[str, Any]]:
     rows = load_rows(input_path)
     summary_items = load_summary(run_dir)
+    mode = load_run_mode(run_dir)
     out = []
     for item in summary_items:
         qid = str(item.get("question_id"))
@@ -226,7 +272,7 @@ def collect_results(*, input_path: Path, run_dir: Path, question_ids: set[str] |
                 }
             )
             continue
-        out.append(build_result_record(row, item, run_dir))
+        out.append(build_result_record(row, item, run_dir, mode=mode))
     return out
 
 

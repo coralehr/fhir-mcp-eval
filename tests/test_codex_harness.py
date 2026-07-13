@@ -25,6 +25,111 @@ class CodexHarnessTests(unittest.TestCase):
         self.assertNotIn("do-not-leak", prompt)
         self.assertNotIn("SELECT leaked_proc_query", prompt)
 
+    def test_noop_packet_metadata_and_sha_do_not_change_model_prompt(self):
+        clinical_packet = {
+            "kind": "bounded_fhir_packet",
+            "planner": "qo-v2",
+            "resources": [{"resourceType": "Observation", "id": "o1"}],
+            "aggregate_summary": None,
+        }
+        baseline = {
+            "question_id": "q1",
+            "question": "What was measured?",
+            "patient_fhir_id": "Patient/p1",
+            "packet": {
+                **clinical_packet,
+                "features": [],
+                "pinned_reference_targets": 0,
+                "sha256": "baseline-sha",
+            },
+        }
+        noop_treatment = {
+            **baseline,
+            "packet": {
+                **clinical_packet,
+                "features": ["include-pinning"],
+                "pinned_reference_targets": 0,
+                "sha256": "treatment-sha",
+            },
+        }
+
+        baseline_prompt = codex_harness.build_prompt(baseline, mode="packet")
+        treatment_prompt = codex_harness.build_prompt(noop_treatment, mode="packet")
+
+        self.assertEqual(baseline_prompt, treatment_prompt)
+        self.assertNotIn("sha256", baseline_prompt)
+        self.assertNotIn("include-pinning", treatment_prompt)
+
+    def test_packet_mode_uses_empty_temporary_working_directory(self):
+        requested = Path(codex_harness.__file__).resolve().parent
+
+        with codex_harness.question_working_directory(mode="packet", requested_cwd=requested) as isolated:
+            self.assertTrue(isolated.is_absolute())
+            self.assertNotEqual(isolated, requested)
+            self.assertNotIn(requested, isolated.parents)
+            self.assertEqual(list(isolated.iterdir()), [])
+            isolated_path = isolated
+
+        self.assertFalse(isolated_path.exists())
+
+    def test_packet_tool_event_quarantines_answer_with_durable_marker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            qdir = Path(tmp)
+            event_log = qdir / "events.jsonl"
+            answer_path = qdir / "answer.json"
+            answer_path.write_text('{"answer":"leaked"}\n', encoding="utf-8")
+            event_log.write_text(
+                json.dumps({"type": "item.completed", "item": {"id": "r1", "type": "reasoning"}})
+                + "\n"
+                + json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {"id": "c1", "type": "command_execution", "command": "redacted"},
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            receipt = codex_harness.enforce_packet_event_integrity(
+                event_log_path=event_log,
+                answer_path=answer_path,
+            )
+
+            contamination_path = qdir / "contamination.json"
+            quarantined_answer = qdir / "answer.contaminated.json"
+            self.assertTrue(receipt["contaminated"])
+            self.assertEqual(len(receipt["findings"]), 1)
+            self.assertEqual(receipt["findings"][0]["item_type"], "command_execution")
+            self.assertFalse(answer_path.exists())
+            self.assertTrue(quarantined_answer.exists())
+            self.assertTrue(contamination_path.exists())
+            self.assertTrue(json.loads(contamination_path.read_text())["contaminated"])
+            self.assertEqual(codex_harness.terminal_question_status(qdir), "contaminated")
+
+    def test_malformed_packet_event_log_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            qdir = Path(tmp)
+            event_log = qdir / "events.jsonl"
+            answer_path = qdir / "answer.json"
+            answer_path.write_text('{"answer":"unverifiable"}\n', encoding="utf-8")
+            event_log.write_text(
+                json.dumps({"type": "item.completed", "item": {"type": "reasoning"}})
+                + "\n"
+                + '{"type":"item.completed","item":',
+                encoding="utf-8",
+            )
+
+            receipt = codex_harness.enforce_packet_event_integrity(
+                event_log_path=event_log,
+                answer_path=answer_path,
+            )
+
+            self.assertTrue(receipt["contaminated"])
+            self.assertEqual(receipt["parse_error_lines"], [2])
+            self.assertFalse(answer_path.exists())
+            self.assertTrue((qdir / "contamination.json").exists())
+
     def test_packet_mode_requires_packet_json_coverage(self):
         rows = [{"question_id": "q1"}, {"question_id": "q2"}]
 
@@ -76,7 +181,11 @@ class CodexHarnessTests(unittest.TestCase):
         self.assertIn("--json", cmd.args)
         self.assertIn("--output-schema", cmd.args)
         self.assertIn("--output-last-message", cmd.args)
-        self.assertEqual(cmd.stdout_path, paths.event_log_path)
+        self.assertEqual(cmd.stdout_path, paths.event_log_path.resolve())
+        schema_arg = Path(cmd.args[cmd.args.index("--output-schema") + 1])
+        output_arg = Path(cmd.args[cmd.args.index("--output-last-message") + 1])
+        self.assertTrue(schema_arg.is_absolute())
+        self.assertTrue(output_arg.is_absolute())
 
     def test_manifest_records_hashes_and_codex_version(self):
         with tempfile.TemporaryDirectory() as tmp:

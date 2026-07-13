@@ -113,6 +113,112 @@ class CodexCollectResultsTests(unittest.TestCase):
         self.assertEqual(records[0]["agent_answer"], "")
         self.assertIn("answer_schema_error", records[0]["error"])
 
+    def test_packet_answer_with_tool_event_is_not_collected_as_valid(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            input_path = root / "input.csv"
+            input_path.write_text(
+                "question_id,question,true_answer,true_fhir_ids,patient_fhir_id\n"
+                "q1,What was measured?,42,\"{}\",p1\n",
+                encoding="utf-8",
+            )
+            qdir = root / "run" / "questions" / "q1"
+            qdir.mkdir(parents=True)
+            answer_path = qdir / "answer.json"
+            event_log_path = qdir / "events.jsonl"
+            answer_path.write_text(
+                json.dumps(
+                    {
+                        "answer": "42",
+                        "source_resource_ids": ["Observation/o1"],
+                        "evidence_summary": "Read a repository answer file.",
+                        "insufficiency_reason": None,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            event_log_path.write_text(
+                json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {"id": "call-1", "type": "command_execution"},
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            summary = {
+                "manifest": {"run_config": {"mode": "packet"}},
+                "questions": [
+                    {
+                        "question_id": "q1",
+                        "status": "ok",
+                        "returncode": 0,
+                        "answer_path": str(answer_path),
+                        "event_log_path": str(event_log_path),
+                    }
+                ],
+            }
+            (root / "run" / "summary.json").write_text(json.dumps(summary), encoding="utf-8")
+
+            records = collector.collect_results(input_path=input_path, run_dir=root / "run")
+
+        self.assertEqual(records[0]["agent_answer"], "")
+        self.assertEqual(records[0]["agent_fhir_resources"], {})
+        self.assertIn("contaminated_event_log", records[0]["error"])
+        self.assertTrue(records[0]["event_integrity"]["contaminated"])
+
+    def test_packet_contamination_marker_overrides_stray_answer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            input_path = root / "input.csv"
+            input_path.write_text(
+                "question_id,question,true_answer,true_fhir_ids,patient_fhir_id\n"
+                'q1,What was measured?,42,"{}",p1\n',
+                encoding="utf-8",
+            )
+            qdir = root / "run" / "questions" / "q1"
+            qdir.mkdir(parents=True)
+            answer_path = qdir / "answer.json"
+            answer_path.write_text(
+                json.dumps(
+                    {
+                        "answer": "42",
+                        "source_resource_ids": ["Observation/o1"],
+                        "evidence_summary": "Stray answer.",
+                        "insufficiency_reason": None,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (qdir / "contamination.json").write_text(
+                json.dumps({"contaminated": True}), encoding="utf-8"
+            )
+            (qdir / "events.jsonl").write_text(
+                json.dumps({"type": "turn.completed"}) + "\n", encoding="utf-8"
+            )
+            summary = {
+                "manifest": {"run_config": {"mode": "packet"}},
+                "questions": [
+                    {
+                        "question_id": "q1",
+                        "status": "ok",
+                        "returncode": 0,
+                        "answer_path": str(answer_path),
+                    }
+                ],
+            }
+            (root / "run" / "summary.json").write_text(
+                json.dumps(summary), encoding="utf-8"
+            )
+
+            records = collector.collect_results(
+                input_path=input_path, run_dir=root / "run"
+            )
+
+        self.assertEqual(records[0]["agent_answer"], "")
+        self.assertIn("contamination_marker", records[0]["error"])
+
 
 if __name__ == "__main__":
     unittest.main()
