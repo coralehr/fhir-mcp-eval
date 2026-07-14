@@ -193,6 +193,9 @@ class A6PacketBuilderTests(unittest.TestCase):
 
 
 class QuestionOnlyPlannerTests(unittest.TestCase):
+    def test_holdout_common_planner_is_versioned_as_qo_v2_1(self):
+        self.assertEqual(a6.QO_PLANNER_VERSION, "qo-v2.1")
+
     ROW = {
         "question_id": "q10",
         "split": "valid",
@@ -231,6 +234,56 @@ class QuestionOnlyPlannerTests(unittest.TestCase):
         }
         for question, expected in cases.items():
             self.assertIn(expected, a6.qo_infer_resource_types(question), question)
+
+    def test_question_only_routes_preexisting_planner_repair_language(self):
+        cases = {
+            "did the patient receive insertion of a peripheral vessel stent treatment?": "Procedure",
+            "how many times did the patient have cerebral ventricular #1 since january?": "Observation",
+            "when was the first minimum immunoglobulin g value?": "Observation",
+        }
+        for question, expected in cases.items():
+            with self.subTest(question=question):
+                self.assertIn(expected, a6.qo_infer_resource_types(question))
+
+    def test_question_only_disambiguates_prescription_and_procedure_terms(self):
+        self.assertEqual(
+            a6.qo_infer_resource_types(
+                "what total dose of lidocaine for catheter insertions was prescribed?"
+            ),
+            ["MedicationRequest"],
+        )
+        self.assertEqual(
+            a6.qo_infer_resource_types(
+                "when was the last insertion of a non-drug-eluting peripheral vessel stent treatment?"
+            ),
+            ["Procedure"],
+        )
+
+    def test_first_last_sort_is_emitted_only_for_registered_date_parameters(self):
+        condition = {
+            "question_id": "condition-first",
+            "question": "what was the first diagnosis?",
+            "patient_fhir_id": "synthetic-patient",
+            "assumption": "",
+            "split": "valid",
+        }
+        observation = {
+            **condition,
+            "question_id": "observation-first",
+            "question": "what was the first heart rate value?",
+        }
+
+        condition_plan = a6.build_search_plan(
+            condition, a6.qo_infer_intent(condition)
+        )
+        observation_plan = a6.build_search_plan(
+            observation, a6.qo_infer_intent(observation)
+        )
+
+        self.assertEqual(len(condition_plan), 1)
+        self.assertNotIn("_sort=", condition_plan[0]["path"])
+        self.assertEqual(len(observation_plan), 2)
+        self.assertTrue(all("_sort=" in item["path"] for item in observation_plan))
 
     def test_question_only_fallback_is_bounded_default(self):
         self.assertEqual(a6.qo_infer_resource_types("zzz qqq"), list(a6.QO_FALLBACK_TYPES))

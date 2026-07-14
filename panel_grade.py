@@ -65,10 +65,26 @@ Return JSON: {"verdicts": [{"item_id": "...", "correct": true|false}, ...]} cove
 ITEMS:
 """
 
-CACHE_FORMAT_VERSION = "panel-cache-v2"
+CACHE_FORMAT_VERSION = "panel-cache-v3"
 JUDGE_PROTOCOL_VERSION = "panel-judge-v2"
 ORDERING_VERSION = "opaque-round-robin-v1"
 OPAQUE_ID_VERSION = "opaque-content-config-v1"
+TOKEN_METRICS = (
+    "input_tokens",
+    "cached_input_tokens",
+    "output_tokens",
+    "reasoning_output_tokens",
+    "total_tokens",
+)
+
+
+class PanelVoteError(RuntimeError):
+    """A failed panel attempt with whatever usage the event stream disclosed."""
+
+    def __init__(self, message: str, *, event_stream: str = "") -> None:
+        super().__init__(message)
+        self.event_stream_sha256 = _sha256_text(event_stream)
+        self.usage = parse_panel_usage(event_stream)
 
 
 def _canonical_json(value: object) -> str:
@@ -86,6 +102,97 @@ def _sha256_text(value: str) -> str:
 
 def _sha256_json(value: object) -> str:
     return _sha256_text(_canonical_json(value))
+
+
+def _token_value(usage: dict, *keys: str) -> int | None:
+    for key in keys:
+        value = usage.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            return value
+    return None
+
+
+def parse_panel_usage(event_stream: str) -> dict:
+    """Extract the final completed-turn token receipt from Codex JSONL."""
+    completed_usage: dict | None = None
+    for line in event_stream.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if (
+            isinstance(event, dict)
+            and event.get("type") == "turn.completed"
+            and isinstance(event.get("usage"), dict)
+        ):
+            completed_usage = event["usage"]
+    usage = completed_usage or {}
+    input_tokens = _token_value(usage, "input_tokens", "prompt_tokens")
+    output_tokens = _token_value(usage, "output_tokens", "completion_tokens")
+    cached_input_tokens = _token_value(
+        usage,
+        "cached_input_tokens",
+        "cache_read_input_tokens",
+        "cached_tokens",
+    )
+    reasoning_output_tokens = _token_value(
+        usage, "reasoning_output_tokens", "reasoning_tokens"
+    )
+    total_tokens = _token_value(usage, "total_tokens")
+    total_tokens_source = "reported" if total_tokens is not None else None
+    if total_tokens is None and input_tokens is not None and output_tokens is not None:
+        total_tokens = input_tokens + output_tokens
+        total_tokens_source = "derived_input_plus_output"
+    return {
+        "input_tokens": input_tokens,
+        "cached_input_tokens": cached_input_tokens,
+        "output_tokens": output_tokens,
+        "reasoning_output_tokens": reasoning_output_tokens,
+        "total_tokens": total_tokens,
+        "total_tokens_source": total_tokens_source,
+        "complete": completed_usage is not None,
+    }
+
+
+def _token_rollup(receipts: list[dict]) -> dict:
+    totals = {
+        metric: sum(
+            int(receipt["usage"][metric])
+            for receipt in receipts
+            if isinstance(receipt.get("usage"), dict)
+            and isinstance(receipt["usage"].get(metric), int)
+            and not isinstance(receipt["usage"].get(metric), bool)
+        )
+        for metric in TOKEN_METRICS
+    }
+    completeness = {
+        metric: bool(receipts)
+        and all(
+            isinstance(receipt.get("usage"), dict)
+            and isinstance(receipt["usage"].get(metric), int)
+            and not isinstance(receipt["usage"].get(metric), bool)
+            for receipt in receipts
+        )
+        for metric in TOKEN_METRICS
+    }
+    return {
+        "calls": len(receipts),
+        "tokens": totals,
+        "completeness": completeness,
+    }
+
+
+def panel_token_summary(cache: dict) -> dict:
+    """Report judging usage for accepted calls and every retained attempt."""
+    receipts = cache.get("usage_receipts")
+    if not isinstance(receipts, list):
+        receipts = []
+    accepted = [receipt for receipt in receipts if receipt.get("status") == "accepted"]
+    return {
+        "scope": "Codex panel judging calls only",
+        "accepted": _token_rollup(accepted),
+        "all_attempts": _token_rollup(receipts),
+    }
 
 
 def load_queue(path: Path) -> list[dict]:
@@ -253,6 +360,7 @@ def new_cache(manifest: dict, blinded_items: list[dict]) -> dict:
     return {
         "format_version": CACHE_FORMAT_VERSION,
         "manifest": manifest,
+        "usage_receipts": [],
         "items": {
             item["opaque_id"]: {
                 "host": item["host"],
@@ -291,6 +399,18 @@ def load_or_initialize_cache(
     ):
         raise ValueError("panel cache item bindings do not match the queue")
     requested_votes = int(manifest["judge_config"]["requested_votes"])
+    usage_receipts = loaded.get("usage_receipts")
+    if not isinstance(usage_receipts, list) or any(
+        not isinstance(receipt, dict)
+        or receipt.get("status") not in {"accepted", "failed"}
+        or not isinstance(receipt.get("vote_round"), int)
+        or not isinstance(receipt.get("batch_number"), int)
+        or not isinstance(receipt.get("opaque_ids"), list)
+        or not isinstance(receipt.get("event_stream_sha256"), str)
+        or not isinstance(receipt.get("usage"), dict)
+        for receipt in usage_receipts
+    ):
+        raise ValueError("invalid panel usage receipts")
     for opaque_id, expected_item in expected_items.items():
         loaded_item = loaded_items.get(opaque_id)
         if not isinstance(loaded_item, dict):
@@ -356,7 +476,9 @@ def batch_prompt(batch: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def run_vote(batch: list[dict], *, codex_bin: str, timeout: int, model: str, effort: str) -> dict[str, bool]:
+def _run_vote_with_receipt(
+    batch: list[dict], *, codex_bin: str, timeout: int, model: str, effort: str
+) -> tuple[dict[str, bool], dict, str]:
     with tempfile.TemporaryDirectory() as td:
         schema_path = Path(td) / "schema.json"
         out_path = Path(td) / "out.json"
@@ -381,18 +503,40 @@ def run_vote(batch: list[dict], *, codex_bin: str, timeout: int, model: str, eff
         cmd += ["-m", model]
         cmd += ["-c", f'model_reasoning_effort="{effort}"']
         cmd.append(batch_prompt(batch))
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        try:
+            proc = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=timeout
+            )
+        except subprocess.TimeoutExpired as exc:
+            event_stream = exc.stdout if isinstance(exc.stdout, str) else ""
+            raise PanelVoteError(
+                f"panel process timed out after {timeout}s",
+                event_stream=event_stream,
+            ) from exc
+        event_stream = getattr(proc, "stdout", "") or ""
         if proc.returncode != 0:
-            raise RuntimeError(
-                f"panel process failed (rc={proc.returncode}): {proc.stderr[-200:]}"
+            raise PanelVoteError(
+                f"panel process failed (rc={proc.returncode}): {proc.stderr[-200:]}",
+                event_stream=event_stream,
             )
         if not out_path.exists():
-            raise RuntimeError(f"no panel output (rc={proc.returncode}): {proc.stderr[-200:]}")
-        document = json.loads(out_path.read_text(encoding="utf-8"))
+            raise PanelVoteError(
+                f"no panel output (rc={proc.returncode}): {proc.stderr[-200:]}",
+                event_stream=event_stream,
+            )
+        try:
+            document = json.loads(out_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise PanelVoteError(
+                "panel returned invalid JSON", event_stream=event_stream
+            ) from exc
         if not isinstance(document, dict) or not isinstance(
             document.get("verdicts"), list
         ):
-            raise RuntimeError("panel returned an invalid verdict document")
+            raise PanelVoteError(
+                "panel returned an invalid verdict document",
+                event_stream=event_stream,
+            )
         verdicts = document["verdicts"]
         if any(
             not isinstance(verdict, dict)
@@ -400,14 +544,38 @@ def run_vote(batch: list[dict], *, codex_bin: str, timeout: int, model: str, eff
             or type(verdict.get("correct")) is not bool
             for verdict in verdicts
         ):
-            raise RuntimeError("panel returned an invalid verdict item")
+            raise PanelVoteError(
+                "panel returned an invalid verdict item", event_stream=event_stream
+            )
         returned_ids = [verdict.get("item_id") for verdict in verdicts]
         expected_ids = [item["opaque_id"] for item in batch]
         if len(returned_ids) != len(set(returned_ids)):
-            raise RuntimeError("panel returned duplicate item IDs")
+            raise PanelVoteError(
+                "panel returned duplicate item IDs", event_stream=event_stream
+            )
         if set(returned_ids) != set(expected_ids):
-            raise RuntimeError("panel output did not cover exactly the blinded batch")
-        return {v["item_id"]: bool(v["correct"]) for v in verdicts}
+            raise PanelVoteError(
+                "panel output did not cover exactly the blinded batch",
+                event_stream=event_stream,
+            )
+        return (
+            {v["item_id"]: bool(v["correct"]) for v in verdicts},
+            parse_panel_usage(event_stream),
+            _sha256_text(event_stream),
+        )
+
+
+def run_vote(
+    batch: list[dict], *, codex_bin: str, timeout: int, model: str, effort: str
+) -> dict[str, bool]:
+    result, _usage, _event_stream_sha256 = _run_vote_with_receipt(
+        batch,
+        codex_bin=codex_bin,
+        timeout=timeout,
+        model=model,
+        effort=effort,
+    )
+    return result
 
 
 def codex_runtime_identity(codex_bin: str) -> tuple[str, str]:
@@ -497,18 +665,52 @@ def main() -> int:
         for i in range(0, len(todo), args.batch_size):
             batch_items = todo[i : i + args.batch_size]
             try:
-                result = run_vote(
+                result, usage, event_stream_sha256 = _run_vote_with_receipt(
                     batch_items,
                     codex_bin=resolved_codex,
                     timeout=args.timeout,
                     model=args.model,
                     effort=args.reasoning_effort,
                 )
-            except Exception as exc:
+            except PanelVoteError as exc:
+                cache["usage_receipts"].append(
+                    {
+                        "status": "failed",
+                        "vote_round": vote_round,
+                        "batch_number": i // args.batch_size,
+                        "opaque_ids": [item["opaque_id"] for item in batch_items],
+                        "event_stream_sha256": exc.event_stream_sha256,
+                        "usage": exc.usage,
+                    }
+                )
                 print(f"vote round {vote_round} batch {i // args.batch_size}: FAILED {exc}")
                 # persist and stop — resumable
                 write_cache(args.cache, cache)
                 return 3
+            except Exception as exc:
+                cache["usage_receipts"].append(
+                    {
+                        "status": "failed",
+                        "vote_round": vote_round,
+                        "batch_number": i // args.batch_size,
+                        "opaque_ids": [item["opaque_id"] for item in batch_items],
+                        "event_stream_sha256": _sha256_text(""),
+                        "usage": parse_panel_usage(""),
+                    }
+                )
+                print(f"vote round {vote_round} batch {i // args.batch_size}: FAILED {exc}")
+                write_cache(args.cache, cache)
+                return 3
+            cache["usage_receipts"].append(
+                {
+                    "status": "accepted",
+                    "vote_round": vote_round,
+                    "batch_number": i // args.batch_size,
+                    "opaque_ids": [item["opaque_id"] for item in batch_items],
+                    "event_stream_sha256": event_stream_sha256,
+                    "usage": usage,
+                }
+            )
             for opaque_id, correct in result.items():
                 votes = cache["items"][opaque_id]["votes"]
                 if len(votes) <= vote_round:
@@ -533,6 +735,7 @@ def main() -> int:
         "cache_sha256": _sha256_json(cache),
         "verdicts_sha256": _sha256_json(majority),
         "verdict_count": len(majority),
+        "panel_token_usage": panel_token_summary(cache),
     }
     out.with_name("panel_verdicts.manifest.json").write_text(
         json.dumps(verdict_manifest, indent=1, sort_keys=True) + "\n",

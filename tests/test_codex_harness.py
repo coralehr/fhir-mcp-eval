@@ -393,12 +393,72 @@ class CodexHarnessTests(unittest.TestCase):
             command = codex_harness.CodexCommand(
                 args=["python3", str(script)],
                 stdout_path=root / "events.jsonl",
+                stderr_path=root / "stderr.log",
             )
 
             result = codex_harness.run_question(command, "ignored", timeout=1, dry_run=False)
 
         self.assertEqual(result["status"], "timeout")
         self.assertIn("timeout", result["error"])
+
+    def test_run_question_separates_and_rejects_stderr(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            script = root / "emit.py"
+            script.write_text(
+                "import sys\n"
+                "print('{\"type\":\"thread.started\",\"thread_id\":\"t1\"}')\n"
+                "print('provider diagnostic', file=sys.stderr)\n",
+                encoding="utf-8",
+            )
+            command = codex_harness.CodexCommand(
+                args=["python3", str(script)],
+                stdout_path=root / "events.jsonl",
+                stderr_path=root / "stderr.log",
+            )
+
+            result = codex_harness.run_question(
+                command, "ignored", timeout=5, dry_run=False
+            )
+
+            self.assertEqual(result["status"], "error")
+            self.assertEqual(
+                command.stdout_path.read_text(encoding="utf-8"),
+                '{"type":"thread.started","thread_id":"t1"}\n',
+            )
+            self.assertEqual(
+                command.stderr_path.read_text(encoding="utf-8"),
+                "provider diagnostic\n",
+            )
+            self.assertEqual(
+                result["stderr_integrity"],
+                {
+                    "exists": True,
+                    "empty": False,
+                    "byte_count": 20,
+                    "sha256": codex_harness.sha256_file(command.stderr_path),
+                    "utf8_valid": True,
+                    "terminal_newline": True,
+                },
+            )
+
+    def test_run_question_accepts_empty_stderr(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            script = root / "emit.py"
+            script.write_text("print('{}')\n", encoding="utf-8")
+            command = codex_harness.CodexCommand(
+                args=["python3", str(script)],
+                stdout_path=root / "events.jsonl",
+                stderr_path=root / "stderr.log",
+            )
+
+            result = codex_harness.run_question(
+                command, "ignored", timeout=5, dry_run=False
+            )
+
+            self.assertEqual(result["status"], "ok")
+            self.assertTrue(result["stderr_integrity"]["empty"])
 
     def test_codex_command_is_noninteractive_and_logs_structured_output(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -422,6 +482,7 @@ class CodexHarnessTests(unittest.TestCase):
         self.assertIn("--ignore-user-config", cmd.args)
         self.assertIn("--ignore-rules", cmd.args)
         self.assertEqual(cmd.stdout_path, paths.event_log_path.resolve())
+        self.assertEqual(cmd.stderr_path, paths.stderr_path.resolve())
         schema_arg = Path(cmd.args[cmd.args.index("--output-schema") + 1])
         output_arg = Path(cmd.args[cmd.args.index("--output-last-message") + 1])
         self.assertTrue(schema_arg.is_absolute())

@@ -92,6 +92,7 @@ class QuestionPaths:
     prompt_path: Path
     answer_path: Path
     event_log_path: Path
+    stderr_path: Path
     command_path: Path
 
 
@@ -99,6 +100,7 @@ class QuestionPaths:
 class CodexCommand:
     args: list[str]
     stdout_path: Path
+    stderr_path: Path
 
 
 def sha256_text(text: str) -> str:
@@ -126,6 +128,7 @@ def paths_for_question(out_dir: Path, question_id: Any) -> QuestionPaths:
         prompt_path=qdir / "prompt.txt",
         answer_path=qdir / "answer.json",
         event_log_path=qdir / "events.jsonl",
+        stderr_path=qdir / "stderr.log",
         command_path=qdir / "command.json",
     )
 
@@ -331,7 +334,11 @@ def build_codex_command(
     if profile:
         args.extend(["-p", profile])
     args.append("-")
-    return CodexCommand(args=args, stdout_path=event_log_path)
+    return CodexCommand(
+        args=args,
+        stdout_path=event_log_path,
+        stderr_path=event_log_path.with_name("stderr.log"),
+    )
 
 
 @contextlib.contextmanager
@@ -812,30 +819,86 @@ def question_result_succeeded(
     return bool(answer_path and Path(str(answer_path)).is_file())
 
 
+def audit_stderr(stderr_path: Path) -> dict[str, Any]:
+    """Return content-free transport metadata for the separated stderr stream."""
+
+    if not stderr_path.exists():
+        return {
+            "exists": False,
+            "empty": False,
+            "byte_count": 0,
+            "sha256": None,
+            "utf8_valid": False,
+            "terminal_newline": False,
+        }
+    payload = stderr_path.read_bytes()
+    try:
+        payload.decode("utf-8")
+        utf8_valid = True
+    except UnicodeDecodeError:
+        utf8_valid = False
+    return {
+        "exists": True,
+        "empty": not payload,
+        "byte_count": len(payload),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "utf8_valid": utf8_valid,
+        "terminal_newline": not payload or payload.endswith(b"\n"),
+    }
+
+
 def run_question(command: CodexCommand, prompt: str, *, timeout: int, dry_run: bool) -> dict[str, Any]:
     command.stdout_path.parent.mkdir(parents=True, exist_ok=True)
+    command.stderr_path.parent.mkdir(parents=True, exist_ok=True)
     if dry_run:
         return {"status": "dry_run", "returncode": None}
     try:
-        with command.stdout_path.open("w", encoding="utf-8") as stdout:
+        with (
+            command.stdout_path.open("w", encoding="utf-8") as stdout,
+            command.stderr_path.open("w", encoding="utf-8") as stderr,
+        ):
             proc = subprocess.run(
                 command.args,
                 input=prompt,
                 text=True,
                 stdout=stdout,
-                stderr=subprocess.STDOUT,
+                stderr=stderr,
                 timeout=timeout,
                 check=False,
             )
-        return {"status": "ok" if proc.returncode == 0 else "error", "returncode": proc.returncode}
+        stderr_integrity = audit_stderr(command.stderr_path)
+        stderr_clean = stderr_integrity["empty"] is True
+        return {
+            "status": "ok" if proc.returncode == 0 and stderr_clean else "error",
+            "returncode": proc.returncode,
+            "stderr_integrity": stderr_integrity,
+            **(
+                {}
+                if stderr_clean
+                else {"error": "nonempty Codex stderr rejected by sealed transport"}
+            ),
+        }
     except subprocess.TimeoutExpired:
-        with command.stdout_path.open("a", encoding="utf-8") as stdout:
-            stdout.write(json.dumps({"error": "timeout", "timeout_seconds": timeout}) + "\n")
-        return {"status": "timeout", "returncode": None, "error": f"timeout after {timeout}s"}
+        with command.stderr_path.open("a", encoding="utf-8") as stderr:
+            stderr.write(
+                json.dumps({"runner_error": "timeout", "timeout_seconds": timeout})
+                + "\n"
+            )
+        return {
+            "status": "timeout",
+            "returncode": None,
+            "error": f"timeout after {timeout}s",
+            "stderr_integrity": audit_stderr(command.stderr_path),
+        }
     except OSError as exc:
-        with command.stdout_path.open("a", encoding="utf-8") as stdout:
-            stdout.write(json.dumps({"error": "os_error", "detail": str(exc)}) + "\n")
-        return {"status": "error", "returncode": None, "error": str(exc)}
+        with command.stderr_path.open("a", encoding="utf-8") as stderr:
+            stderr.write(json.dumps({"runner_error": "os_error"}) + "\n")
+        return {
+            "status": "error",
+            "returncode": None,
+            "error": str(exc),
+            "stderr_integrity": audit_stderr(command.stderr_path),
+        }
 
 
 def main() -> int:
@@ -1061,6 +1124,7 @@ def main() -> int:
                     {
                         "args": command.args,
                         "stdout_path": str(command.stdout_path),
+                        "stderr_path": str(command.stderr_path),
                         "isolated_packet_cwd": args.mode == "packet",
                     }
                 )
@@ -1091,9 +1155,12 @@ def main() -> int:
             "prompt_sha256": sha256_text(prompt),
             "answer_path": str(paths.answer_path),
             "event_log_path": str(paths.event_log_path),
+            "stderr_path": str(paths.stderr_path),
         }
         if result.get("error"):
             item["error"] = result["error"]
+        if result.get("stderr_integrity"):
+            item["stderr_integrity"] = result["stderr_integrity"]
         if integrity is not None:
             item["event_integrity"] = integrity
             if integrity["contaminated"]:

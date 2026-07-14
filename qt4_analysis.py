@@ -883,7 +883,7 @@ def _verify_panel(
     grading_dir: Path,
     queue: list[dict[str, Any]],
     controller: Mapping[str, Any],
-) -> dict[str, int]:
+) -> tuple[dict[str, int], dict[str, Any]]:
     cache_path = grading_dir / "panel_votes.json"
     verdict_path = grading_dir / "panel_verdicts.json"
     verdict_manifest_path = grading_dir / "panel_verdicts.manifest.json"
@@ -936,10 +936,11 @@ def _verify_panel(
         "cache_sha256": sha256_json(validated_cache),
         "verdicts_sha256": sha256_json(majority),
         "verdict_count": len(majority),
+        "panel_token_usage": panel_grade.panel_token_summary(validated_cache),
     }
     if _read_json(verdict_manifest_path) != expected_verdict_manifest:
         raise ValueError("panel verdict manifest is incomplete or stale")
-    return majority
+    return majority, expected_verdict_manifest["panel_token_usage"]
 
 
 def _labels_from_artifacts(
@@ -1562,7 +1563,23 @@ def _text_report(result: dict[str, Any]) -> str:
             f"all_attempt_total={all_attempt_total} retries={retries} "
             f"packet_bytes={packet_bytes}; unavailable={unavailable}"
         )
-    lines.extend(["", "ECONOMIC CONTRASTS (treatment minus reference)"])
+    panel = result["economics"]["panel_judging"]
+    accepted_panel = panel["accepted"]
+    all_panel = panel["all_attempts"]
+    lines.extend(
+        [
+            "",
+            "PANEL JUDGING ECONOMICS",
+            (
+                f"accepted_calls={accepted_panel['calls']} "
+                f"accepted_total={accepted_panel['tokens']['total_tokens']} "
+                f"all_attempt_calls={all_panel['calls']} "
+                f"all_attempt_total={all_panel['tokens']['total_tokens']}"
+            ),
+            "",
+            "ECONOMIC CONTRASTS (treatment minus reference)",
+        ]
+    )
     for name, _treatment, _reference in REGISTERED_CONTRASTS:
         economics = result["economics"]["contrasts"][name]
         input_difference = economics["tokens"]["input_tokens"]["difference"]
@@ -1604,7 +1621,7 @@ def assemble_result(
     deterministic, queue, grading_manifest = _verify_grading_artifacts(
         validated, grading_dir
     )
-    panel_verdicts = _verify_panel(
+    panel_verdicts, panel_token_usage = _verify_panel(
         grading_dir=grading_dir,
         queue=queue,
         controller=validated.controller,
@@ -1682,9 +1699,13 @@ def assemble_result(
         "mechanism_outcomes": mechanism_outcomes,
         "promotion_assessment": promotion_assessment,
         "economics": {
-            "scope": "accepted completion event logs and sealed model-visible packets only",
+            "scope": (
+                "answer-arm accepted/all-attempt completion logs, sealed "
+                "model-visible packets, and panel-judging call receipts"
+            ),
             "arms": arm_economics,
             "contrasts": contrast_economics,
+            "panel_judging": panel_token_usage,
         },
         "input_hashes": result_input_hashes,
     }

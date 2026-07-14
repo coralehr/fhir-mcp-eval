@@ -341,6 +341,24 @@ class Qt4AnalysisTests(unittest.TestCase):
         }
         for item in cache["items"].values():
             item["votes"] = [correctness[item["host"]["arm"]]] * 3
+        cache["usage_receipts"].append(
+            {
+                "status": "accepted",
+                "vote_round": 0,
+                "batch_number": 0,
+                "opaque_ids": sorted(cache["items"]),
+                "event_stream_sha256": "f" * 64,
+                "usage": {
+                    "input_tokens": 10,
+                    "cached_input_tokens": 3,
+                    "output_tokens": 2,
+                    "reasoning_output_tokens": 1,
+                    "total_tokens": 12,
+                    "total_tokens_source": "reported",
+                    "complete": True,
+                },
+            }
+        )
         cache_path = grading_dir / "panel_votes.json"
         panel_grade.write_cache(cache_path, cache)
         verdicts = panel_grade.majority_verdicts(cache, required_votes=3)
@@ -352,6 +370,7 @@ class Qt4AnalysisTests(unittest.TestCase):
                 "cache_sha256": qt4_analysis.sha256_json(cache),
                 "verdicts_sha256": qt4_analysis.sha256_json(verdicts),
                 "verdict_count": len(verdicts),
+                "panel_token_usage": panel_grade.panel_token_summary(cache),
             },
         )
 
@@ -444,6 +463,12 @@ class Qt4AnalysisTests(unittest.TestCase):
                 "input_tokens"
             ]["difference"],
             100,
+        )
+        self.assertEqual(
+            result["economics"]["panel_judging"]["accepted"]["tokens"][
+                "total_tokens"
+            ],
+            12,
         )
 
         self.assertEqual(a6["model_visible_packet_bytes"]["total"], expected_packet_bytes)

@@ -34,7 +34,10 @@ QUESTION_ONLY_FIELDS = {"split", "question_id", "question", "assumption", "patie
 class PacketFetchError(RuntimeError):
     """A redacted transport/incompleteness failure that invalidates a packet."""
 
-QO_PLANNER_VERSION = "qo-v2"
+# Patch-level common-planner revision frozen for the untouched QT-4 holdout.
+# It preserves qo-v2 bounds and feature isolation while applying the structural
+# routing/query-validity repair pre-built from the earlier 409-question audit.
+QO_PLANNER_VERSION = "qo-v2.1"
 A6A_MAX_TOTAL_RESOURCES = 200
 A6A_MAX_PACKET_CHARS = 160_000
 
@@ -107,7 +110,9 @@ def validate_qt_features(
             "run one single-feature arm or QT-4V/QT-4T"
         )
     if normalized and planner != "question-only":
-        raise ValueError("QT features require the question-only qo-v2 planner")
+        raise ValueError(
+            f"QT features require the question-only {QO_PLANNER_VERSION} planner"
+        )
     return normalized
 
 
@@ -141,7 +146,15 @@ def is_microbiology_question(question: Any) -> bool:
 # reporting; multiple groups may fire and are unioned.
 QO_TYPE_KEYWORDS: list[tuple[tuple[str, ...], tuple[str, ...]]] = [
     (("prescri", "medication", "drug", "dose", "tablet", "capsule", " mg ", "infusion"), ("MedicationRequest",)),
-    (("procedure", "surgery", "surgical", "operation", "ventilation", "intubat", "dialysis", "catheter", "undergo", "underwent"), ("Procedure",)),
+    (
+        (
+            "procedure", "surgery", "surgical", "operation", "ventilation", "intubat",
+            "dialysis", "catheter", "undergo", "underwent", "insert", "irrigat",
+            "destruct", "restrict", "resect", "excis", "drainage", "introduc",
+            "injection or infusion",
+        ),
+        ("Procedure",),
+    ),
     (("diagnos", "condition", "disease", "disorder"), ("Condition",)),
     (
         ("admit", "admission", "discharge", "hospital", "icu", "intensive care", "careunit", "care unit", "ward", "transfer", "visit", "encounter", "stay"),
@@ -153,6 +166,7 @@ QO_TYPE_KEYWORDS: list[tuple[tuple[str, ...], tuple[str, ...]]] = [
             "weight", "height", "temperature", "heart rate", "blood pressure", "respiratory", "oxygen", "o2",
             "sao2", "spo2", "glucose", "sodium", "potassium", "creatinine", "hemoglobin", "hematocrit",
             "platelet", "urine", "output", "input", "intake", "drain", "stool", "emesis",
+            "cerebral ventricular", "immunoglobulin", "immune globulin",
         ),
         ("Observation",),
     ),
@@ -410,12 +424,56 @@ def infer_intent(row: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _qo_keyword_matches(question: str, keyword: str) -> bool:
+    """Match a word/phrase or stem at a leading token boundary."""
+    normalized = keyword.strip().lower()
+    if not normalized:
+        return False
+    if normalized == "drug":
+        return (
+            re.search(r"(?<!non-)(?<![a-z0-9])drug(?!-elut)", question)
+            is not None
+        )
+    return re.search(r"(?<![a-z0-9])" + re.escape(normalized), question) is not None
+
+
 def qo_infer_resource_types(question: str) -> list[str]:
-    q = f" {str(question or '').lower()} "
+    q = str(question or "").lower()
+    medication_match = any(
+        _qo_keyword_matches(q, keyword) for keyword in QO_TYPE_KEYWORDS[0][0]
+    )
+    strong_medication_match = any(
+        _qo_keyword_matches(q, keyword)
+        for keyword in QO_TYPE_KEYWORDS[0][0]
+        if keyword.strip() != "infusion"
+    )
+    procedure_code_phrase = any(
+        _qo_keyword_matches(q, keyword) for keyword in QO_TYPE_KEYWORDS[1][0]
+    )
+    explicit_procedure_frame = any(
+        _qo_keyword_matches(q, keyword)
+        for keyword in (
+            "procedure", "surgery", "surgical", "operation", "ventilation",
+            "intubat", "dialysis", "undergo", "underwent",
+        )
+    )
     types: list[str] = []
     for keywords, resources in QO_TYPE_KEYWORDS:
-        if any(k in q for k in keywords):
+        if any(_qo_keyword_matches(q, keyword) for keyword in keywords):
             for r in resources:
+                if (
+                    r == "Procedure"
+                    and strong_medication_match
+                    and not explicit_procedure_frame
+                ):
+                    continue
+                if (
+                    r == "MedicationRequest"
+                    and medication_match
+                    and not strong_medication_match
+                    and procedure_code_phrase
+                ):
+                    continue
                 if r not in types:
                     types.append(r)
     return types or list(QO_FALLBACK_TYPES)
@@ -562,7 +620,7 @@ def build_search_plan(
     plan = []
     micro_vocab = "micro-vocab" in features and is_microbiology_question(row.get("question"))
     for resource_type in intent["resource_types"]:
-        if intent["temporal_policy"] == "first_last" and resource_type != "Patient":
+        if intent["temporal_policy"] == "first_last" and resource_type in RESOURCE_DATE_PARAM:
             sorts = ["date", "-date"]
         else:
             sorts = ["-date"] if resource_type in RESOURCE_DATE_PARAM else [None]

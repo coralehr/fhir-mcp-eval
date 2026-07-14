@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Run the frozen QT-4 microbiology contrast in sealed, balanced order.
+"""Run a frozen QT-4 contrast in sealed, balanced order.
 
-The controller refuses model execution unless the exact full-409 zero-model
+The controller refuses model execution unless the profile's exact zero-model
 gate passed. On first launch it snapshots every model-affecting input into the
 controller bundle and writes an immutable manifest while holding a singleton
 lock. Resume accepts only audited completion receipts bound to that manifest.
@@ -195,6 +195,7 @@ _bootstrap_before_project_imports()
 from codex_harness import (  # noqa: E402 - immutable bootstrap runs first
     answer_matches_schema,
     audit_event_log,
+    audit_stderr,
     is_retryable_incomplete_packet_audit,
     retryable_incomplete_packet_marker_matches,
     run_version,
@@ -211,17 +212,62 @@ from run_lock import (  # noqa: E402 - immutable bootstrap runs first
 
 REGISTERED_MODEL = "gpt-5.6-sol"
 REGISTERED_REASONING_EFFORT = "high"
-REGISTERED_SPEC_KIND = "qt4_micro_question_spec"
-REGISTERED_SPEC_VERSION = "qt4-micro42-v1"
-REGISTERED_ORDER_METHOD = "ascending sha256('qt4-micro42-20260713:' + question_id)"
-REGISTERED_ORDER_SALT = "qt4-micro42-20260713:"
+REGISTERED_TRANSPORT_PROTOCOL = "separated-stdout-jsonl-stderr-v2"
+
+EXPERIMENT_PROFILES: dict[str, dict[str, Any]] = {
+    "micro42": {
+        "spec_kind": "qt4_micro_question_spec",
+        "spec_version": "qt4-micro42-v1",
+        "order_method": "ascending sha256('qt4-micro42-20260713:' + question_id)",
+        "order_salt": "qt4-micro42-20260713:",
+        "expected_total": 409,
+        "expected_micro": 42,
+        "expected_non_micro": 367,
+        "expected_scheduled": 42,
+        "schedule_scope": "micro_only",
+    },
+    "valid374": {
+        "spec_kind": "qt4_holdout_question_spec",
+        "spec_version": "qt4-valid374-v1",
+        "order_method": "ascending sha256('qt4-valid374-20260713:' + question_id), then question_id",
+        "order_salt": "qt4-valid374-20260713:",
+        "expected_total": 374,
+        "expected_micro": 44,
+        "expected_non_micro": 330,
+        "expected_scheduled": 374,
+        "schedule_scope": "all",
+    },
+}
+
+
+def _profile_from_argv() -> str:
+    try:
+        index = sys.argv.index("--profile")
+    except ValueError:
+        return "micro42"
+    if index + 1 >= len(sys.argv):
+        raise SystemExit("--profile requires a value")
+    value = sys.argv[index + 1]
+    if value not in EXPERIMENT_PROFILES:
+        raise SystemExit(f"unknown QT-4 profile: {value}")
+    return value
+
+
+REGISTERED_PROFILE = _profile_from_argv()
+_PROFILE = EXPERIMENT_PROFILES[REGISTERED_PROFILE]
+REGISTERED_SPEC_KIND = str(_PROFILE["spec_kind"])
+REGISTERED_SPEC_VERSION = str(_PROFILE["spec_version"])
+REGISTERED_ORDER_METHOD = str(_PROFILE["order_method"])
+REGISTERED_ORDER_SALT = str(_PROFILE["order_salt"])
 GATE_SCHEMA_VERSION = "qt4-zero-model-packet-gate-v1"
-EXPECTED_TOTAL = 409
-EXPECTED_MICRO = 42
-EXPECTED_NON_MICRO = 367
+EXPECTED_TOTAL = int(_PROFILE["expected_total"])
+EXPECTED_MICRO = int(_PROFILE["expected_micro"])
+EXPECTED_NON_MICRO = int(_PROFILE["expected_non_micro"])
+EXPECTED_SCHEDULED = int(_PROFILE["expected_scheduled"])
+REGISTERED_SCHEDULE_SCOPE = str(_PROFILE["schedule_scope"])
 PARTIAL_RUN_EXIT = 3
 MAX_ATTEMPTS_PER_ITEM = 3
-ATTEMPT_SCHEMA_VERSION = "qt4-attempt-v2"
+ATTEMPT_SCHEMA_VERSION = "qt4-attempt-v3"
 
 REQUIRED_GATE_NAMES = {
     "scheduled_question_sets",
@@ -383,7 +429,7 @@ def validate_registered_question_spec(spec_path: Path, input_path: Path) -> list
         "kind": REGISTERED_SPEC_KIND,
         "version": REGISTERED_SPEC_VERSION,
         "order_method": REGISTERED_ORDER_METHOD,
-        "expected_question_count": EXPECTED_MICRO,
+        "expected_question_count": EXPECTED_SCHEDULED,
     }
     for key, expected in expected_metadata.items():
         if spec.get(key) != expected:
@@ -394,22 +440,32 @@ def validate_registered_question_spec(spec_path: Path, input_path: Path) -> list
         rows = list(csv.DictReader(handle))
     dataset_ids = [str(row.get("question_id") or "") for row in rows]
     if len(rows) != EXPECTED_TOTAL or len(set(dataset_ids)) != EXPECTED_TOTAL:
-        raise ValueError("registered input must contain 409 unique question IDs")
+        raise ValueError(
+            f"registered input must contain {EXPECTED_TOTAL} unique question IDs"
+        )
     micro_ids = [
         str(row["question_id"])
         for row in rows
         if str(row.get("main_table_name") or "").strip().lower()
         == "microbiologyevents"
     ]
+    scheduled_ids = micro_ids if REGISTERED_SCHEDULE_SCOPE == "micro_only" else dataset_ids
     expected_order = sorted(
-        micro_ids,
-        key=lambda qid: hashlib.sha256(
-            f"{REGISTERED_ORDER_SALT}{qid}".encode("utf-8")
-        ).hexdigest(),
+        scheduled_ids,
+        key=lambda qid: (
+            hashlib.sha256(
+                f"{REGISTERED_ORDER_SALT}{qid}".encode("utf-8")
+            ).hexdigest(),
+            qid,
+        ),
     )
-    if len(expected_order) != EXPECTED_MICRO or question_ids != expected_order:
+    if (
+        len(micro_ids) != EXPECTED_MICRO
+        or len(expected_order) != EXPECTED_SCHEDULED
+        or question_ids != expected_order
+    ):
         raise ValueError(
-            "question spec IDs/order do not match the frozen microbiology selection rule"
+            "question spec IDs/order do not match the frozen profile selection rule"
         )
     return question_ids
 
@@ -504,7 +560,9 @@ def validate_preflight(
         or len(gate_ids) != len(set(gate_ids))
         or gate.get("scheduled_question_count") != EXPECTED_TOTAL
     ):
-        raise ValueError("gate report must cover exactly 409 unique questions")
+        raise ValueError(
+            f"gate report must cover exactly {EXPECTED_TOTAL} unique questions"
+        )
     dispatch = gate.get("dispatch") if isinstance(gate.get("dispatch"), dict) else {}
     gate_micro_ids = [
         str(value) for value in dispatch.get("microbiology_question_ids", [])
@@ -513,7 +571,14 @@ def validate_preflight(
         dispatch.get("microbiology_questions") != EXPECTED_MICRO
         or dispatch.get("non_microbiology_questions") != EXPECTED_NON_MICRO
         or len(gate_micro_ids) != len(set(gate_micro_ids))
-        or set(gate_micro_ids) != set(question_ids)
+        or (
+            REGISTERED_SCHEDULE_SCOPE == "micro_only"
+            and set(gate_micro_ids) != set(question_ids)
+        )
+        or (
+            REGISTERED_SCHEDULE_SCOPE == "all"
+            and set(gate_ids) != set(question_ids)
+        )
     ):
         raise ValueError("gate microbiology IDs/counts do not match the frozen spec")
 
@@ -527,7 +592,10 @@ def validate_preflight(
         "expected_micro": EXPECTED_MICRO,
         "expected_non_micro": EXPECTED_NON_MICRO,
     }:
-        raise ValueError("gate report did not enforce the frozen 409/42/367 counts")
+        raise ValueError(
+            "gate report did not enforce the frozen "
+            f"{EXPECTED_TOTAL}/{EXPECTED_MICRO}/{EXPECTED_NON_MICRO} counts"
+        )
 
     equivalence = gate.get("equivalence")
     if not isinstance(equivalence, dict):
@@ -537,7 +605,10 @@ def validate_preflight(
         if not isinstance(result, dict) or result.get("matched") != EXPECTED_NON_MICRO or result.get(
             "total"
         ) != EXPECTED_NON_MICRO:
-            raise ValueError(f"gate {key} must prove 367/367 negative-control identity")
+            raise ValueError(
+                f"gate {key} must prove {EXPECTED_NON_MICRO}/{EXPECTED_NON_MICRO} "
+                "negative-control identity"
+            )
 
     gate_inputs = gate.get("inputs") if isinstance(gate.get("inputs"), dict) else {}
     recorded_spec = gate_inputs.get("question_spec")
@@ -811,8 +882,10 @@ def build_controller_identity(
         validated_source_hashes=validated_source_hashes,
     )
     return {
-        "kind": "qt4_micro_interleaved_controller_manifest",
-        "schema_version": "qt4-controller-v2",
+        "kind": "qt4_interleaved_controller_manifest",
+        "schema_version": "qt4-controller-v3",
+        "experiment_profile": REGISTERED_PROFILE,
+        "transport_protocol": REGISTERED_TRANSPORT_PROTOCOL,
         "question_ids": question_ids,
         "schedule": [
             {"question_id": qid, "arm": arm.name}
@@ -973,14 +1046,20 @@ def is_terminal_attempt(
         return False
     answer_path = question_dir / "answer.json"
     event_path = question_dir / "events.jsonl"
+    stderr_path = question_dir / "stderr.log"
     prompt_path = question_dir / "prompt.txt"
     if terminal_question_status(question_dir) != "answered":
         return False
-    if not _valid_answer_shape(answer_path) or audit_event_log(event_path)["contaminated"]:
+    if (
+        not _valid_answer_shape(answer_path)
+        or audit_event_log(event_path)["contaminated"]
+        or audit_stderr(stderr_path)["empty"] is not True
+    ):
         return False
     expected_files = {
         "answer_sha256": answer_path,
         "event_log_sha256": event_path,
+        "stderr_log_sha256": stderr_path,
         "prompt_sha256": prompt_path,
     }
     return all(
@@ -1112,6 +1191,7 @@ def _archive_failed_attempt(
     movable_names = (
         "prompt.txt",
         "events.jsonl",
+        "stderr.log",
         "command.json",
         "answer.json",
         "answer.failed.json",
@@ -1189,6 +1269,7 @@ def _blocking_artifact_reason(
         "answer.stale.json",
         "prompt.txt",
         "events.jsonl",
+        "stderr.log",
         "command.json",
     )
     if not completion_valid and any(
@@ -1247,6 +1328,12 @@ def _blocking_artifact_reason(
         archived_audit = audit_event_log(Path(str(events_metadata["path"])))
         if archived_audit != recorded_audit:
             return "changed_attempt_event_integrity"
+        stderr_metadata = archived_files.get("stderr.log")
+        if not isinstance(stderr_metadata, dict):
+            return "missing_attempt_stderr_log"
+        archived_stderr_audit = audit_stderr(Path(str(stderr_metadata["path"])))
+        if archived_stderr_audit != receipt.get("stderr_integrity"):
+            return "changed_attempt_stderr_integrity"
         if is_retryable_incomplete_packet_audit(recorded_audit):
             marker_metadata = archived_files.get("contamination.json")
             if not isinstance(marker_metadata, dict):
@@ -1281,13 +1368,16 @@ def _write_attempt_receipt(
     question_dir = _question_dir(arm, question_id)
     answer_path = question_dir / "answer.json"
     event_path = question_dir / "events.jsonl"
+    stderr_path = question_dir / "stderr.log"
     prompt_path = question_dir / "prompt.txt"
     audit = audit_event_log(event_path)
+    stderr_integrity = audit_stderr(stderr_path)
     answered = (
         returncode == 0
         and terminal_question_status(question_dir) == "answered"
         and answer_matches_schema(answer_path, schema_path)
         and not audit["contaminated"]
+        and stderr_integrity["empty"] is True
     )
     if attempt_number is None:
         attempt_number = len(_attempt_receipts(arm, question_id)) + 1
@@ -1305,6 +1395,7 @@ def _write_attempt_receipt(
         "harness_exit_code": returncode,
         "status": "answered" if answered else "invalid",
         "event_integrity": audit,
+        "stderr_integrity": stderr_integrity,
         "usage": _extract_event_usage(event_path),
     }
     harness_result = _harness_question_result(arm, question_id)
@@ -1317,6 +1408,7 @@ def _write_attempt_receipt(
     for key, path in {
         "answer_sha256": answer_path,
         "event_log_sha256": event_path,
+        "stderr_log_sha256": stderr_path,
         "prompt_sha256": prompt_path,
     }.items():
         receipt[key] = _sha256_file(path) if path.exists() else None
@@ -1441,6 +1533,11 @@ def _progress(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--profile",
+        choices=sorted(EXPERIMENT_PROFILES),
+        default=REGISTERED_PROFILE,
+    )
     parser.add_argument("--spec", type=Path, required=True)
     parser.add_argument("--gate-report", type=Path, required=True)
     parser.add_argument(
@@ -1487,6 +1584,9 @@ def main() -> int:
     parser.add_argument("--status", action="store_true")
     parser.add_argument("--live", action="store_true")
     args = parser.parse_args()
+
+    if args.profile != REGISTERED_PROFILE:
+        raise ValueError("profile changed after immutable runner import")
 
     validate_registered_execution(model=args.model, reasoning_effort=args.reasoning_effort)
     validate_registered_harness_path(args.harness)

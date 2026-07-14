@@ -1,0 +1,3 @@
+# The frozen valid374 artifact is byte-bound by the zero-model gate and sealed
+# controller. Preserve its source CRLF bytes across Git checkouts.
+final_dataset/valid_holdout374.csv binary
