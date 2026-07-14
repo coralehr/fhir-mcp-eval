@@ -27,7 +27,12 @@ Answer model: `gpt-5.6-sol`, high reasoning effort
 This pre-declared 42-question mechanism screen came from the already-inspected
 409-question set and did not re-answer the 367 controls. Vocabulary produced a
 favorable registered micro-slice estimate and advanced only to confirmation;
-neither arm is formally promoted until untouched-holdout grading completes.
+neither arm was formally promoted from this screen alone.
+
+The untouched valid-split holdout is now complete. It confirmed the vocabulary
+effect and promoted vocabulary only; traversal's incremental contrast remained
+unresolved and was not promoted. See
+[QT4_VALID374_RESULT.md](QT4_VALID374_RESULT.md).
 
 The result supports terminology-aware packet construction on this slice. The
 incremental traversal contrast remained statistically unresolved. It does not

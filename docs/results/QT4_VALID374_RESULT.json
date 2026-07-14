@@ -1,0 +1,104 @@
+{
+  "analysis_version": "qt4-three-arm-analysis-v3",
+  "experiment_profile": "valid374",
+  "status": "confirmatory_holdout_result",
+  "completed_date": "2026-07-14",
+  "decision": "promote_vocabulary_only",
+  "scope": {
+    "questions": 374,
+    "patients": 90,
+    "accepted_answers": 1122,
+    "dispatched_questions": 44,
+    "negative_control_questions": 330,
+    "answer_model": "gpt-5.6-sol",
+    "reasoning_effort": "high"
+  },
+  "accuracy": {
+    "dispatched": {
+      "a6a": {"correct": 10, "total": 44, "accuracy": 0.2272727273},
+      "qt4v": {"correct": 25, "total": 44, "accuracy": 0.5681818182},
+      "qt4t": {"correct": 29, "total": 44, "accuracy": 0.6590909091}
+    },
+    "negative_control": {
+      "a6a": {"correct": 191, "total": 330, "accuracy": 0.5787878788},
+      "qt4v": {"correct": 188, "total": 330, "accuracy": 0.5696969697},
+      "qt4t": {"correct": 190, "total": 330, "accuracy": 0.5757575758}
+    },
+    "pooled": {
+      "a6a": {"correct": 201, "total": 374, "accuracy": 0.5374331551},
+      "qt4v": {"correct": 213, "total": 374, "accuracy": 0.5695187166},
+      "qt4t": {"correct": 219, "total": 374, "accuracy": 0.5855614973}
+    }
+  },
+  "registered_contrasts": {
+    "qt4v_minus_a6a": {
+      "dispatched_difference": 0.3409090909,
+      "discordant_favorable": 16,
+      "discordant_unfavorable": 1,
+      "exact_mcnemar_p": 0.000274658203125,
+      "patient_cluster_ci95": [0.17949, 0.5],
+      "negative_control_difference": -0.0090909091,
+      "pooled_difference": 0.0320855615,
+      "promoted": true
+    },
+    "qt4t_minus_qt4v": {
+      "dispatched_difference": 0.0909090909,
+      "discordant_favorable": 5,
+      "discordant_unfavorable": 1,
+      "exact_mcnemar_p": 0.21875,
+      "patient_cluster_ci95": [0.0, 0.2093],
+      "negative_control_difference": 0.0060606061,
+      "pooled_difference": 0.0160427807,
+      "promoted": false
+    }
+  },
+  "microbiology_gold_recall": {
+    "gold_occurrences": 115,
+    "questions_with_gold": 32,
+    "a6a": {"retrieved": 36, "id_weighted_recall": 0.3130434783, "any_coverage": 5, "full_coverage": 4},
+    "qt4v": {"retrieved": 49, "id_weighted_recall": 0.4260869565, "any_coverage": 32, "full_coverage": 21},
+    "qt4t": {"retrieved": 85, "id_weighted_recall": 0.7391304348, "any_coverage": 32, "full_coverage": 27}
+  },
+  "footprint": {
+    "a6a": {"packet_json_bytes": 39279441, "resources": 42934},
+    "qt4v": {"packet_json_bytes": 32620630, "resources": 35866},
+    "qt4t": {"packet_json_bytes": 32929708, "resources": 36025}
+  },
+  "economics": {
+    "answers": {
+      "a6a": {"accepted_input": 22137555, "accepted_output": 160062, "accepted_total": 22297617, "all_attempt_total": 23622215, "archived_retries": 20},
+      "qt4v": {"accepted_input": 19050084, "accepted_output": 142792, "accepted_total": 19192876, "all_attempt_total": 20159906, "archived_retries": 20},
+      "qt4t": {"accepted_input": 19125336, "accepted_output": 144603, "accepted_total": 19269939, "all_attempt_total": 19955444, "archived_retries": 17}
+    },
+    "accepted_answer_tokens": 60760432,
+    "all_attempt_answer_tokens": 63737565,
+    "panel_tokens": 1820656,
+    "v2_all_attempt_answers_plus_panel": 65558221,
+    "aborted_v1_protocol_overhead": {
+      "a6a": 1315314,
+      "qt4v": 1107649,
+      "qt4t": 1123998,
+      "total": 3546961,
+      "completed_provider_turns": 61
+    },
+    "program_tokens_including_v1_overhead": 69105182,
+    "monetary_cost": null,
+    "wall_time_seconds": null
+  },
+  "integrity": {
+    "invalid_current_receipts": 0,
+    "archived_failed_attempts": 57,
+    "controller_manifest_sha256": "ed5e27e2de7cbec71caf5cefe1d1d8c90c7ba2250e1c494ded76d0e3fde15605",
+    "input_sha256": "22e914e410ab2cc8eb0c1df2bf2286f42a88e86683117263d7cc0f17a7b402b6",
+    "grading_manifest_sha256": "c7c84246cb82f9bf36779fa0d4caed37092efb2677d828588a3822e4ab516489",
+    "completion_receipt_set_sha256": "0ef70b5df66c45744581da3fba68efe8fee18373c4f7e88f9629834ca4ff27d5",
+    "archived_failed_receipt_set_sha256": "a2c568487dddee3f1e91ea4fbd3ea87153f6df84915195e44e23f9e5e98359f0"
+  },
+  "claim_boundary": {
+    "vocabulary_promoted": true,
+    "traversal_promoted": false,
+    "persistent_graph_storage_claim_supported": false,
+    "bonfire_product_validated": false,
+    "cross_model_or_server_generality_established": false
+  }
+}
