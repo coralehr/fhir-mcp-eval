@@ -26,16 +26,17 @@ import paired_stats
 import panel_grade
 
 
-ANALYSIS_VERSION = "qt4-three-arm-analysis-v1"
+ANALYSIS_VERSION = "qt4-three-arm-analysis-v2"
 ARM_NAMES = ("a6a", "qt4v", "qt4t")
 REGISTERED_CONTRASTS = (
     ("qt4v_minus_a6a", "qt4v", "a6a"),
     ("qt4t_minus_qt4v", "qt4t", "qt4v"),
 )
-CONTROLLER_KIND = "qt4_micro_interleaved_controller_manifest"
-CONTROLLER_SCHEMA_VERSION = "qt4-controller-v2"
+CONTROLLER_KIND = "qt4_interleaved_controller_manifest"
+CONTROLLER_SCHEMA_VERSION = "qt4-controller-v3"
 COMPLETION_KIND = "qt4_attempt_completion"
-COMPLETION_SCHEMA_VERSION = "qt4-attempt-v2"
+COMPLETION_SCHEMA_VERSION = "qt4-attempt-v3"
+REGISTERED_TRANSPORT_PROTOCOL = "separated-stdout-jsonl-stderr-v2"
 MAX_ATTEMPTS_PER_ITEM = 3
 REGISTERED_PANEL_VOTES = 3
 REGISTERED_PANEL_MODEL = "gpt-5.6-sol"
@@ -241,8 +242,9 @@ def _validate_controller(
     if (
         controller.get("kind") != CONTROLLER_KIND
         or controller.get("schema_version") != CONTROLLER_SCHEMA_VERSION
+        or controller.get("transport_protocol") != REGISTERED_TRANSPORT_PROTOCOL
     ):
-        raise ValueError("controller manifest kind/schema is not sealed QT-4 v2")
+        raise ValueError("controller manifest is not the sealed QT-4 v3 transport")
     if controller.get("question_ids") != question_ids:
         raise ValueError("controller question IDs/order do not match the frozen spec")
 
@@ -511,6 +513,25 @@ def _validate_failed_attempt_ledgers(
                     raise ValueError(
                         f"{arm}/{question_id} archived attempt usage changed"
                     )
+                stderr_metadata = archived_files.get("stderr.log")
+                if not isinstance(stderr_metadata, dict):
+                    raise ValueError(
+                        f"{arm}/{question_id} attempt stderr log is missing"
+                    )
+                archived_stderr_path = Path(str(stderr_metadata["path"]))
+                recomputed_stderr = codex_harness.audit_stderr(
+                    archived_stderr_path
+                )
+                if receipt.get("stderr_integrity") != recomputed_stderr:
+                    raise ValueError(
+                        f"{arm}/{question_id} archived attempt stderr audit changed"
+                    )
+                if receipt.get("stderr_log_sha256") != sha256_file(
+                    archived_stderr_path
+                ):
+                    raise ValueError(
+                        f"{arm}/{question_id} archived attempt stderr hash changed"
+                    )
                 result[arm].append(receipt)
     return result
 
@@ -551,6 +572,7 @@ def _validate_completions(
                 "answer_sha256": question_dir / "answer.json",
                 "event_log_sha256": question_dir / "events.jsonl",
                 "prompt_sha256": question_dir / "prompt.txt",
+                "stderr_log_sha256": question_dir / "stderr.log",
             }
             receipt_path = question_dir / "completion.json"
             if not receipt_path.exists() or any(not path.exists() for path in paths.values()):
@@ -583,6 +605,14 @@ def _validate_completions(
                 raise ValueError(f"{arm}/{question_id} completion receipt is not accepted")
             if any(receipt.get(key) != sha256_file(path) for key, path in paths.items()):
                 raise ValueError(f"{arm}/{question_id} sealed artifact hash changed")
+            stderr_audit = codex_harness.audit_stderr(paths["stderr_log_sha256"])
+            if (
+                stderr_audit.get("empty") is not True
+                or receipt.get("stderr_integrity") != stderr_audit
+            ):
+                raise ValueError(
+                    f"{arm}/{question_id} accepted stderr integrity is not empty"
+                )
             expected_prompt = codex_harness.build_prompt(
                 {**input_rows[question_id], **packet_records[arm][question_id]},
                 mode="packet",
@@ -1265,7 +1295,7 @@ def _arm_economics(validated: ValidatedRun, arm: str) -> dict[str, Any]:
             "historical_invalid_attempts": {
                 "available": True,
                 "count": len(failed_records),
-                "scope": "append-only qt4-attempt-v2 archives",
+                "scope": "append-only qt4-attempt-v3 archives",
             },
         },
         "model_visible_packet_bytes": _packet_byte_summary(

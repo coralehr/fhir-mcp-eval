@@ -195,8 +195,9 @@ class SyntheticQt4Run:
         self.controller = root / "controller" / "manifest.json"
         manifest = {
             "created_at": "2026-07-13T00:00:00+00:00",
-            "kind": "qt4_micro_interleaved_controller_manifest",
-            "schema_version": "qt4-controller-v2",
+            "kind": "qt4_interleaved_controller_manifest",
+            "schema_version": "qt4-controller-v3",
+            "transport_protocol": "separated-stdout-jsonl-stderr-v2",
             "question_ids": self.qids,
             "schedule": [
                 {"question_id": qid, "arm": arm}
@@ -272,10 +273,12 @@ class SyntheticQt4Run:
                     "".join(json.dumps(event) + "\n" for event in events),
                     encoding="utf-8",
                 )
+                (qdir / "stderr.log").write_bytes(b"")
                 audit = codex_harness.audit_event_log(qdir / "events.jsonl")
+                stderr_audit = codex_harness.audit_stderr(qdir / "stderr.log")
                 receipt = {
                     "kind": "qt4_attempt_completion",
-                    "schema_version": "qt4-attempt-v2",
+                    "schema_version": "qt4-attempt-v3",
                     "controller_manifest_sha256": self.controller_sha,
                     "arm": arm,
                     "question_id": qid,
@@ -288,10 +291,14 @@ class SyntheticQt4Run:
                     "returncode": 0,
                     "status": "answered",
                     "event_integrity": audit,
+                    "stderr_integrity": stderr_audit,
                     "usage": usage_value,
                     "answer_sha256": qt4_analysis.sha256_file(qdir / "answer.json"),
                     "event_log_sha256": qt4_analysis.sha256_file(
                         qdir / "events.jsonl"
+                    ),
+                    "stderr_log_sha256": qt4_analysis.sha256_file(
+                        qdir / "stderr.log"
                     ),
                     "prompt_sha256": qt4_analysis.sha256_file(qdir / "prompt.txt"),
                 }
@@ -565,6 +572,35 @@ class Qt4AnalysisTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "prompt does not match sealed"):
                 self.prepare(synthetic, grading_dir)
 
+    def test_self_consistent_nonempty_accepted_stderr_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            synthetic = SyntheticQt4Run(root)
+            question_dir = synthetic.run_dirs["a6a"] / "questions" / "q1"
+            stderr_path = question_dir / "stderr.log"
+            stderr_path.write_text("synthetic stderr noise\n", encoding="utf-8")
+            receipt_path = question_dir / "completion.json"
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            receipt["stderr_log_sha256"] = qt4_analysis.sha256_file(stderr_path)
+            receipt["stderr_integrity"] = codex_harness.audit_stderr(stderr_path)
+            write_json(receipt_path, receipt)
+
+            with self.assertRaisesRegex(ValueError, "accepted stderr integrity"):
+                self.prepare(synthetic, root / "grading")
+
+    def test_unregistered_controller_transport_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            synthetic = SyntheticQt4Run(root)
+            controller = json.loads(
+                synthetic.controller.read_text(encoding="utf-8")
+            )
+            controller["transport_protocol"] = "merged-stdout-stderr-v1"
+            write_json(synthetic.controller, controller)
+
+            with self.assertRaisesRegex(ValueError, "sealed QT-4 v3 transport"):
+                self.prepare(synthetic, root / "grading")
+
     def test_append_only_retry_usage_is_validated_and_counted(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -588,10 +624,14 @@ class Qt4AnalysisTests(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
+            failed_stderr = attempt_dir / "stderr.log"
+            failed_stderr.write_text(
+                "synthetic transport diagnostic\n", encoding="utf-8"
+            )
             attempt_path = attempt_dir / "attempt.json"
             receipt = {
                 "kind": "qt4_attempt_completion",
-                "schema_version": "qt4-attempt-v2",
+                "schema_version": "qt4-attempt-v3",
                 "controller_manifest_sha256": synthetic.controller_sha,
                 "arm": "a6a",
                 "question_id": "q1",
@@ -608,6 +648,8 @@ class Qt4AnalysisTests(unittest.TestCase):
                 "returncode": 1,
                 "status": "transient_failure",
                 "event_integrity": codex_harness.audit_event_log(failed_events),
+                "stderr_integrity": codex_harness.audit_stderr(failed_stderr),
+                "stderr_log_sha256": qt4_analysis.sha256_file(failed_stderr),
                 "usage": {
                     "input_tokens": 11,
                     "cached_input_tokens": 3,
@@ -618,7 +660,11 @@ class Qt4AnalysisTests(unittest.TestCase):
                     "events.jsonl": {
                         "path": str(failed_events),
                         "sha256": qt4_analysis.sha256_file(failed_events),
-                    }
+                    },
+                    "stderr.log": {
+                        "path": str(failed_stderr),
+                        "sha256": qt4_analysis.sha256_file(failed_stderr),
+                    },
                 },
                 "attempt_receipt_path": str(attempt_path),
             }
@@ -682,6 +728,8 @@ class Qt4AnalysisTests(unittest.TestCase):
                     "\n".join(json.dumps(event) for event in events) + "\n",
                     encoding="utf-8",
                 )
+                failed_stderr = attempt_dir / "stderr.log"
+                failed_stderr.write_bytes(b"")
                 audit = codex_harness.audit_event_log(failed_events)
                 marker_path = attempt_dir / "contamination.json"
                 write_json(marker_path, {**audit, "quarantine_path": None})
@@ -691,7 +739,7 @@ class Qt4AnalysisTests(unittest.TestCase):
                 )
                 receipt = {
                     "kind": "qt4_attempt_completion",
-                    "schema_version": "qt4-attempt-v2",
+                    "schema_version": "qt4-attempt-v3",
                     "controller_manifest_sha256": synthetic.controller_sha,
                     "arm": "a6a",
                     "question_id": "q1",
@@ -706,12 +754,22 @@ class Qt4AnalysisTests(unittest.TestCase):
                     "returncode": 1,
                     "status": "transient_failure",
                     "event_integrity": audit,
+                    "stderr_integrity": codex_harness.audit_stderr(
+                        failed_stderr
+                    ),
+                    "stderr_log_sha256": qt4_analysis.sha256_file(
+                        failed_stderr
+                    ),
                     "usage": {},
                     "answer_sha256": None,
                     "archived_files": {
                         "events.jsonl": {
                             "path": str(failed_events),
                             "sha256": qt4_analysis.sha256_file(failed_events),
+                        },
+                        "stderr.log": {
+                            "path": str(failed_stderr),
+                            "sha256": qt4_analysis.sha256_file(failed_stderr),
                         },
                         "contamination.json": {
                             "path": str(marker_path),
