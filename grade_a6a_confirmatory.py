@@ -20,7 +20,9 @@ import json
 import re
 from pathlib import Path
 
+import codex_harness
 from paired_stats import paired_summary
+from question_selection import load_scheduled_question_ids, select_question_rows
 
 # --- lifted from build_labels.py (see module docstring) ---
 NUM = re.compile(r"-?\d+\.?\d*")
@@ -98,10 +100,21 @@ def grade_arm(run_dir: Path, gold: dict[str, dict], *, answered_only: bool = Fal
     verdicts: dict[str, int] = {}
     panel: list[dict] = []
     for qid, row in gold.items():
-        answer_path = run_dir / "questions" / qid / "answer.json"
+        question_dir = run_dir / "questions" / qid
+        answer_path = question_dir / "answer.json"
+        if codex_harness.terminal_question_status(question_dir) == "contaminated":
+            verdicts[qid] = 0
+            continue
         if not answer_path.exists():
             if not answered_only:
                 verdicts[qid] = 0  # canonical: failures score 0
+            continue
+        event_log_path = answer_path.with_name("events.jsonl")
+        if codex_harness.audit_event_log(event_log_path)["contaminated"]:
+            # A schema-valid answer derived through a command/tool is not a
+            # frozen-packet answer. Canonical grading treats invalid attempts
+            # like other harness failures rather than crediting leaked data.
+            verdicts[qid] = 0
             continue
         ans = json.loads(answer_path.read_text())
         text = ans.get("answer") or ""
@@ -153,9 +166,20 @@ def main() -> int:
     ap.add_argument("--input", type=Path, default=Path("final_dataset/full_test409.csv"))
     ap.add_argument("--out", type=Path, default=Path("runs/a6a-confirmatory-grading"))
     ap.add_argument("--answered-only", action="store_true", help="partial progress view: skip unanswered instead of scoring 0 (never the final grading)")
+    ap.add_argument("--question-spec", type=Path, default=None, help="JSON list or object containing scheduled question_ids")
+    ap.add_argument("--question-id", action="append", default=[], help="restrict grading to this scheduled question ID (repeatable)")
     args = ap.parse_args()
 
-    gold = {r["question_id"]: r for r in csv.DictReader(args.input.open())}
+    try:
+        scheduled_ids = load_scheduled_question_ids(
+            spec_path=args.question_spec,
+            repeated_ids=args.question_id,
+        )
+        with args.input.open(newline="", encoding="utf-8") as handle:
+            all_gold = {r["question_id"]: r for r in csv.DictReader(handle)}
+        gold = select_question_rows(all_gold, scheduled_ids)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        ap.error(str(exc))
     args.out.mkdir(parents=True, exist_ok=True)
 
     arms = {"a6a": args.a6a_dir, "a0prime": args.a0prime_dir}
@@ -182,6 +206,9 @@ def main() -> int:
         "panel_pending": {k: len(v) for k, v in queues.items()},
         "paired": paired_summary(pairs) if len(pairs) >= 2 else None,
     }
+    if scheduled_ids is not None:
+        partial["scheduled_question_count"] = len(gold)
+        partial["explicit_question_schedule"] = True
     (args.out / "partial_summary.json").write_text(json.dumps(partial, indent=1) + "\n")
     print(json.dumps({k: v for k, v in partial.items() if k != "paired"}, indent=1))
     if partial["paired"]:

@@ -19,7 +19,7 @@ import math
 import re
 import urllib.parse
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 GOLD_FIELDS = {"true_answer", "true_fhir_ids", "sql_query", "proc_query"}
@@ -30,7 +30,112 @@ GOLD_FIELDS = {"true_answer", "true_fhir_ids", "sql_query", "proc_query"}
 # (adversarial review 2026-07-11, finding 1). Whitelist, not blacklist.
 QUESTION_ONLY_FIELDS = {"split", "question_id", "question", "assumption", "patient_fhir_id"}
 
+
+class PacketFetchError(RuntimeError):
+    """A redacted transport/incompleteness failure that invalidates a packet."""
+
 QO_PLANNER_VERSION = "qo-v2"
+A6A_MAX_TOTAL_RESOURCES = 200
+A6A_MAX_PACKET_CHARS = 160_000
+
+# Frozen QT-4V vocabulary. These tokens match the MIMIC-on-FHIR microbiology
+# parent Observation code displays (for example URINE CULTURE and MRSA SCREEN)
+# without reading benchmark-construction metadata.
+MICRO_VOCABULARY_VERSION = "micro-v1"
+MICRO_DISPATCHER_VERSION = "micro-dispatch-v1"
+MICRO_CODE_TEXT_TERMS = ("culture", "gram stain", "screen", "smear")
+MICRO_QUESTION_TERMS = (
+    "microbiolog",
+    "microbial",
+    "culture",
+    "specimen",
+    "organism",
+    "smear",
+    "gram stain",
+    "screen",
+)
+
+MICRO_TRAVERSAL_VERSION = "micro-traversal-v1"
+MICRO_TRAVERSAL_MAX_DEPTH = 2
+MICRO_TRAVERSAL_MAX_RESOURCES = 24
+MICRO_TRAVERSAL_MAX_SERIALIZED_BYTES = 24_000
+MICRO_TRAVERSAL_MAX_PATH_RECEIPTS = 48
+MICRO_TRAVERSAL_MAX_PATH_RECEIPT_BYTES = 12_000
+MICRO_TRAVERSAL_PATH_STATUSES = (
+    "fetched",
+    "already_present",
+    "missing",
+    "max_resources",
+    "max_serialized_bytes",
+)
+FHIR_ID_PATTERN = re.compile(r"[A-Za-z0-9\-.]{1,64}")
+
+# Explicit, forward FHIR references only. No reverse search, inferred edges, or
+# generic recursive walk is allowed in the QT-4T treatment.
+MICRO_REFERENCE_PATHS: dict[str, tuple[tuple[str, str], ...]] = {
+    "DiagnosticReport": (("result", "Observation"), ("specimen", "Specimen")),
+    "Observation": (("hasMember", "Observation"), ("specimen", "Specimen")),
+}
+
+QT_FEATURES = (
+    "include-pinning",
+    "endpoint-reserve",
+    "agg-summary",
+    "micro-vocab",
+    "micro-traversal",
+)
+REGISTERED_QT_ARMS = (
+    frozenset(),
+    frozenset({"include-pinning"}),
+    frozenset({"endpoint-reserve"}),
+    frozenset({"agg-summary"}),
+    frozenset({"micro-vocab"}),
+    frozenset({"micro-vocab", "micro-traversal"}),
+)
+
+
+def validate_qt_features(
+    features: set[str] | frozenset[str], *, planner: str
+) -> frozenset[str]:
+    normalized = frozenset(features)
+    unknown = normalized - set(QT_FEATURES)
+    if unknown:
+        raise ValueError(f"unknown features: {sorted(unknown)}; valid: {QT_FEATURES}")
+    if normalized not in REGISTERED_QT_ARMS:
+        raise ValueError(
+            f"feature set {sorted(normalized)} is not a registered QT arm; "
+            "run one single-feature arm or QT-4V/QT-4T"
+        )
+    if normalized and planner != "question-only":
+        raise ValueError("QT features require the question-only qo-v2 planner")
+    return normalized
+
+
+def resolve_a6a_root_bounds(
+    *,
+    planner: str,
+    max_total_resources: int | None,
+    max_packet_chars: int | None,
+) -> tuple[int | None, int | None]:
+    if planner != "question-only":
+        return max_total_resources, max_packet_chars
+    resolved_resources = (
+        A6A_MAX_TOTAL_RESOURCES if max_total_resources is None else max_total_resources
+    )
+    resolved_chars = A6A_MAX_PACKET_CHARS if max_packet_chars is None else max_packet_chars
+    if (
+        resolved_resources != A6A_MAX_TOTAL_RESOURCES
+        or resolved_chars != A6A_MAX_PACKET_CHARS
+    ):
+        raise ValueError(
+            "question-only packet builds require frozen A6a root bounds "
+            f"{A6A_MAX_TOTAL_RESOURCES} resources / {A6A_MAX_PACKET_CHARS} chars"
+        )
+    return resolved_resources, resolved_chars
+
+
+def is_microbiology_question(question: Any) -> bool:
+    return any(term in str(question or "").lower() for term in MICRO_QUESTION_TERMS)
 
 # Deterministic question-text -> resource-type mapping. Order matters only for
 # reporting; multiple groups may fire and are unioned.
@@ -444,27 +549,53 @@ def _query_for(resource_type: str, row: dict[str, Any], intent: dict[str, Any], 
     return f"{resource_type}?" + "&".join(parts)
 
 
-def build_search_plan(row: dict[str, Any], intent: dict[str, Any] | None = None, *, count: int = 100) -> list[dict[str, Any]]:
+def build_search_plan(
+    row: dict[str, Any],
+    intent: dict[str, Any] | None = None,
+    *,
+    count: int = 100,
+    features: set[str] | frozenset[str] = frozenset(),
+) -> list[dict[str, Any]]:
     intent = intent or infer_intent(row)
+    planner = "question-only" if intent.get("planner") == QO_PLANNER_VERSION else str(intent.get("planner"))
+    features = validate_qt_features(features, planner=planner)
     plan = []
+    micro_vocab = "micro-vocab" in features and is_microbiology_question(row.get("question"))
     for resource_type in intent["resource_types"]:
         if intent["temporal_policy"] == "first_last" and resource_type != "Patient":
             sorts = ["date", "-date"]
         else:
             sorts = ["-date"] if resource_type in RESOURCE_DATE_PARAM else [None]
-        for sort in sorts:
-            path = _query_for(resource_type, row, intent, count=count, sort=sort)
-            item = {
-                "resource_type": resource_type,
-                "path": path,
-                "reason": (
-                    "question-only selection (whitelisted fields: question, patient, assumption)"
-                    if intent.get("planner") == QO_PLANNER_VERSION
-                    else "query-aware selection from benchmark-construction metadata (oracle ceiling)"
-                ),
-            }
-            if item not in plan:
-                plan.append(item)
+        terms: tuple[str | None, ...] = (
+            MICRO_CODE_TEXT_TERMS if micro_vocab and resource_type == "Observation" else (None,)
+        )
+        for term in terms:
+            query_intent = intent
+            if term is not None:
+                query_intent = {**intent, "search_terms": [term]}
+            for sort in sorts:
+                path = _query_for(resource_type, row, query_intent, count=count, sort=sort)
+                item = {
+                    "resource_type": resource_type,
+                    "path": path,
+                    "reason": (
+                        f"fixed microbiology display vocabulary ({MICRO_VOCABULARY_VERSION})"
+                        if term is not None
+                        else (
+                            "question-only selection (whitelisted fields: question, patient, assumption)"
+                            if intent.get("planner") == QO_PLANNER_VERSION
+                            else "query-aware selection from benchmark-construction metadata (oracle ceiling)"
+                        )
+                    ),
+                }
+                if term is not None:
+                    # The four-query union is the complete QT-4V vocabulary
+                    # treatment. Relaxing each miss to a bare Observation
+                    # search would reintroduce the lab-volume failure it is
+                    # designed to isolate.
+                    item["relaxation_policy"] = "none"
+                if item not in plan:
+                    plan.append(item)
     return plan
 
 
@@ -486,6 +617,167 @@ def _dedupe_resources(resources: list[dict[str, Any]]) -> list[dict[str, Any]]:
         seen.add(key)
         out.append(resource)
     return out
+
+
+def _allowed_reference_edges(resource: dict[str, Any]) -> list[tuple[str, str, str]]:
+    """Return deterministic (source, JSON path, target) exact-reference edges."""
+    source = _resource_id(resource)
+    if source is None:
+        return []
+    source_type = str(resource.get("resourceType") or "")
+    edges = []
+    for field, target_type in MICRO_REFERENCE_PATHS.get(source_type, ()):
+        raw = resource.get(field)
+        values = raw if isinstance(raw, list) else [raw]
+        for index, value in enumerate(values):
+            if not isinstance(value, dict):
+                continue
+            reference = value.get("reference")
+            if not isinstance(reference, str):
+                continue
+            match = re.fullmatch(r"([A-Za-z][A-Za-z0-9]*)/([^/?#]+)", reference)
+            if (
+                match is None
+                or match.group(1) != target_type
+                or FHIR_ID_PATTERN.fullmatch(match.group(2)) is None
+            ):
+                continue
+            suffix = f"[{index}]" if isinstance(raw, list) else ""
+            edges.append((source, f"{source_type}.{field}{suffix}.reference", reference))
+    return sorted(edges)
+
+
+def traverse_exact_references(
+    roots: list[dict[str, Any]],
+    *,
+    fetch_by_ids: Callable[[str, list[str]], list[dict[str, Any]]],
+    max_depth: int = MICRO_TRAVERSAL_MAX_DEPTH,
+    max_resources: int = MICRO_TRAVERSAL_MAX_RESOURCES,
+    max_serialized_bytes: int = MICRO_TRAVERSAL_MAX_SERIALIZED_BYTES,
+    max_path_receipts: int = MICRO_TRAVERSAL_MAX_PATH_RECEIPTS,
+    max_path_receipt_bytes: int = MICRO_TRAVERSAL_MAX_PATH_RECEIPT_BYTES,
+) -> dict[str, Any]:
+    """Follow the frozen QT-4T reference allowlist with hard deterministic bounds.
+
+    `fetch_by_ids` is the fetch-by-id seam used by both the real FHIR client and
+    zero-model tests. Bounds cover unique target fetch attempts and serialized
+    bytes added to the packet; root resources are governed by the base A6a cap.
+    """
+    if any(
+        bound < 0
+        for bound in (
+            max_depth,
+            max_resources,
+            max_serialized_bytes,
+            max_path_receipts,
+            max_path_receipt_bytes,
+        )
+    ):
+        raise ValueError("traversal bounds must be non-negative")
+    if max_path_receipt_bytes < len(_json([]).encode("utf-8")):
+        raise ValueError("max_path_receipt_bytes must be at least 2 for the empty JSON array")
+
+    roots_by_id = {
+        rid: resource
+        for resource in roots
+        if (rid := _resource_id(resource)) is not None
+    }
+    seen = set(roots_by_id)
+    requested: set[str] = set()
+    added: dict[str, dict[str, Any]] = {}
+    receipts: list[dict[str, Any]] = []
+    receipts_omitted = 0
+    status_counts = {status: 0 for status in MICRO_TRAVERSAL_PATH_STATUSES}
+    serialized_bytes = 0
+    frontier = [roots_by_id[rid] for rid in sorted(roots_by_id)]
+
+    for depth in range(1, max_depth + 1):
+        edges = sorted(edge for resource in frontier for edge in _allowed_reference_edges(resource))
+        if not edges:
+            break
+
+        fetchable = []
+        for _, _, target in edges:
+            if target in seen or target in requested or target in fetchable:
+                continue
+            if len(requested) + len(fetchable) >= max_resources:
+                continue
+            fetchable.append(target)
+
+        fetched: dict[str, dict[str, Any]] = {}
+        by_type: dict[str, list[str]] = {}
+        for target in fetchable:
+            resource_type, resource_id = target.split("/", 1)
+            by_type.setdefault(resource_type, []).append(resource_id)
+        for resource_type in sorted(by_type):
+            ids = sorted(by_type[resource_type])
+            requested.update(f"{resource_type}/{resource_id}" for resource_id in ids)
+            for resource in fetch_by_ids(resource_type, ids):
+                rid = _resource_id(resource)
+                if rid in requested and rid not in fetched:
+                    fetched[rid] = project_resource(resource)
+
+        next_frontier: dict[str, dict[str, Any]] = {}
+        for source, path, target in edges:
+            if target in seen:
+                status = "already_present"
+            elif target not in requested:
+                status = "max_resources"
+            elif target not in fetched:
+                status = "missing"
+            else:
+                candidate = fetched[target]
+                candidate_bytes = len(_json(candidate).encode("utf-8"))
+                if serialized_bytes + candidate_bytes > max_serialized_bytes:
+                    status = "max_serialized_bytes"
+                else:
+                    status = "fetched"
+                    seen.add(target)
+                    added[target] = candidate
+                    next_frontier[target] = candidate
+                    serialized_bytes += candidate_bytes
+            status_counts[status] += 1
+            receipt = {
+                "depth": depth,
+                "from": source,
+                "path": path,
+                "to": target,
+                "status": status,
+            }
+            candidate_receipts = receipts + [receipt]
+            if (
+                len(candidate_receipts) > max_path_receipts
+                or len(_json(candidate_receipts).encode("utf-8")) > max_path_receipt_bytes
+            ):
+                receipts_omitted += 1
+            else:
+                receipts.append(receipt)
+        frontier = [next_frontier[rid] for rid in sorted(next_frontier)]
+        if not frontier:
+            break
+
+    return {
+        "kind": "bounded_exact_reference_traversal",
+        "version": MICRO_TRAVERSAL_VERSION,
+        "limits": {
+            "max_depth": max_depth,
+            "max_resources": max_resources,
+            "max_serialized_bytes": max_serialized_bytes,
+            "max_path_receipts": max_path_receipts,
+            "max_path_receipt_bytes": max_path_receipt_bytes,
+        },
+        "stats": {
+            "fetch_attempt_count": len(requested),
+            "added_resource_count": len(added),
+            "added_serialized_bytes": serialized_bytes,
+            "path_receipt_count": len(receipts),
+            "path_receipt_serialized_bytes": len(_json(receipts).encode("utf-8")),
+            "path_receipts_omitted": receipts_omitted,
+            "path_status_counts": status_counts,
+        },
+        "resources": [added[rid] for rid in sorted(added)],
+        "path_receipts": receipts,
+    }
 
 
 def _resource_clinical_date(resource: dict[str, Any]) -> str:
@@ -528,8 +820,6 @@ def blunt_bound(resources: list[dict[str, Any]], *, per_type_cap: int = BLUNT_PE
     }
     return selected, stats
 
-
-QT_FEATURES = ("include-pinning", "endpoint-reserve", "agg-summary")
 
 # Reference targets that ride _include and must never be independently evicted
 # (adversarial review 2026-07-12, single-feature arm 1).
@@ -704,6 +994,11 @@ def bound_resources(
             order = list(reversed(items))  # newest first
         ordered_by_type[rtype] = order
 
+    patient_chars = sum(len(_json(resource)) for resource in patients)
+    if len(patients) > max_total_resources or patient_chars > max_packet_chars:
+        raise ValueError(
+            "Patient resources exceed the frozen packet count/character bounds"
+        )
     selected: list[dict[str, Any]] = list(patients)
     chars = sum(len(_json(r)) for r in selected)
     budget_hit = False
@@ -718,7 +1013,7 @@ def bound_resources(
             while cursors[rtype] < min(reserve_n, len(order)) and len(selected) < max_total_resources:
                 candidate = order[cursors[rtype]]
                 candidate_chars = len(_json(candidate))
-                if chars + candidate_chars > max_packet_chars and selected:
+                if chars + candidate_chars > max_packet_chars:
                     budget_hit = True
                     break
                 selected.append(candidate)
@@ -736,7 +1031,7 @@ def bound_resources(
                 continue
             candidate = ordered_by_type[rtype][i]
             candidate_chars = len(_json(candidate))
-            if chars + candidate_chars > max_packet_chars and selected:
+            if chars + candidate_chars > max_packet_chars:
                 budget_hit = True
                 cursors[rtype] = len(ordered_by_type[rtype])  # this type is done
                 continue
@@ -785,31 +1080,95 @@ def relax_query(path: str) -> str | None:
     return None
 
 
-def fetch_resources(plan: list[dict[str, Any]], *, per_query_cap: int | None = None) -> dict[str, list[dict[str, Any]]]:
-    from fhir_client import get_fhir_client
+def _safe_fetch_error(exc: Exception) -> dict[str, Any]:
+    """Extract stable failure metadata without exception text, URLs, or bodies."""
+    status = getattr(exc, "status_code", None)
+    if not isinstance(status, int):
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None)
+    if not isinstance(status, int):
+        code = getattr(exc, "code", None)
+        status = code if isinstance(code, int) else None
+    error: dict[str, Any] = {"type": type(exc).__name__}
+    if status is not None:
+        error["http_status"] = status
+    return error
 
-    client = get_fhir_client()
+
+def fetch_resources(
+    plan: list[dict[str, Any]],
+    *,
+    per_query_cap: int | None = None,
+    client: Any | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    if client is None:
+        from fhir_client import get_fhir_client
+
+        client = get_fhir_client()
     out = {}
     for item in plan:
         path = item["path"]
-        attempts = []
+        relaxation_attempts: list[dict[str, Any]] = []
+        initial_result_count: int | None = None
         resources: list[dict[str, Any]] = []
-        try:
-            current: str | None = path
-            while current is not None:
-                attempts.append(current)
-                resources = client.search_with_pagination(current)
-                if resources:
-                    break
-                current = relax_query(current)
-            if per_query_cap is not None and len(resources) > per_query_cap:
-                # `_sort` on the query makes this a meaningful prefix, not a random slice.
-                resources = resources[:per_query_cap]
-            out[path] = resources
-        except Exception as exc:
-            out[path] = [{"resourceType": "OperationOutcome", "issue": [{"diagnostics": str(exc)}]}]
-        if len(attempts) > 1:
-            item["relaxation_attempts"] = attempts[1:]
+        current: str | None = path
+        attempt_index = 0
+        while current is not None:
+            try:
+                resources = client.search_with_pagination(
+                    current, max_results=per_query_cap
+                )
+            except Exception as exc:
+                error = _safe_fetch_error(exc)
+                receipt: dict[str, Any] = {
+                    "status": "http_error" if "http_status" in error else "error",
+                    "initial_result_count": initial_result_count,
+                    "relaxation_attempts": relaxation_attempts,
+                    "pre_bound_count": 0,
+                    "retained_count": 0,
+                    "dropped_count": 0,
+                    "error": error,
+                }
+                item["fetch_receipt"] = receipt
+                status_suffix = (
+                    f" HTTP {error['http_status']}" if "http_status" in error else ""
+                )
+                raise PacketFetchError(
+                    f"FHIR packet fetch failed: {error['type']}{status_suffix}"
+                ) from None
+            result_count = len(resources)
+            if attempt_index == 0:
+                initial_result_count = result_count
+            else:
+                relaxation_attempts.append(
+                    {"path": current, "result_count": result_count}
+                )
+            if resources:
+                break
+            current = (
+                None
+                if item.get("relaxation_policy") == "none"
+                else relax_query(current)
+            )
+            attempt_index += 1
+
+        pre_bound_count = len(resources)
+        if per_query_cap is not None and len(resources) > per_query_cap:
+            resources = resources[:per_query_cap]
+        retained_count = len(resources)
+        out[path] = resources
+        if relaxation_attempts:
+            item["relaxation_attempts"] = [
+                attempt["path"] for attempt in relaxation_attempts
+            ]
+        item["fetch_receipt"] = {
+            "status": "ok",
+            "initial_result_count": initial_result_count,
+            "relaxation_attempts": relaxation_attempts,
+            "pre_bound_count": pre_bound_count,
+            "retained_count": retained_count,
+            "dropped_count": pre_bound_count - retained_count,
+        }
     return out
 
 
@@ -824,7 +1183,14 @@ def build_packet_record(
     max_packet_chars: int | None = None,
     plan: list[dict[str, Any]] | None = None,
     features: set[str] | frozenset[str] = frozenset(),
+    reference_fetcher: Callable[[str, list[str]], list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
+    features = validate_qt_features(features, planner=planner)
+    max_total_resources, max_packet_chars = resolve_a6a_root_bounds(
+        planner=planner,
+        max_total_resources=max_total_resources,
+        max_packet_chars=max_packet_chars,
+    )
     if planner == "question-only":
         safe = {k: row.get(k) for k in QUESTION_ONLY_FIELDS}
         intent = qo_infer_intent(safe)
@@ -839,7 +1205,7 @@ def build_packet_record(
         kind = "a6_metadata_oracle_packet"
     # Accept the caller's (possibly relaxation-annotated) plan so fetch-time
     # metadata survives into the packet; rebuild only if none was given.
-    plan = plan if plan is not None else build_search_plan(safe, intent, count=count)
+    plan = plan if plan is not None else build_search_plan(safe, intent, count=count, features=features)
     resources_by_query = resources_by_query or {}
     resources = []
     for item in plan:
@@ -857,17 +1223,49 @@ def build_packet_record(
             max_packet_chars=max_packet_chars,
             endpoint_reserve="endpoint-reserve" in features,
         )
+    root_fetch_receipt = None
+    if not plan_only:
+        root_fetch_receipt = {
+            "pre_bound_count": len(universe),
+            "retained_count": len(resources),
+            "dropped_count": len(universe) - len(resources),
+        }
     pinned_count = 0
     if not plan_only and "include-pinning" in features:
         resources, pinned_count = pin_reference_targets(resources, universe)
     summary_block: dict[str, Any] | None = None
     if not plan_only and "agg-summary" in features:
         summary_block = aggregate_summary([project_resource(r) for r in universe])
+    reference_traversal: dict[str, Any] | None = None
+    if (
+        not plan_only
+        and "micro-traversal" in features
+        and is_microbiology_question(safe.get("question"))
+    ):
+        if reference_fetcher is None:
+            raise ValueError("micro-traversal requires a reference_fetcher")
+        traversal = traverse_exact_references(resources, fetch_by_ids=reference_fetcher)
+        resources = _dedupe_resources(resources + traversal["resources"])
+        # Keep a complete audit receipt even when no eligible edge exists. The
+        # zero-edge outcome is part of the frozen traversal contract and lets
+        # the preflight gate distinguish "ran and found nothing" from "did not
+        # run" without exposing bookkeeping to the answering model.
+        reference_traversal = {
+            key: value for key, value in traversal.items() if key != "resources"
+        }
     resource_ids = [rid for rid in (_resource_id(r) for r in resources) if rid]
+    applied_features = features
+    if features and features.issubset({"micro-vocab", "micro-traversal"}) and not is_microbiology_question(
+        safe.get("question")
+    ):
+        # Arm identity remains in the manifest. A question where QT-4 does not
+        # dispatch stores the literal A6a packet, making both packet SHA and
+        # model prompt byte-identical without synthetic hash normalization.
+        applied_features = frozenset()
     packet = {
         "kind": kind,
         "planner": intent.get("planner"),
-        "features": sorted(features),
+        "features": sorted(applied_features),
         "pinned_reference_targets": pinned_count,
         "aggregate_summary": summary_block,
         "plan_only": plan_only,
@@ -876,7 +1274,10 @@ def build_packet_record(
         "source_resource_ids": [] if plan_only else sorted(resource_ids),
         "source_queries": plan,
         "bounds": bounds_stats,
+        "root_fetch_receipt": root_fetch_receipt,
     }
+    if reference_traversal is not None:
+        packet["reference_traversal"] = reference_traversal
     packet["sha256"] = sha256_text(_json(packet))
     return {
         "question_id": safe.get("question_id"),
@@ -888,11 +1289,35 @@ def build_packet_record(
     }
 
 
-def load_rows(input_path: Path, *, limit: int | None = None, split: str | None = "test") -> list[dict[str, Any]]:
+def load_question_ids(path: Path) -> list[str]:
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict) or not isinstance(value.get("question_ids"), list):
+        raise ValueError("question spec must contain question_ids")
+    question_ids = [str(item) for item in value["question_ids"]]
+    if not question_ids or len(question_ids) != len(set(question_ids)):
+        raise ValueError("question spec IDs must be non-empty and unique")
+    return question_ids
+
+
+def load_rows(
+    input_path: Path,
+    *,
+    limit: int | None = None,
+    split: str | None = "test",
+    question_ids: list[str] | None = None,
+) -> list[dict[str, Any]]:
     with input_path.open(newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
     if split:
         rows = [r for r in rows if r.get("split") == split]
+    if question_ids is not None:
+        by_id = {str(row.get("question_id")): row for row in rows}
+        missing = [question_id for question_id in question_ids if question_id not in by_id]
+        if missing:
+            raise ValueError(
+                f"question spec contains {len(missing)} IDs missing from input"
+            )
+        rows = [by_id[question_id] for question_id in question_ids]
     if limit is not None:
         rows = rows[:limit]
     return rows
@@ -906,6 +1331,15 @@ def write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
 
 
 def write_manifest(path: Path, *, input_path: Path, output_path: Path, args: argparse.Namespace, records: list[dict[str, Any]]) -> None:
+    features = validate_qt_features(
+        {f.strip() for f in getattr(args, "features", "").split(",") if f.strip()},
+        planner=getattr(args, "planner", "metadata-oracle"),
+    )
+    max_total_resources, max_packet_chars = resolve_a6a_root_bounds(
+        planner=getattr(args, "planner", "metadata-oracle"),
+        max_total_resources=getattr(args, "max_total_resources", None),
+        max_packet_chars=getattr(args, "max_packet_chars", None),
+    )
     manifest = {
         "created_at": dt.datetime.now(dt.UTC).isoformat(),
         "kind": "a6_query_aware_packet_manifest",
@@ -916,11 +1350,48 @@ def write_manifest(path: Path, *, input_path: Path, output_path: Path, args: arg
             "count": args.count,
             "plan_only": args.plan_only,
             "split": args.split,
+            "question_spec": (
+                {
+                    "path": str(args.question_spec),
+                    "sha256": sha256_file(args.question_spec),
+                }
+                if getattr(args, "question_spec", None)
+                else None
+            ),
             "planner": getattr(args, "planner", "metadata-oracle"),
-            "features": sorted({f.strip() for f in getattr(args, "features", "").split(",") if f.strip()}),
+            "features": sorted(features),
             "planner_version": QO_PLANNER_VERSION if getattr(args, "planner", "") == "question-only" else "metadata-v1",
-            "max_total_resources": getattr(args, "max_total_resources", None),
-            "max_packet_chars": getattr(args, "max_packet_chars", None),
+            "max_total_resources": max_total_resources,
+            "max_packet_chars": max_packet_chars,
+            "micro_vocabulary": (
+                {"version": MICRO_VOCABULARY_VERSION, "code_text_terms": list(MICRO_CODE_TEXT_TERMS)}
+                if "micro-vocab" in features
+                else None
+            ),
+            "micro_dispatcher": (
+                {
+                    "version": MICRO_DISPATCHER_VERSION,
+                    "question_terms": list(MICRO_QUESTION_TERMS),
+                }
+                if "micro-vocab" in features
+                else None
+            ),
+            "reference_traversal": (
+                {
+                    "version": MICRO_TRAVERSAL_VERSION,
+                    "paths": {
+                        source: [f"{field} -> {target}" for field, target in paths]
+                        for source, paths in MICRO_REFERENCE_PATHS.items()
+                    },
+                    "max_depth": MICRO_TRAVERSAL_MAX_DEPTH,
+                    "max_resources": MICRO_TRAVERSAL_MAX_RESOURCES,
+                    "max_serialized_bytes": MICRO_TRAVERSAL_MAX_SERIALIZED_BYTES,
+                    "max_path_receipts": MICRO_TRAVERSAL_MAX_PATH_RECEIPTS,
+                    "max_path_receipt_bytes": MICRO_TRAVERSAL_MAX_PATH_RECEIPT_BYTES,
+                }
+                if "micro-traversal" in features
+                else None
+            ),
         },
         "questions": len(records),
         "packet_hashes": {str(r["question_id"]): r["packet"]["sha256"] for r in records},
@@ -936,6 +1407,12 @@ def main() -> int:
     parser.add_argument("--manifest", type=Path, default=Path("runs/a6_query_aware_manifest.json"))
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--split", default="test")
+    parser.add_argument(
+        "--question-spec",
+        type=Path,
+        default=None,
+        help="optional frozen JSON question_ids schedule to build in exact order",
+    )
     parser.add_argument("--count", type=int, default=100)
     parser.add_argument("--plan-only", action="store_true")
     parser.add_argument(
@@ -944,8 +1421,8 @@ def main() -> int:
         default="question-only",
         help="question-only = A6a primary arm (whitelist: question/patient/assumption); metadata-oracle = ceiling arm using benchmark-construction metadata; blunt-projection = A0' control (query-blind, per-type recency cap)",
     )
-    parser.add_argument("--max-total-resources", type=int, default=120)
-    parser.add_argument("--max-packet-chars", type=int, default=100_000)
+    parser.add_argument("--max-total-resources", type=int, default=A6A_MAX_TOTAL_RESOURCES)
+    parser.add_argument("--max-packet-chars", type=int, default=A6A_MAX_PACKET_CHARS)
     parser.add_argument(
         "--features",
         default="",
@@ -953,23 +1430,56 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    features = {f.strip() for f in args.features.split(",") if f.strip()}
-    unknown = features - set(QT_FEATURES)
-    if unknown:
-        raise SystemExit(f"unknown features: {sorted(unknown)}; valid: {QT_FEATURES}")
-    rows = load_rows(args.input, limit=args.limit, split=args.split)
+    try:
+        features = validate_qt_features(
+            {f.strip() for f in args.features.split(",") if f.strip()},
+            planner=args.planner,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
+    try:
+        args.max_total_resources, args.max_packet_chars = resolve_a6a_root_bounds(
+            planner=args.planner,
+            max_total_resources=args.max_total_resources,
+            max_packet_chars=args.max_packet_chars,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
+    try:
+        question_ids = (
+            load_question_ids(args.question_spec) if args.question_spec else None
+        )
+        rows = load_rows(
+            args.input,
+            limit=args.limit,
+            split=args.split,
+            question_ids=question_ids,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        parser.error(str(exc))
     records = []
+    client = None
+    if not args.plan_only:
+        from fhir_client import get_fhir_client
+
+        client = get_fhir_client()
+    reference_fetcher = None
+    if client is not None and "micro-traversal" in features:
+        def fetch_references(resource_type: str, ids: list[str]) -> list[dict[str, Any]]:
+            return client.get_resources_by_resource_ids(resource_type, ids, max_size=len(ids))
+
+        reference_fetcher = fetch_references
     for row in rows:
         if args.planner == "question-only":
             qrow = {k: row.get(k) for k in QUESTION_ONLY_FIELDS}
-            plan = build_search_plan(qrow, qo_infer_intent(qrow), count=args.count)
+            plan = build_search_plan(qrow, qo_infer_intent(qrow), count=args.count, features=features)
         elif args.planner == "blunt-projection":
             qrow = {k: row.get(k) for k in QUESTION_ONLY_FIELDS}
-            plan = build_search_plan(qrow, blunt_infer_intent(qrow), count=args.count)
+            plan = build_search_plan(qrow, blunt_infer_intent(qrow), count=args.count, features=features)
         else:
-            plan = build_search_plan(row, count=args.count)
+            plan = build_search_plan(row, count=args.count, features=features)
         per_query_cap = 4 * BLUNT_PER_TYPE_CAP if args.planner == "blunt-projection" else 4 * args.max_total_resources
-        resources = {} if args.plan_only else fetch_resources(plan, per_query_cap=per_query_cap)
+        resources = {} if args.plan_only else fetch_resources(plan, per_query_cap=per_query_cap, client=client)
         records.append(
             build_packet_record(
                 row,
@@ -981,6 +1491,7 @@ def main() -> int:
                 max_packet_chars=args.max_packet_chars,
                 plan=plan,
                 features=features,
+                reference_fetcher=reference_fetcher,
             )
         )
     write_jsonl(args.output, records)

@@ -8,13 +8,16 @@ follow-up (prereg §5 / ROADMAP item 15).
 
 Usage:
   python3 panel_grade.py --queue runs/a6a-confirmatory-grading/panel_queue.jsonl \
-      --cache runs/a6a-confirmatory-grading/panel_votes.json --live
+      --cache runs/a6a-confirmatory-grading/panel_votes.json \
+      --model gpt-5.6-sol --reasoning-effort high --live
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -62,26 +65,290 @@ Return JSON: {"verdicts": [{"item_id": "...", "correct": true|false}, ...]} cove
 ITEMS:
 """
 
+CACHE_FORMAT_VERSION = "panel-cache-v2"
+JUDGE_PROTOCOL_VERSION = "panel-judge-v2"
+ORDERING_VERSION = "opaque-round-robin-v1"
+OPAQUE_ID_VERSION = "opaque-content-config-v1"
+
+
+def _canonical_json(value: object) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _sha256_json(value: object) -> str:
+    return _sha256_text(_canonical_json(value))
+
 
 def load_queue(path: Path) -> list[dict]:
-    return [json.loads(line) for line in path.open()]
+    with path.open(encoding="utf-8") as handle:
+        return [json.loads(line) for line in handle if line.strip()]
 
 
-def cache_key(item: dict) -> str:
-    return f"{item['arm']}|{item['question_id']}"
+def build_judge_config(
+    *,
+    model: str,
+    effort: str,
+    batch_size: int,
+    votes: int,
+    timeout: int,
+    codex_bin: str,
+    codex_version: str,
+) -> dict:
+    """Return every pinned input that can affect a cached panel vote."""
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive")
+    if votes < 1:
+        raise ValueError("votes must be positive")
+    if timeout < 1:
+        raise ValueError("timeout must be positive")
+    if not model or not effort:
+        raise ValueError("model and reasoning effort must be explicit")
+    if not codex_bin or not codex_version:
+        raise ValueError("codex binary and version must be explicit")
+    return {
+        "judge_protocol_version": JUDGE_PROTOCOL_VERSION,
+        "opaque_id_version": OPAQUE_ID_VERSION,
+        "ordering_version": ORDERING_VERSION,
+        "judge_preamble_sha256": _sha256_text(JUDGE_PREAMBLE),
+        "output_schema_sha256": _sha256_json(BATCH_SCHEMA),
+        "model": model,
+        "reasoning_effort": effort,
+        "batch_size": batch_size,
+        "requested_votes": votes,
+        "timeout_seconds": timeout,
+        "codex_binary": codex_bin,
+        "codex_version": codex_version,
+    }
 
 
-def batch_prompt(batch: list[tuple[str, dict]]) -> str:
+def _judge_payload(item: dict) -> dict:
+    return {
+        "question": item.get("question"),
+        "gold": item.get("gold"),
+        "model_answer": item.get("answer"),
+        "insufficiency_reason": item.get("insufficiency_reason"),
+    }
+
+
+def prepare_blinded_items(queue: list[dict], judge_config: dict) -> list[dict]:
+    """Bind host identity and judged content to opaque, model-visible IDs."""
+    config_sha256 = _sha256_json(judge_config)
+    seen_hosts: set[tuple[str, str]] = set()
+    seen_opaque: set[str] = set()
+    blinded: list[dict] = []
+    for item in queue:
+        arm = item.get("arm")
+        question_id = item.get("question_id")
+        if not isinstance(arm, str) or not arm:
+            raise ValueError("every panel item requires a non-empty string arm")
+        if not isinstance(question_id, str) or not question_id:
+            raise ValueError(
+                "every panel item requires a non-empty string question_id"
+            )
+        if "|" in arm or "|" in question_id:
+            raise ValueError("arm and question_id cannot contain '|'")
+        host = {"arm": arm, "question_id": question_id}
+        host_tuple = (arm, question_id)
+        if host_tuple in seen_hosts:
+            raise ValueError(f"duplicate panel queue item: {arm}|{question_id}")
+        seen_hosts.add(host_tuple)
+
+        payload = _judge_payload(item)
+        content_binding = {
+            "binding_version": OPAQUE_ID_VERSION,
+            "host": host,
+            "judge_payload": payload,
+        }
+        content_sha256 = _sha256_json(content_binding)
+        opaque_digest = _sha256_json(
+            {
+                "content_sha256": content_sha256,
+                "judge_config_sha256": config_sha256,
+            }
+        )
+        opaque_id = f"panel_{opaque_digest[:32]}"
+        if opaque_id in seen_opaque:
+            raise ValueError("opaque panel item ID collision")
+        seen_opaque.add(opaque_id)
+        blinded.append(
+            {
+                "opaque_id": opaque_id,
+                "host": host,
+                "judge_payload": payload,
+                "content_sha256": content_sha256,
+            }
+        )
+    return blinded
+
+
+def deterministic_interleave(
+    items: list[dict], *, vote_round: int
+) -> list[dict]:
+    """Deterministically shuffle within arms, then round-robin across arms."""
+    by_arm: dict[str, list[dict]] = {}
+    for item in items:
+        by_arm.setdefault(item["host"]["arm"], []).append(item)
+    for arm_items in by_arm.values():
+        arm_items.sort(
+            key=lambda item: _sha256_json(
+                {
+                    "ordering_version": ORDERING_VERSION,
+                    "vote_round": vote_round,
+                    "opaque_id": item["opaque_id"],
+                }
+            )
+        )
+    arms = sorted(
+        by_arm,
+        key=lambda arm: _sha256_json(
+            {
+                "ordering_version": ORDERING_VERSION,
+                "vote_round": vote_round,
+                "arm": arm,
+            }
+        ),
+    )
+    interleaved: list[dict] = []
+    positions = {arm: 0 for arm in arms}
+    while len(interleaved) < len(items):
+        for arm in arms:
+            position = positions[arm]
+            if position < len(by_arm[arm]):
+                interleaved.append(by_arm[arm][position])
+                positions[arm] += 1
+    return interleaved
+
+
+def build_cache_manifest(blinded_items: list[dict], judge_config: dict) -> dict:
+    bindings = sorted(
+        (
+            {
+                "opaque_id": item["opaque_id"],
+                "host": item["host"],
+                "content_sha256": item["content_sha256"],
+            }
+            for item in blinded_items
+        ),
+        key=lambda binding: binding["opaque_id"],
+    )
+    return {
+        "cache_format_version": CACHE_FORMAT_VERSION,
+        "judge_config": judge_config,
+        "judge_config_sha256": _sha256_json(judge_config),
+        "queue_binding_sha256": _sha256_json(bindings),
+        "item_count": len(bindings),
+    }
+
+
+def new_cache(manifest: dict, blinded_items: list[dict]) -> dict:
+    return {
+        "format_version": CACHE_FORMAT_VERSION,
+        "manifest": manifest,
+        "items": {
+            item["opaque_id"]: {
+                "host": item["host"],
+                "content_sha256": item["content_sha256"],
+                "votes": [],
+            }
+            for item in sorted(blinded_items, key=lambda value: value["opaque_id"])
+        },
+    }
+
+
+def load_or_initialize_cache(
+    path: Path, manifest: dict, blinded_items: list[dict]
+) -> dict:
+    expected = new_cache(manifest, blinded_items)
+    if not path.exists():
+        return expected
+    loaded = json.loads(path.read_text(encoding="utf-8"))
+    if (
+        not isinstance(loaded, dict)
+        or loaded.get("format_version") != CACHE_FORMAT_VERSION
+    ):
+        raise ValueError(
+            "legacy or unsupported panel cache; use a new --cache path "
+            "instead of reusing unbound votes"
+        )
+    if loaded.get("manifest") != manifest:
+        raise ValueError(
+            "panel cache manifest mismatch; content or judge configuration "
+            "changed, so use a new --cache path"
+        )
+    loaded_items = loaded.get("items")
+    expected_items = expected["items"]
+    if not isinstance(loaded_items, dict) or set(loaded_items) != set(
+        expected_items
+    ):
+        raise ValueError("panel cache item bindings do not match the queue")
+    requested_votes = int(manifest["judge_config"]["requested_votes"])
+    for opaque_id, expected_item in expected_items.items():
+        loaded_item = loaded_items.get(opaque_id)
+        if not isinstance(loaded_item, dict):
+            raise ValueError(f"invalid panel cache item {opaque_id}")
+        if loaded_item.get("host") != expected_item["host"] or loaded_item.get(
+            "content_sha256"
+        ) != expected_item["content_sha256"]:
+            raise ValueError(f"panel cache item binding mismatch for {opaque_id}")
+        cached_votes = loaded_item.get("votes")
+        if (
+            not isinstance(cached_votes, list)
+            or any(type(vote) is not bool for vote in cached_votes)
+            or len(cached_votes) > requested_votes
+        ):
+            raise ValueError(f"invalid cached votes for {opaque_id}")
+    return loaded
+
+
+def write_cache(path: Path, cache: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        "w",
+        encoding="utf-8",
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        delete=False,
+    ) as handle:
+        json.dump(cache, handle, indent=1, sort_keys=True)
+        handle.write("\n")
+        temporary_path = Path(handle.name)
+    temporary_path.replace(path)
+
+
+def majority_verdicts(cache: dict, *, required_votes: int) -> dict[str, int]:
+    verdicts: dict[str, int] = {}
+    for cached_item in cache["items"].values():
+        votes = cached_item["votes"]
+        if len(votes) < required_votes:
+            continue
+        host = cached_item["host"]
+        host_key = f"{host['arm']}|{host['question_id']}"
+        verdicts[host_key] = int(sum(votes) * 2 > len(votes))
+    return verdicts
+
+
+def batch_prompt(batch: list[dict]) -> str:
     lines = [JUDGE_PREAMBLE]
-    for item_id, item in batch:
+    for item in batch:
+        payload = item["judge_payload"]
         lines.append(
             json.dumps(
                 {
-                    "item_id": item_id,
-                    "question": item.get("question"),
-                    "gold": item.get("gold"),
-                    "model_answer": item.get("answer"),
-                    "insufficiency_reason": item.get("insufficiency_reason"),
+                    "item_id": item["opaque_id"],
+                    "question": payload["question"],
+                    "gold": payload["gold"],
+                    "model_answer": payload["model_answer"],
+                    "insufficiency_reason": payload["insufficiency_reason"],
                 },
                 ensure_ascii=False,
             )
@@ -89,7 +356,7 @@ def batch_prompt(batch: list[tuple[str, dict]]) -> str:
     return "\n".join(lines)
 
 
-def run_vote(batch: list[tuple[str, dict]], *, codex_bin: str, timeout: int, model: str | None = None, effort: str | None = None) -> dict[str, bool]:
+def run_vote(batch: list[dict], *, codex_bin: str, timeout: int, model: str, effort: str) -> dict[str, bool]:
     with tempfile.TemporaryDirectory() as td:
         schema_path = Path(td) / "schema.json"
         out_path = Path(td) / "out.json"
@@ -98,6 +365,9 @@ def run_vote(batch: list[tuple[str, dict]], *, codex_bin: str, timeout: int, mod
             codex_bin,
             "exec",
             "--skip-git-repo-check",
+            "--ephemeral",
+            "--ignore-user-config",
+            "--ignore-rules",
             "--json",
             "--output-schema",
             str(schema_path),
@@ -108,16 +378,53 @@ def run_vote(batch: list[tuple[str, dict]], *, codex_bin: str, timeout: int, mod
             "-s",
             "read-only",
         ]
-        if model:
-            cmd += ["-m", model]
-        if effort:
-            cmd += ["-c", f'model_reasoning_effort="{effort}"']
+        cmd += ["-m", model]
+        cmd += ["-c", f'model_reasoning_effort="{effort}"']
         cmd.append(batch_prompt(batch))
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"panel process failed (rc={proc.returncode}): {proc.stderr[-200:]}"
+            )
         if not out_path.exists():
             raise RuntimeError(f"no panel output (rc={proc.returncode}): {proc.stderr[-200:]}")
-        verdicts = json.loads(out_path.read_text()).get("verdicts", [])
+        document = json.loads(out_path.read_text(encoding="utf-8"))
+        if not isinstance(document, dict) or not isinstance(
+            document.get("verdicts"), list
+        ):
+            raise RuntimeError("panel returned an invalid verdict document")
+        verdicts = document["verdicts"]
+        if any(
+            not isinstance(verdict, dict)
+            or not isinstance(verdict.get("item_id"), str)
+            or type(verdict.get("correct")) is not bool
+            for verdict in verdicts
+        ):
+            raise RuntimeError("panel returned an invalid verdict item")
+        returned_ids = [verdict.get("item_id") for verdict in verdicts]
+        expected_ids = [item["opaque_id"] for item in batch]
+        if len(returned_ids) != len(set(returned_ids)):
+            raise RuntimeError("panel returned duplicate item IDs")
+        if set(returned_ids) != set(expected_ids):
+            raise RuntimeError("panel output did not cover exactly the blinded batch")
         return {v["item_id"]: bool(v["correct"]) for v in verdicts}
+
+
+def codex_runtime_identity(codex_bin: str) -> tuple[str, str]:
+    resolved = shutil.which(codex_bin)
+    if resolved is None:
+        raise ValueError(f"codex binary not found: {codex_bin}")
+    resolved_path = str(Path(resolved).resolve())
+    proc = subprocess.run(
+        [resolved_path, "--version"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    version = (proc.stdout or proc.stderr).strip()
+    if proc.returncode != 0 or not version:
+        raise ValueError(f"could not determine codex version for {resolved_path}")
+    return resolved_path, version
 
 
 def main() -> int:
@@ -129,44 +436,108 @@ def main() -> int:
     ap.add_argument("--timeout", type=int, default=600)
     ap.add_argument("--codex-bin", default="codex")
     ap.add_argument("--model", default=None)
-    ap.add_argument("--reasoning-effort", default=None)
+    ap.add_argument(
+        "--reasoning-effort",
+        default=None,
+        choices=["low", "medium", "high", "xhigh"],
+    )
     ap.add_argument("--live", action="store_true")
     args = ap.parse_args()
 
-    queue = load_queue(args.queue)
-    votes: dict[str, list[bool]] = {}
-    if args.cache.exists():
-        votes = {k: list(v) for k, v in json.loads(args.cache.read_text()).items()}
+    if args.live and (not args.model or not args.reasoning_effort):
+        ap.error("--live requires explicit --model and --reasoning-effort pins")
+    if not args.model or not args.reasoning_effort:
+        print(
+            "dry run without judge pins; pass --model and --reasoning-effort "
+            "to inspect a resumable cache"
+        )
+        return 0
+    try:
+        resolved_codex, codex_version = codex_runtime_identity(args.codex_bin)
+        judge_config = build_judge_config(
+            model=args.model,
+            effort=args.reasoning_effort,
+            batch_size=args.batch_size,
+            votes=args.votes,
+            timeout=args.timeout,
+            codex_bin=resolved_codex,
+            codex_version=codex_version,
+        )
+        queue = load_queue(args.queue)
+        blinded_items = prepare_blinded_items(queue, judge_config)
+        cache_manifest = build_cache_manifest(blinded_items, judge_config)
+        cache = load_or_initialize_cache(
+            args.cache, cache_manifest, blinded_items
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        ap.error(str(exc))
 
-    pending = [item for item in queue if len(votes.get(cache_key(item), [])) < args.votes]
-    print(f"queue={len(queue)} fully-voted={len(queue) - len(pending)} pending={len(pending)}")
+    pending = [
+        item
+        for item in blinded_items
+        if len(cache["items"][item["opaque_id"]]["votes"]) < args.votes
+    ]
+    print(
+        f"queue={len(queue)} fully-voted={len(queue) - len(pending)} "
+        f"pending={len(pending)} "
+        f"manifest={_sha256_json(cache_manifest)[:16]}"
+    )
     if not args.live:
         print("dry run — pass --live to grade")
         return 0
 
     for vote_round in range(args.votes):
-        todo = [item for item in queue if len(votes.get(cache_key(item), [])) <= vote_round]
+        ordered = deterministic_interleave(blinded_items, vote_round=vote_round)
+        todo = [
+            item
+            for item in ordered
+            if len(cache["items"][item["opaque_id"]]["votes"])
+            <= vote_round
+        ]
         for i in range(0, len(todo), args.batch_size):
             batch_items = todo[i : i + args.batch_size]
-            batch = [(cache_key(it), it) for it in batch_items]
             try:
-                result = run_vote(batch, codex_bin=args.codex_bin, timeout=args.timeout, model=args.model, effort=args.reasoning_effort)
+                result = run_vote(
+                    batch_items,
+                    codex_bin=resolved_codex,
+                    timeout=args.timeout,
+                    model=args.model,
+                    effort=args.reasoning_effort,
+                )
             except Exception as exc:
                 print(f"vote round {vote_round} batch {i // args.batch_size}: FAILED {exc}")
                 # persist and stop — resumable
-                args.cache.write_text(json.dumps(votes, indent=0, sort_keys=True))
+                write_cache(args.cache, cache)
                 return 3
-            for key, correct in result.items():
-                votes.setdefault(key, [])
-                if len(votes[key]) <= vote_round:
-                    votes[key].append(correct)
-            args.cache.write_text(json.dumps(votes, indent=0, sort_keys=True))
-            done_now = sum(1 for it in queue if len(votes.get(cache_key(it), [])) >= args.votes)
+            for opaque_id, correct in result.items():
+                votes = cache["items"][opaque_id]["votes"]
+                if len(votes) <= vote_round:
+                    votes.append(correct)
+            write_cache(args.cache, cache)
+            done_now = sum(
+                1
+                for item in blinded_items
+                if len(cache["items"][item["opaque_id"]]["votes"])
+                >= args.votes
+            )
             print(f"round {vote_round + 1}/{args.votes} batch {i // args.batch_size + 1}: cached; fully-voted {done_now}/{len(queue)}", flush=True)
 
-    majority = {k: (sum(v) * 2 > len(v)) for k, v in votes.items() if len(v) >= args.votes}
+    majority = majority_verdicts(cache, required_votes=args.votes)
     out = args.cache.with_name("panel_verdicts.json")
-    out.write_text(json.dumps({k: int(v) for k, v in sorted(majority.items())}, indent=0) + "\n")
+    out.write_text(
+        json.dumps(dict(sorted(majority.items())), indent=0) + "\n",
+        encoding="utf-8",
+    )
+    verdict_manifest = {
+        "cache_manifest": cache_manifest,
+        "cache_sha256": _sha256_json(cache),
+        "verdicts_sha256": _sha256_json(majority),
+        "verdict_count": len(majority),
+    }
+    out.with_name("panel_verdicts.manifest.json").write_text(
+        json.dumps(verdict_manifest, indent=1, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     print(f"PANEL_DONE: {len(majority)} verdicts -> {out}")
     return 0
 
