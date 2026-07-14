@@ -1676,7 +1676,9 @@ def _sealed_mechanism_outcomes(validated: ValidatedRun) -> dict[str, Any]:
         raise ValueError("sealed gate omits registered mechanism outcomes")
     if validated.experiment_profile == "valid374" and (
         gate.get("scheduled_question_count") != len(validated.question_ids)
-        or gate.get("scheduled_question_ids") != validated.question_ids
+        # The zero-model gate canonicalizes its CSV-derived inventory by ID;
+        # controller execution order remains bound separately to the spec.
+        or gate.get("scheduled_question_ids") != sorted(validated.question_ids)
         or dispatch.get("version") != "micro-dispatch-v1"
         or dispatch.get("microbiology_questions")
         != len(validated.strata["dispatched"])
