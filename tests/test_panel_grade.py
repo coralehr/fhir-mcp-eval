@@ -42,6 +42,83 @@ def judge_config(**overrides) -> dict:
 
 
 class PanelBlindnessTests(unittest.TestCase):
+    def test_parse_panel_usage_keeps_complete_turn_receipt(self):
+        event_stream = "\n".join(
+            [
+                json.dumps({"type": "item.completed", "item": {"id": "x"}}),
+                json.dumps(
+                    {
+                        "type": "turn.completed",
+                        "usage": {
+                            "input_tokens": 120,
+                            "cached_input_tokens": 45,
+                            "output_tokens": 30,
+                            "reasoning_output_tokens": 12,
+                        },
+                    }
+                ),
+            ]
+        )
+
+        receipt = panel_grade.parse_panel_usage(event_stream)
+
+        self.assertEqual(
+            receipt,
+            {
+                "input_tokens": 120,
+                "cached_input_tokens": 45,
+                "output_tokens": 30,
+                "reasoning_output_tokens": 12,
+                "total_tokens": 150,
+                "total_tokens_source": "derived_input_plus_output",
+                "complete": True,
+            },
+        )
+
+    def test_panel_token_summary_separates_accepted_and_all_attempts(self):
+        cache = {
+            "usage_receipts": [
+                {
+                    "status": "accepted",
+                    "usage": {
+                        "input_tokens": 100,
+                        "cached_input_tokens": 20,
+                        "output_tokens": 10,
+                        "reasoning_output_tokens": 4,
+                        "total_tokens": 110,
+                        "total_tokens_source": "reported",
+                        "complete": True,
+                    },
+                },
+                {
+                    "status": "failed",
+                    "usage": {
+                        "input_tokens": 40,
+                        "cached_input_tokens": None,
+                        "output_tokens": 5,
+                        "reasoning_output_tokens": None,
+                        "total_tokens": 45,
+                        "total_tokens_source": "derived_input_plus_output",
+                        "complete": True,
+                    },
+                },
+            ]
+        }
+
+        summary = panel_grade.panel_token_summary(cache)
+
+        self.assertEqual(summary["accepted"]["calls"], 1)
+        self.assertEqual(summary["accepted"]["tokens"]["total_tokens"], 110)
+        self.assertEqual(summary["all_attempts"]["calls"], 2)
+        self.assertEqual(summary["all_attempts"]["tokens"]["input_tokens"], 140)
+        self.assertEqual(summary["all_attempts"]["tokens"]["total_tokens"], 155)
+        self.assertFalse(
+            summary["all_attempts"]["completeness"]["cached_input_tokens"]
+        )
+        self.assertFalse(
+            summary["all_attempts"]["completeness"]["reasoning_output_tokens"]
+        )
+
     def test_prompt_uses_only_opaque_ids_and_never_exposes_arm_or_question_id(self):
         queue = [
             queue_item("experimental-arm-secret", "raw-question-id-001"),

@@ -93,6 +93,36 @@ def _full_gate_fixture(root: Path):
 
 
 class Qt4ExperimentRunnerTests(unittest.TestCase):
+    def test_registered_profiles_pin_micro42_and_untouched_valid374(self):
+        self.assertEqual(
+            qt4.EXPERIMENT_PROFILES["micro42"],
+            {
+                "spec_kind": "qt4_micro_question_spec",
+                "spec_version": "qt4-micro42-v1",
+                "order_method": "ascending sha256('qt4-micro42-20260713:' + question_id)",
+                "order_salt": "qt4-micro42-20260713:",
+                "expected_total": 409,
+                "expected_micro": 42,
+                "expected_non_micro": 367,
+                "expected_scheduled": 42,
+                "schedule_scope": "micro_only",
+            },
+        )
+        self.assertEqual(
+            qt4.EXPERIMENT_PROFILES["valid374"],
+            {
+                "spec_kind": "qt4_holdout_question_spec",
+                "spec_version": "qt4-valid374-v1",
+                "order_method": "ascending sha256('qt4-valid374-20260713:' + question_id), then question_id",
+                "order_salt": "qt4-valid374-20260713:",
+                "expected_total": 374,
+                "expected_micro": 44,
+                "expected_non_micro": 330,
+                "expected_scheduled": 374,
+                "schedule_scope": "all",
+            },
+        )
+
     def test_bootstrap_bundle_is_complete_and_tamper_evident(self):
         with tempfile.TemporaryDirectory() as tmp:
             controller = Path(tmp) / "controller" / "manifest.json"
@@ -625,6 +655,7 @@ class Qt4ExperimentRunnerTests(unittest.TestCase):
             qdir = arm.out_dir / "questions" / "q1"
             qdir.mkdir(parents=True)
             (qdir / "prompt.txt").write_text("prompt one", encoding="utf-8")
+            (qdir / "stderr.log").write_text("", encoding="utf-8")
             (qdir / "events.jsonl").write_text(
                 json.dumps(
                     {
@@ -665,6 +696,7 @@ class Qt4ExperimentRunnerTests(unittest.TestCase):
             )
 
             (qdir / "prompt.txt").write_text("prompt two", encoding="utf-8")
+            (qdir / "stderr.log").write_text("", encoding="utf-8")
             (qdir / "events.jsonl").write_text(
                 json.dumps(
                     {
@@ -736,6 +768,7 @@ class Qt4ExperimentRunnerTests(unittest.TestCase):
                 encoding="utf-8",
             )
             (qdir / "prompt.txt").write_text("prompt", encoding="utf-8")
+            (qdir / "stderr.log").write_text("", encoding="utf-8")
             integrity = codex_harness.enforce_packet_event_integrity(
                 event_log_path=event_path,
                 answer_path=qdir / "answer.json",
@@ -848,6 +881,7 @@ class Qt4ExperimentRunnerTests(unittest.TestCase):
                 json.dumps({"type": "turn.completed"}) + "\n", encoding="utf-8"
             )
             (qdir / "prompt.txt").write_text("prompt", encoding="utf-8")
+            (qdir / "stderr.log").write_text("", encoding="utf-8")
             receipt = qt4._write_attempt_receipt(
                 arm=arm,
                 question_id="q1",
