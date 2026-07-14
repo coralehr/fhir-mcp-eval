@@ -74,6 +74,17 @@ The recommended route is option 1. The synthetic mechanism core is ready;
 the remaining gates are the sealed product-packet adapter and dataset
 topology, not more generic traversal code.
 
+## Subsequent local substrate audit
+
+A later zero-model local audit found a tracked 7,883-resource synthetic
+HolyFHIR export with six frozen representative generic depth-two/three graph
+families. It
+does not reverse this decision: an exact scan found zero populated depth-two
+paths under A11's four frozen microbiology families, and the export contains
+only 11 patient clusters. It is suitable for a generic extractor pilot, not
+the preregistered efficacy claim. See
+[`A11_SUBSTRATE_AUDIT.md`](A11_SUBSTRATE_AUDIT.md).
+
 ## Reproduction
 
 ```bash

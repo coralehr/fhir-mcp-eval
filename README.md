@@ -36,12 +36,20 @@
 > relation vocabulary plus
 > patient/purpose/practice/version scope, hides unavailable target IDs, and applies one byte bound to every
 > arm. This is a synthetic compiler/integrity result, not byte-equivalence to product packets or
-> answer-accuracy evidence. A sealed-packet adapter remains mandatory before efficacy. The QT-4 inventory has only
-> ten depth-two rows and one path family, so the 120-question efficacy run is correctly blocked pending a
-> multi-family non-PHI substrate. See
+> answer-accuracy evidence. The new path-bound A11 adapter now proves literal V model-packet equality for
+> non-plan-only promoted records and rejects unsealed artifacts, forbidden benchmark metadata, duplicate,
+> non-dispatched, or patient-ambiguous/directly cross-patient resources. A future efficacy corpus must still
+> add independently pinned source provenance plus a governed authorization/source-version receipt.
+> The QT-4 inventory has only ten depth-two rows and one path family, so the 120-question efficacy run is
+> correctly blocked pending a multi-family non-PHI substrate. A local HolyFHIR export is graph-rich in general
+> but has zero depth-two paths under A11's frozen microbiology registry and only 11 patient clusters. The
+> frozen `qo-v2.1` planner also never queries `DiagnosticReport` for microbiology questions, so a pre-answer
+> planner/protocol amendment is required before the registered four-family efficacy design can exist. See
 > [A11_EVENT_GROUP_MECHANISM.md](docs/results/A11_EVENT_GROUP_MECHANISM.md) and the frozen
 > [A11_EVENT_GROUP.md](docs/prereg/A11_EVENT_GROUP.md) protocol, plus the
-> [candidate-inventory result](docs/results/A11_CANDIDATE_INVENTORY.md).
+> [adapter gate](docs/results/A11_PRODUCT_PACKET_ADAPTER.md),
+> [candidate-inventory result](docs/results/A11_CANDIDATE_INVENTORY.md), and
+> [substrate audit](docs/results/A11_SUBSTRATE_AUDIT.md).
 
 ## TL;DR
 
@@ -159,8 +167,9 @@ future A6/A7 arms should report accuracy beside the same token/cost ledger, not 
 
 The repo is ready for GitHub issues. The issue-ready backlog lives in [ROADMAP.md](docs/ROADMAP.md):
 
-- Bind A11 V to sealed `compile_evidence.py` packets, build a multi-family non-PHI efficacy dataset, and
-  seal both before running V/T/E without inspecting answers mid-run.
+- Publish the pre-answer A11 producer amendment, add the governed authorization/source-version receipt,
+  build a multi-family non-PHI efficacy dataset, and seal all three before running V/T/E without inspecting
+  answers mid-run.
 - Publish a minimized reproducibility artifact package with checksums.
 - Rerun A0, A0', and A5 on one substrate.
 - Add cross-family or human adjudication for A0' non-numeric labels.

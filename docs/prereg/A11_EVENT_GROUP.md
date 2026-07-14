@@ -152,6 +152,19 @@ V is the exact promoted-recipe packet, T and E use the exact same retrieved
 source receipt including authorized roots, and none of the adapter inputs are
 hand-authored from answer or gold fields.
 
+The 2026-07-14 path-bound adapter implementation now verifies a strict product
+JSONL/manifest envelope against an independently supplied manifest SHA-256,
+recomputes the promoted packet hash, rejects forbidden benchmark metadata and
+cross-patient roots, and returns the exact
+`codex_harness.render_model_visible_packet` bytes for V. This closes the V
+rendering ambiguity. Strict metadata schemas do not prove that arbitrary FHIR
+clinical fields contain no answer aliases, so the efficacy seal must also bind
+the source corpus and deterministic extractor. The adapter does not synthesize
+authorization: the efficacy seal must still provide a governed
+principal/practice/purpose/patient/source-version receipt and one immutable
+version-preserving traversal result shared by T and E. See
+[`A11_PRODUCT_PACKET_ADAPTER.md`](../results/A11_PRODUCT_PACKET_ADAPTER.md).
+
 The 2026-07-14 sealed QT-4 inventory does not satisfy these requirements: only
 ten rows have a fetched depth-two target, and only one two-hop family is
 present. Therefore the 120-question efficacy run is blocked on a new or
@@ -159,6 +172,20 @@ extended non-PHI substrate. The inventory result is frozen separately in
 [`A11_CANDIDATE_INVENTORY.md`](../results/A11_CANDIDATE_INVENTORY.md). A
 smaller run on the current rows must be labeled a mechanism/debugging pilot,
 not efficacy confirmation.
+
+A subsequent local audit found a large synthetic HolyFHIR export with many
+generic graph paths but zero populated depth-two paths under this protocol's
+four registered microbiology families and only 11 patient clusters. It does
+not unblock efficacy. The pinned-source and deterministic-augmentation options
+are recorded in [`A11_SUBSTRATE_AUDIT.md`](../results/A11_SUBSTRATE_AUDIT.md).
+
+The same 2026-07-14 producer-feasibility audit found a second hard blocker:
+`qo-v2.1` maps microbiology questions to `Observation` queries and has no
+`DiagnosticReport` query path. Therefore exact promoted V packets cannot
+currently supply roots for the two registered DiagnosticReport families. No
+efficacy run may begin until a dated pre-answer amendment either adds and
+versions that product query behavior or changes the family requirement, then
+re-seals the adapter and dataset without consulting answer outputs.
 
 ## Outcomes and fixed analysis order
 
@@ -204,5 +231,6 @@ python a11_event_group_benchmark.py \
 python -m pytest -q \
   tests/test_a11_candidate_inventory.py \
   tests/test_promoted_evidence_recipe.py \
+  tests/test_a11_packet_adapter.py \
   tests/test_a11_event_group_benchmark.py
 ```

@@ -257,11 +257,21 @@ synthetic mechanism proxies shaped like the planned V/T/E arms: a promoted-recip
 traversal, and the same retrieved evidence compiled into typed event groups. The hardened ten-case gate passes
 question-only plan isolation, path replay, patient/practice/purpose/version scope, temporal rank,
 selected-event answerability, convergence/cycle behavior, and common byte bounds with zero model calls.
-It neither consumes nor proves byte-equivalence to actual `compile_evidence.py` packets, so a deterministic
-sealed-packet adapter is a hard gate before efficacy. It does not license an accuracy claim. A replay-validated inventory of the sealed QT-4 packets found only
-ten rows with fetched depth-two targets and one usable two-hop family, so the registered 120-question,
-four-family efficacy run must wait for a broader non-PHI substrate. See
-`docs/results/A11_CANDIDATE_INVENTORY.md`; do not convert the mechanism fixture into an answer benchmark.
+The path-bound `a11_packet_adapter.py` now validates a strict promoted JSONL/manifest envelope against an
+independently supplied manifest hash and returns the literal model-visible V bytes without passing through the
+synthetic star proxy. Arbitrary clinical FHIR content still requires pinned source/extractor provenance, and
+product packets still lack the governed principal/practice/purpose/source-version receipt required to
+authorize roots and bind one
+version-preserving T/E retrieval result, so efficacy remains blocked and no accuracy claim is licensed. A
+replay-validated inventory of the sealed QT-4 packets found only ten rows with fetched depth-two targets and
+one usable two-hop family. A later local audit found a 7,883-resource synthetic export with many generic
+paths, but zero depth-two paths under A11's frozen microbiology registry and only 11 patient clusters. The
+registered 120-question, four-family efficacy run must therefore wait for a pinned, deterministically
+augmented non-PHI substrate and a published pre-answer producer amendment: the current `qo-v2.1`
+microbiology plan queries `Observation` but never `DiagnosticReport`, so it cannot produce the two
+DiagnosticReport-root families while preserving exact promoted V semantics. See
+`docs/results/A11_PRODUCT_PACKET_ADAPTER.md`, `docs/results/A11_CANDIDATE_INVENTORY.md`, and
+`docs/results/A11_SUBSTRATE_AUDIT.md`; do not convert the mechanism fixture into an answer benchmark.
 
 **Question:** Do explicit temporal/reference graphs improve long-horizon, multi-call clinical tasks beyond flat packets?
 

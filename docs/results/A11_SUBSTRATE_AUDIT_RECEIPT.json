@@ -1,0 +1,129 @@
+{
+  "aggregate_only": true,
+  "generic_path_families": [
+    {
+      "family": "DiagnosticReport.result -> Observation.encounter -> Encounter.episodeOfCare",
+      "paths": 1684,
+      "patient_clusters": 11,
+      "rejected_ambiguous_roots": 0,
+      "rejected_ambiguous_target_edges": 0,
+      "rejected_cross_patient_edges": 0,
+      "roots": 367
+    },
+    {
+      "family": "Procedure.reasonReference -> Condition.encounter -> Encounter.episodeOfCare",
+      "paths": 620,
+      "patient_clusters": 11,
+      "rejected_ambiguous_roots": 0,
+      "rejected_ambiguous_target_edges": 0,
+      "rejected_cross_patient_edges": 0,
+      "roots": 620
+    },
+    {
+      "family": "DocumentReference.context.encounter -> Encounter.episodeOfCare",
+      "paths": 413,
+      "patient_clusters": 11,
+      "rejected_ambiguous_roots": 0,
+      "rejected_ambiguous_target_edges": 0,
+      "rejected_cross_patient_edges": 0,
+      "roots": 413
+    },
+    {
+      "family": "ServiceRequest.encounter -> Encounter.episodeOfCare",
+      "paths": 413,
+      "patient_clusters": 11,
+      "rejected_ambiguous_roots": 0,
+      "rejected_ambiguous_target_edges": 0,
+      "rejected_cross_patient_edges": 0,
+      "roots": 413
+    },
+    {
+      "family": "Observation.encounter -> Encounter.episodeOfCare",
+      "paths": 2850,
+      "patient_clusters": 11,
+      "rejected_ambiguous_roots": 0,
+      "rejected_ambiguous_target_edges": 0,
+      "rejected_cross_patient_edges": 0,
+      "roots": 2850
+    },
+    {
+      "family": "MedicationRequest.reasonReference -> Condition.encounter",
+      "paths": 85,
+      "patient_clusters": 10,
+      "rejected_ambiguous_roots": 0,
+      "rejected_ambiguous_target_edges": 0,
+      "rejected_cross_patient_edges": 0,
+      "roots": 85
+    }
+  ],
+  "registered_a11_path_families": [
+    {
+      "family": "Observation.hasMember -> Observation.hasMember",
+      "paths": 0,
+      "patient_clusters": 0,
+      "rejected_ambiguous_roots": 0,
+      "rejected_ambiguous_target_edges": 0,
+      "rejected_cross_patient_edges": 0,
+      "roots": 0
+    },
+    {
+      "family": "Observation.hasMember -> Observation.specimen",
+      "paths": 0,
+      "patient_clusters": 0,
+      "rejected_ambiguous_roots": 0,
+      "rejected_ambiguous_target_edges": 0,
+      "rejected_cross_patient_edges": 0,
+      "roots": 0
+    },
+    {
+      "family": "DiagnosticReport.result -> Observation.hasMember",
+      "paths": 0,
+      "patient_clusters": 0,
+      "rejected_ambiguous_roots": 0,
+      "rejected_ambiguous_target_edges": 0,
+      "rejected_cross_patient_edges": 0,
+      "roots": 0
+    },
+    {
+      "family": "DiagnosticReport.result -> Observation.specimen",
+      "paths": 0,
+      "patient_clusters": 0,
+      "rejected_ambiguous_roots": 0,
+      "rejected_ambiguous_target_edges": 0,
+      "rejected_cross_patient_edges": 0,
+      "roots": 0
+    }
+  ],
+  "resource_counts": {
+    "AllergyIntolerance": 11,
+    "Condition": 298,
+    "Device": 39,
+    "DiagnosticReport": 780,
+    "DocumentReference": 413,
+    "Encounter": 413,
+    "EpisodeOfCare": 413,
+    "Immunization": 143,
+    "Location": 44,
+    "MedicationRequest": 172,
+    "Observation": 2850,
+    "Organization": 43,
+    "Patient": 11,
+    "Practitioner": 43,
+    "PractitionerRole": 43,
+    "Procedure": 1341,
+    "ServiceRequest": 413,
+    "Specimen": 413
+  },
+  "scanner": {
+    "path": "a11_substrate_audit.py",
+    "sha256": "8f370acfd43508b3ceb949a7d0de41bd7392f2eecf56d3cbbe565f8b9d46fe6a"
+  },
+  "schema_version": "a11-substrate-audit-v1",
+  "source": {
+    "archive": "sample-bulk-fhir-datasets-10-patients.zip",
+    "archive_sha256": "a9eba7c2b15ab2e027b633584669fc0ae08808056c1caddb3825e04764006bd7",
+    "commit": "06d9d7e4d1abf39b8639b0911e5d63b0006f6ff5",
+    "repository": "https://github.com/michaelbdavidson7/holyfhir-personal-family-emr.git"
+  },
+  "total_resources": 7883
+}

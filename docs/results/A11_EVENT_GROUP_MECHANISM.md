@@ -101,9 +101,14 @@ compiler, tests, hashes, and command reproduce them.
 
 ## Next gate
 
-First bind synthetic V to byte-identical sealed `compile_evidence.py` packets.
-The QT-4 packet inventory is also too small and topologically narrow for the
-preregistered efficacy claim. See
-[`A11_CANDIDATE_INVENTORY.md`](A11_CANDIDATE_INVENTORY.md). Do not launch
-answer models until the adapter and a patient-disjoint, multi-family efficacy
-dataset are constructed, audited, and sealed.
+The path-bound adapter now proves literal V model-packet equality on synthetic
+non-PHI, non-plan-only promoted records. See
+[`A11_PRODUCT_PACKET_ADAPTER.md`](A11_PRODUCT_PACKET_ADAPTER.md). Product
+packets still lack the governed authorization/source-version receipt needed
+to bind T and E, and the QT-4 packet inventory remains too small and
+topologically narrow for the preregistered efficacy claim. The local substrate
+audit also found no ready corpus under the frozen relation registry. See
+[`A11_CANDIDATE_INVENTORY.md`](A11_CANDIDATE_INVENTORY.md) and
+[`A11_SUBSTRATE_AUDIT.md`](A11_SUBSTRATE_AUDIT.md). Do not launch answer models
+until the receipt and a patient-disjoint, multi-family efficacy dataset are
+constructed, audited, and sealed.
