@@ -26,22 +26,52 @@ import paired_stats
 import panel_grade
 
 
-ANALYSIS_VERSION = "qt4-three-arm-analysis-v1"
+ANALYSIS_VERSION = "qt4-three-arm-analysis-v3"
 ARM_NAMES = ("a6a", "qt4v", "qt4t")
 REGISTERED_CONTRASTS = (
     ("qt4v_minus_a6a", "qt4v", "a6a"),
     ("qt4t_minus_qt4v", "qt4t", "qt4v"),
 )
-CONTROLLER_KIND = "qt4_micro_interleaved_controller_manifest"
-CONTROLLER_SCHEMA_VERSION = "qt4-controller-v2"
+CONTROLLER_KIND = "qt4_interleaved_controller_manifest"
+CONTROLLER_SCHEMA_VERSION = "qt4-controller-v3"
 COMPLETION_KIND = "qt4_attempt_completion"
-COMPLETION_SCHEMA_VERSION = "qt4-attempt-v2"
+COMPLETION_SCHEMA_VERSION = "qt4-attempt-v3"
+REGISTERED_TRANSPORT_PROTOCOL = "separated-stdout-jsonl-stderr-v2"
 MAX_ATTEMPTS_PER_ITEM = 3
 REGISTERED_PANEL_VOTES = 3
 REGISTERED_PANEL_MODEL = "gpt-5.6-sol"
 REGISTERED_PANEL_EFFORT = "high"
 REGISTERED_PANEL_BATCH_SIZE = 20
 REGISTERED_PANEL_TIMEOUT = 600
+EXPERIMENT_PROFILES = {
+    "micro42": {
+        "spec_kind": "qt4_micro_question_spec",
+        "spec_version": "qt4-micro42-v1",
+        "order_method": "ascending sha256('qt4-micro42-20260713:' + question_id)",
+        "expected_question_count": 42,
+        "expected_dispatched_count": 42,
+        "expected_negative_control_count": 0,
+        "result_status": "exploratory_test_set_result",
+    },
+    "valid374": {
+        "spec_kind": "qt4_holdout_question_spec",
+        "spec_version": "qt4-valid374-v1",
+        "question_spec_sha256": (
+            "eadea93c7e0bb7f2cfaed411dbe58f74999c16cdf3f10747227b16f286897e44"
+        ),
+        "input_sha256": (
+            "22e914e410ab2cc8eb0c1df2bf2286f42a88e86683117263d7cc0f17a7b402b6"
+        ),
+        "order_method": (
+            "ascending sha256('qt4-valid374-20260713:' + question_id), "
+            "then question_id"
+        ),
+        "expected_question_count": 374,
+        "expected_dispatched_count": 44,
+        "expected_negative_control_count": 330,
+        "result_status": "confirmatory_holdout_result",
+    },
+}
 REQUIRED_SNAPSHOTS = {
     "spec",
     "gate_report",
@@ -49,6 +79,8 @@ REQUIRED_SNAPSHOTS = {
     "schema",
     "harness",
     "runner",
+    "run_lock",
+    "gate_code",
     "packet_a6a",
     "packet_qt4v",
     "packet_qt4t",
@@ -75,7 +107,9 @@ class AcceptedCompletion:
 
 @dataclass
 class ValidatedRun:
+    experiment_profile: str
     question_ids: list[str]
+    strata: dict[str, list[str]]
     gold: dict[str, dict[str, str]]
     packet_records: dict[str, dict[str, dict[str, Any]]]
     controller: dict[str, Any]
@@ -109,6 +143,31 @@ def sha256_file(path: Path) -> str:
 
 def _read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def registered_experiment_profile(
+    controller_manifest: Path,
+) -> tuple[str, dict[str, Any]]:
+    """Return the exact registered profile bound to a v3 controller."""
+    controller = _read_json(controller_manifest)
+    if (
+        not isinstance(controller, dict)
+        or controller.get("kind") != CONTROLLER_KIND
+        or controller.get("schema_version") != CONTROLLER_SCHEMA_VERSION
+        or controller.get("transport_protocol") != REGISTERED_TRANSPORT_PROTOCOL
+    ):
+        raise ValueError("controller manifest is not the sealed QT-4 v3 transport")
+    profile = controller.get("experiment_profile")
+    config = EXPERIMENT_PROFILES.get(str(profile))
+    if config is None:
+        raise ValueError("controller manifest has no registered QT-4 experiment profile")
+    return str(profile), config
+
+
+def registered_question_count(controller_manifest: Path) -> int:
+    """Return the exact schedule size bound to a registered v3 controller."""
+    _profile, config = registered_experiment_profile(controller_manifest)
+    return int(config["expected_question_count"])
 
 
 def _write_text_atomic(path: Path, text: str) -> None:
@@ -161,6 +220,61 @@ def load_question_spec(path: Path, *, expected_count: int) -> list[str]:
     if recorded_count is None or int(recorded_count) != expected_count:
         raise ValueError("question spec expected_question_count is not exact")
     return question_ids
+
+
+def load_question_strata(
+    path: Path,
+    *,
+    profile: str,
+    question_ids: list[str],
+) -> dict[str, list[str]]:
+    """Validate the frozen profile metadata and return strata in schedule order."""
+    config = EXPERIMENT_PROFILES[profile]
+    value = _read_json(path)
+    expected_metadata = {
+        "kind": config["spec_kind"],
+        "version": config["spec_version"],
+        "order_method": config["order_method"],
+        "expected_question_count": config["expected_question_count"],
+    }
+    if any(value.get(key) != expected for key, expected in expected_metadata.items()):
+        raise ValueError("question spec metadata does not match the controller profile")
+
+    expected_dispatched = int(config["expected_dispatched_count"])
+    expected_negative = int(config["expected_negative_control_count"])
+    if profile == "valid374":
+        dispatcher = value.get("micro_dispatcher")
+        raw_dispatched = value.get("microbiology_question_ids")
+        if (
+            value.get("expected_microbiology_question_count") != expected_dispatched
+            or value.get("expected_non_microbiology_question_count") != expected_negative
+            or not isinstance(dispatcher, dict)
+            or dispatcher.get("version") != "micro-dispatch-v1"
+            or not isinstance(raw_dispatched, list)
+        ):
+            raise ValueError("valid374 question spec has invalid stratum metadata")
+        dispatched_set = {str(item) for item in raw_dispatched}
+        if (
+            len(raw_dispatched) != expected_dispatched
+            or len(dispatched_set) != expected_dispatched
+            or not dispatched_set.issubset(question_ids)
+        ):
+            raise ValueError("valid374 dispatched question inventory is not exact")
+        dispatched = [qid for qid in question_ids if qid in dispatched_set]
+    else:
+        dispatched = list(question_ids)
+    dispatched_set = set(dispatched)
+    negative_control = [qid for qid in question_ids if qid not in dispatched_set]
+    if (
+        len(dispatched) != expected_dispatched
+        or len(negative_control) != expected_negative
+    ):
+        raise ValueError("question strata do not match the registered profile counts")
+    return {
+        "dispatched": dispatched,
+        "negative_control": negative_control,
+        "pooled": list(question_ids),
+    }
 
 
 def load_gold_rows(input_path: Path, question_ids: list[str]) -> dict[str, dict[str, str]]:
@@ -241,8 +355,15 @@ def _validate_controller(
     if (
         controller.get("kind") != CONTROLLER_KIND
         or controller.get("schema_version") != CONTROLLER_SCHEMA_VERSION
+        or controller.get("transport_protocol") != REGISTERED_TRANSPORT_PROTOCOL
     ):
-        raise ValueError("controller manifest kind/schema is not sealed QT-4 v2")
+        raise ValueError("controller manifest is not the sealed QT-4 v3 transport")
+    profile = str(controller.get("experiment_profile") or "")
+    config = EXPERIMENT_PROFILES.get(profile)
+    if config is None:
+        raise ValueError("controller manifest has no registered QT-4 experiment profile")
+    if len(question_ids) != int(config["expected_question_count"]):
+        raise ValueError("controller profile does not match the frozen question count")
     if controller.get("question_ids") != question_ids:
         raise ValueError("controller question IDs/order do not match the frozen spec")
 
@@ -253,10 +374,14 @@ def _validate_controller(
         raise ValueError("controller schedule is not the exact three-arm queue")
     for index, question_id in enumerate(question_ids):
         group = schedule[index * len(ARM_NAMES) : (index + 1) * len(ARM_NAMES)]
-        if any(item.get("question_id") != question_id for item in group) or {
-            item.get("arm") for item in group
-        } != set(ARM_NAMES):
-            raise ValueError("controller schedule does not contain each arm once per question")
+        expected_order = [
+            ARM_NAMES[(index + offset) % len(ARM_NAMES)]
+            for offset in range(len(ARM_NAMES))
+        ]
+        if [
+            (item.get("question_id"), item.get("arm")) for item in group
+        ] != [(question_id, arm) for arm in expected_order]:
+            raise ValueError("controller schedule is not the registered rotating arm order")
 
     outputs = controller.get("outputs")
     if not isinstance(outputs, dict) or set(outputs) != set(ARM_NAMES):
@@ -266,15 +391,21 @@ def _validate_controller(
             raise ValueError(f"{arm} run directory does not match the sealed controller")
 
     execution = controller.get("execution")
-    if not isinstance(execution, dict) or not execution.get("model") or not execution.get(
-        "reasoning_effort"
+    if (
+        not isinstance(execution, dict)
+        or execution.get("model") != REGISTERED_PANEL_MODEL
+        or execution.get("reasoning_effort") != REGISTERED_PANEL_EFFORT
     ):
-        raise ValueError("controller execution identity is incomplete")
+        raise ValueError("controller execution is not pinned to gpt-5.6-sol/high")
 
     snapshots = controller.get("snapshots")
-    if not isinstance(snapshots, dict) or not REQUIRED_SNAPSHOTS.issubset(snapshots):
+    if not isinstance(snapshots, dict) or set(snapshots) != REQUIRED_SNAPSHOTS:
         missing = sorted(REQUIRED_SNAPSHOTS - set(snapshots or {}))
-        raise ValueError(f"controller is missing required immutable snapshots: {missing}")
+        extra = sorted(set(snapshots or {}) - REQUIRED_SNAPSHOTS)
+        raise ValueError(
+            "controller immutable snapshot inventory is not exact; "
+            f"missing={missing} extra={extra}"
+        )
     for name, entry in snapshots.items():
         if not isinstance(entry, dict):
             raise ValueError(f"controller snapshot is malformed: {name}")
@@ -511,6 +642,25 @@ def _validate_failed_attempt_ledgers(
                     raise ValueError(
                         f"{arm}/{question_id} archived attempt usage changed"
                     )
+                stderr_metadata = archived_files.get("stderr.log")
+                if not isinstance(stderr_metadata, dict):
+                    raise ValueError(
+                        f"{arm}/{question_id} attempt stderr log is missing"
+                    )
+                archived_stderr_path = Path(str(stderr_metadata["path"]))
+                recomputed_stderr = codex_harness.audit_stderr(
+                    archived_stderr_path
+                )
+                if receipt.get("stderr_integrity") != recomputed_stderr:
+                    raise ValueError(
+                        f"{arm}/{question_id} archived attempt stderr audit changed"
+                    )
+                if receipt.get("stderr_log_sha256") != sha256_file(
+                    archived_stderr_path
+                ):
+                    raise ValueError(
+                        f"{arm}/{question_id} archived attempt stderr hash changed"
+                    )
                 result[arm].append(receipt)
     return result
 
@@ -551,6 +701,7 @@ def _validate_completions(
                 "answer_sha256": question_dir / "answer.json",
                 "event_log_sha256": question_dir / "events.jsonl",
                 "prompt_sha256": question_dir / "prompt.txt",
+                "stderr_log_sha256": question_dir / "stderr.log",
             }
             receipt_path = question_dir / "completion.json"
             if not receipt_path.exists() or any(not path.exists() for path in paths.values()):
@@ -583,6 +734,14 @@ def _validate_completions(
                 raise ValueError(f"{arm}/{question_id} completion receipt is not accepted")
             if any(receipt.get(key) != sha256_file(path) for key, path in paths.items()):
                 raise ValueError(f"{arm}/{question_id} sealed artifact hash changed")
+            stderr_audit = codex_harness.audit_stderr(paths["stderr_log_sha256"])
+            if (
+                stderr_audit.get("empty") is not True
+                or receipt.get("stderr_integrity") != stderr_audit
+            ):
+                raise ValueError(
+                    f"{arm}/{question_id} accepted stderr integrity is not empty"
+                )
             expected_prompt = codex_harness.build_prompt(
                 {**input_rows[question_id], **packet_records[arm][question_id]},
                 mode="packet",
@@ -670,13 +829,46 @@ def validate_sealed_run(
     question_spec: Path,
     input_path: Path,
     arms: Mapping[str, ArmArtifacts],
-    expected_question_count: int = 42,
+    expected_question_count: int | None = None,
 ) -> ValidatedRun:
     _validate_arms(arms)
+    experiment_profile, profile_config = registered_experiment_profile(
+        controller_manifest
+    )
+    registered_count = int(profile_config["expected_question_count"])
+    if (
+        expected_question_count is not None
+        and expected_question_count != registered_count
+    ):
+        raise ValueError(
+            "explicit question count conflicts with the registered controller profile"
+        )
+    registered_spec_sha = profile_config.get("question_spec_sha256")
+    registered_input_sha = profile_config.get("input_sha256")
+    if registered_spec_sha and sha256_file(question_spec) != registered_spec_sha:
+        raise ValueError("question spec does not match the preregistered frozen bytes")
+    if registered_input_sha and sha256_file(input_path) != registered_input_sha:
+        raise ValueError("input does not match the preregistered frozen holdout bytes")
     question_ids = load_question_spec(
-        question_spec, expected_count=expected_question_count
+        question_spec, expected_count=registered_count
+    )
+    strata = load_question_strata(
+        question_spec,
+        profile=experiment_profile,
+        question_ids=question_ids,
     )
     gold = load_gold_rows(input_path, question_ids)
+    if experiment_profile == "valid374":
+        labeled_dispatched = {
+            question_id
+            for question_id, row in gold.items()
+            if str(row.get("main_table_name") or "").strip().lower()
+            == "microbiologyevents"
+        }
+        if labeled_dispatched != set(strata["dispatched"]):
+            raise ValueError(
+                "valid374 frozen dispatched IDs do not match the source stratum"
+            )
     controller, controller_sha, input_hashes = _validate_controller(
         controller_path=controller_manifest,
         question_spec=question_spec,
@@ -705,7 +897,9 @@ def validate_sealed_run(
     )
     input_hashes["implementations"] = _implementation_hashes()
     return ValidatedRun(
+        experiment_profile=experiment_profile,
         question_ids=question_ids,
+        strata=strata,
         gold=gold,
         packet_records=packet_records,
         controller=controller,
@@ -724,7 +918,7 @@ def prepare_grading(
     input_path: Path,
     arms: Mapping[str, ArmArtifacts],
     out_dir: Path,
-    expected_question_count: int = 42,
+    expected_question_count: int | None = None,
 ) -> dict[str, Any]:
     """Apply deterministic rules once per arm and write one panel queue."""
     validated = validate_sealed_run(
@@ -734,6 +928,7 @@ def prepare_grading(
         arms=arms,
         expected_question_count=expected_question_count,
     )
+    mechanism_outcomes = _sealed_mechanism_outcomes(validated)
     deterministic: dict[str, dict[str, int]] = {}
     panel_items: list[dict[str, Any]] = []
     partition: dict[str, dict[str, int]] = {}
@@ -780,6 +975,9 @@ def prepare_grading(
         "question_ids": validated.question_ids,
         "input_hashes": validated.input_hashes,
         "sealed_completion": validated.completion_summary,
+        "mechanism_gate_report_sha256": mechanism_outcomes[
+            "gate_report_sha256"
+        ],
         "deterministic_grader_version": grade_a6a_confirmatory.GRADER_VERSION,
         "deterministic_grader_invocations": invocations,
         "partition": partition,
@@ -813,6 +1011,9 @@ def _verify_grading_artifacts(
         "question_ids": validated.question_ids,
         "input_hashes": validated.input_hashes,
         "sealed_completion": validated.completion_summary,
+        "mechanism_gate_report_sha256": _sealed_mechanism_outcomes(validated)[
+            "gate_report_sha256"
+        ],
         "deterministic_grader_version": grade_a6a_confirmatory.GRADER_VERSION,
         "deterministic_grader_invocations": {arm: 1 for arm in ARM_NAMES},
     }
@@ -883,7 +1084,7 @@ def _verify_panel(
     grading_dir: Path,
     queue: list[dict[str, Any]],
     controller: Mapping[str, Any],
-) -> tuple[dict[str, int], dict[str, Any]]:
+) -> tuple[dict[str, int], dict[str, Any], dict[str, Any]]:
     cache_path = grading_dir / "panel_votes.json"
     verdict_path = grading_dir / "panel_verdicts.json"
     verdict_manifest_path = grading_dir / "panel_verdicts.manifest.json"
@@ -940,7 +1141,11 @@ def _verify_panel(
     }
     if _read_json(verdict_manifest_path) != expected_verdict_manifest:
         raise ValueError("panel verdict manifest is incomplete or stale")
-    return majority, expected_verdict_manifest["panel_token_usage"]
+    return (
+        majority,
+        expected_verdict_manifest["panel_token_usage"],
+        registered_config,
+    )
 
 
 def _labels_from_artifacts(
@@ -1011,6 +1216,75 @@ def _contrast(
         },
         "patient_cluster_bootstrap": paired["cluster_bootstrap"],
     }
+
+
+def _safety_accuracy(
+    *,
+    treatment: str,
+    reference: str,
+    question_ids: list[str],
+    labels: Mapping[str, Mapping[str, int]],
+) -> dict[str, Any]:
+    n = len(question_ids)
+    if n < 1:
+        raise ValueError("safety accuracy requires at least one question")
+    treatment_correct = sum(labels[treatment][qid] for qid in question_ids)
+    reference_correct = sum(labels[reference][qid] for qid in question_ids)
+    difference = (treatment_correct - reference_correct) / n
+    return {
+        "n": n,
+        "treatment_correct": treatment_correct,
+        "reference_correct": reference_correct,
+        "treatment_accuracy": treatment_correct / n,
+        "reference_accuracy": reference_correct / n,
+        "accuracy_difference": difference,
+        "maximum_allowed_degradation": 0.01,
+        "passed": 100 * (treatment_correct - reference_correct) >= -n,
+    }
+
+
+def _profile_contrasts(
+    *,
+    profile: str,
+    strata: Mapping[str, list[str]],
+    gold: dict[str, dict[str, str]],
+    labels: dict[str, dict[str, int]],
+    n_boot: int,
+) -> dict[str, dict[str, Any]]:
+    analysis_ids = (
+        strata["dispatched"] if profile == "valid374" else strata["pooled"]
+    )
+    result: dict[str, dict[str, Any]] = {}
+    for name, treatment, reference in REGISTERED_CONTRASTS:
+        contrast = _contrast(
+            name=name,
+            treatment=treatment,
+            reference=reference,
+            question_ids=analysis_ids,
+            gold=gold,
+            labels=labels,
+            n_boot=n_boot,
+        )
+        contrast["analysis_stratum"] = (
+            "dispatched" if profile == "valid374" else "pooled"
+        )
+        if profile == "valid374":
+            contrast["safety"] = {
+                "pooled": _safety_accuracy(
+                    treatment=treatment,
+                    reference=reference,
+                    question_ids=strata["pooled"],
+                    labels=labels,
+                ),
+                "negative_control": _safety_accuracy(
+                    treatment=treatment,
+                    reference=reference,
+                    question_ids=strata["negative_control"],
+                    labels=labels,
+                ),
+            }
+        result[name] = contrast
+    return result
 
 
 def _coerce_nonnegative_int(value: Any) -> int | None:
@@ -1265,7 +1539,7 @@ def _arm_economics(validated: ValidatedRun, arm: str) -> dict[str, Any]:
             "historical_invalid_attempts": {
                 "available": True,
                 "count": len(failed_records),
-                "scope": "append-only qt4-attempt-v2 archives",
+                "scope": "append-only qt4-attempt-v3 archives",
             },
         },
         "model_visible_packet_bytes": _packet_byte_summary(
@@ -1380,6 +1654,8 @@ def _sealed_mechanism_outcomes(validated: ValidatedRun) -> dict[str, Any]:
     if not isinstance(gate_inputs, dict):
         raise ValueError("sealed gate report has no bound input hashes")
     expected_hashes = {
+        # The gate's historical field name is ``question_spec``, but the
+        # sealed runner intentionally passes the frozen packet-metadata CSV.
         "question_spec": validated.input_hashes["input"],
         **validated.input_hashes["packets"],
     }
@@ -1389,11 +1665,27 @@ def _sealed_mechanism_outcomes(validated: ValidatedRun) -> dict[str, Any]:
             raise ValueError(f"sealed gate {name} hash does not match the analyzed run")
 
     gold = gate.get("evaluation_only_gold_metrics")
+    dispatch = gate.get("dispatch")
     traversal = gate.get("traversal")
     footprint = gate.get("resource_footprint")
     equivalence = gate.get("equivalence")
-    if not all(isinstance(value, dict) for value in (gold, traversal, footprint, equivalence)):
+    if not all(
+        isinstance(value, dict)
+        for value in (gold, dispatch, traversal, footprint, equivalence)
+    ):
         raise ValueError("sealed gate omits registered mechanism outcomes")
+    if validated.experiment_profile == "valid374" and (
+        gate.get("scheduled_question_count") != len(validated.question_ids)
+        or gate.get("scheduled_question_ids") != validated.question_ids
+        or dispatch.get("version") != "micro-dispatch-v1"
+        or dispatch.get("microbiology_questions")
+        != len(validated.strata["dispatched"])
+        or dispatch.get("non_microbiology_questions")
+        != len(validated.strata["negative_control"])
+        or dispatch.get("microbiology_question_ids")
+        != sorted(validated.strata["dispatched"])
+    ):
+        raise ValueError("sealed gate dispatch does not match the frozen strata")
     recall = gold.get("recall")
     vocabulary = gold.get("vocabulary_gold_change")
     traversal_gold = gold.get("traversal_gold_gain")
@@ -1420,6 +1712,18 @@ def _sealed_mechanism_outcomes(validated: ValidatedRun) -> dict[str, Any]:
     }
     if not required_targets.issubset(targets):
         raise ValueError("sealed gate traversal target outcomes are incomplete")
+    registered_traversal_fields = (
+        "raw_path_status_counts",
+        "serialized_path_receipt_count",
+        "path_receipts_omitted",
+        "serialized_path_depth_counts",
+        "max_serialized_depth_observed",
+        "serialized_path_family_counts",
+    )
+    if validated.experiment_profile == "valid374" and any(
+        field not in traversal for field in registered_traversal_fields
+    ):
+        raise ValueError("valid374 gate omits registered traversal reporting fields")
 
     return {
         "gate_report_sha256": sha256_file(gate_path),
@@ -1438,6 +1742,16 @@ def _sealed_mechanism_outcomes(validated: ValidatedRun) -> dict[str, Any]:
             "serialized_path_family_counts": traversal.get(
                 "serialized_path_family_counts"
             ),
+            "raw_path_status_counts": traversal.get("raw_path_status_counts"),
+            "serialized_path_receipt_count": traversal.get(
+                "serialized_path_receipt_count"
+            ),
+            "serialized_path_depth_counts": traversal.get(
+                "serialized_path_depth_counts"
+            ),
+            "max_serialized_depth_observed": traversal.get(
+                "max_serialized_depth_observed"
+            ),
             "diagnostic_report_path_use": traversal.get(
                 "diagnostic_report_path_use"
             ),
@@ -1450,9 +1764,111 @@ def _sealed_mechanism_outcomes(validated: ValidatedRun) -> dict[str, Any]:
     }
 
 
-def _promotion_assessment(
+def _strict_nonnegative_int(value: Any) -> int | None:
+    return value if type(value) is int and value >= 0 else None
+
+
+def _valid374_promotion_assessment(
     contrasts: Mapping[str, dict[str, Any]], mechanisms: Mapping[str, Any]
 ) -> dict[str, Any]:
+    vocab = mechanisms["vocabulary_gold_change"]
+    traversal = mechanisms["traversal_gold_gain"]
+    vocab_gained = _strict_nonnegative_int(
+        vocab.get("gold_id_occurrences_gained")
+    )
+    vocab_lost = _strict_nonnegative_int(vocab.get("gold_id_occurrences_lost"))
+    traversal_gained = _strict_nonnegative_int(
+        traversal.get("gold_id_occurrences_gained")
+    )
+    traversal_lost = _strict_nonnegative_int(
+        traversal.get("gold_id_occurrences_lost")
+    )
+    if None in (vocab_gained, vocab_lost, traversal_gained, traversal_lost):
+        raise ValueError("sealed mechanism gains/losses must be nonnegative integers")
+
+    def statistical_gates(contrast: Mapping[str, Any]) -> dict[str, bool]:
+        mcnemar = contrast["mcnemar"]
+        bootstrap = contrast["patient_cluster_bootstrap"]
+        p_value = mcnemar.get("exact_two_sided_p")
+        return {
+            "favorable_dispatched_point_estimate": (
+                contrast["accuracy_difference"] > 0
+            ),
+            "exact_mcnemar_significant": (
+                mcnemar.get("estimable") is True
+                and isinstance(p_value, (int, float))
+                and not isinstance(p_value, bool)
+                and p_value < 0.05
+            ),
+            "patient_cluster_ci_excludes_zero_in_favorable_direction": (
+                bootstrap["ci_low"] > 0
+            ),
+            "pooled_degradation_within_one_point": (
+                contrast["safety"]["pooled"]["passed"] is True
+            ),
+            "negative_control_degradation_within_one_point": (
+                contrast["safety"]["negative_control"]["passed"] is True
+            ),
+        }
+
+    h1_gates = {
+        **statistical_gates(contrasts["qt4v_minus_a6a"]),
+        "positive_gold_recall_change": vocab_gained > vocab_lost,
+    }
+    h1_promoted = all(h1_gates.values())
+    h1 = {
+        "tested": True,
+        "gates": h1_gates,
+        "promoted": h1_promoted,
+        "decision": "promoted" if h1_promoted else "not_promoted",
+    }
+
+    h2_gates = {
+        **statistical_gates(contrasts["qt4t_minus_qt4v"]),
+        "traversal_gold_occurrence_gate": (
+            traversal_gained >= 1 and traversal_lost == 0
+        ),
+    }
+    h2_promoted = h1_promoted and all(h2_gates.values())
+    h2 = {
+        "tested": h1_promoted,
+        "gates": h2_gates,
+        "promoted": h2_promoted,
+        "decision": (
+            "not_tested_h1_failed"
+            if not h1_promoted
+            else ("promoted" if h2_promoted else "not_promoted")
+        ),
+    }
+    decision = (
+        "promote_neither"
+        if not h1_promoted
+        else (
+            "promote_vocabulary_and_traversal"
+            if h2_promoted
+            else "promote_vocabulary_only"
+        )
+    )
+    return {
+        "profile": "valid374",
+        "fixed_sequence": True,
+        "alpha": 0.05,
+        "h1_vocabulary": h1,
+        "h2_traversal": h2,
+        "vocabulary_promoted": h1_promoted,
+        "traversal_promoted": h2_promoted,
+        "decision": decision,
+        "persistent_graph_storage_claim_supported": False,
+    }
+
+
+def _promotion_assessment(
+    profile: str,
+    contrasts: Mapping[str, dict[str, Any]],
+    mechanisms: Mapping[str, Any],
+) -> dict[str, Any]:
+    if profile == "valid374":
+        return _valid374_promotion_assessment(contrasts, mechanisms)
     vocabulary_gain = _coerce_nonnegative_int(
         mechanisms["vocabulary_gold_change"].get("gold_id_occurrences_gained")
     )
@@ -1499,17 +1915,113 @@ def _promotion_assessment(
     }
 
 
+def _accuracy_by_stratum(
+    strata: Mapping[str, list[str]],
+    labels: Mapping[str, Mapping[str, int]],
+) -> dict[str, dict[str, dict[str, Any]]]:
+    return {
+        stratum: {
+            arm: {
+                "n": len(question_ids),
+                "correct": sum(labels[arm][qid] for qid in question_ids),
+                "accuracy": (
+                    sum(labels[arm][qid] for qid in question_ids)
+                    / len(question_ids)
+                    if question_ids
+                    else None
+                ),
+            }
+            for arm in ARM_NAMES
+        }
+        for stratum, question_ids in strata.items()
+    }
+
+
+def _abstention_by_stratum(
+    validated: ValidatedRun,
+) -> dict[str, dict[str, dict[str, Any]]]:
+    abstained: dict[str, set[str]] = {}
+    for arm in ARM_NAMES:
+        arm_abstained: set[str] = set()
+        for completion in validated.accepted[arm]:
+            answer = _read_json(completion.answer_path)
+            reason = answer.get("insufficiency_reason")
+            if isinstance(reason, str) and reason.strip():
+                arm_abstained.add(completion.question_id)
+        abstained[arm] = arm_abstained
+    return {
+        stratum: {
+            arm: {
+                "n": len(question_ids),
+                "count": sum(qid in abstained[arm] for qid in question_ids),
+                "rate": (
+                    sum(qid in abstained[arm] for qid in question_ids)
+                    / len(question_ids)
+                    if question_ids
+                    else None
+                ),
+            }
+            for arm in ARM_NAMES
+        }
+        for stratum, question_ids in validated.strata.items()
+    }
+
+
+def _routing_by_stratum(
+    *,
+    strata: Mapping[str, list[str]],
+    deterministic: Mapping[str, Mapping[str, int]],
+    queue: list[dict[str, Any]],
+) -> dict[str, dict[str, dict[str, int]]]:
+    panel_hosts = {
+        (str(item["arm"]), str(item["question_id"])) for item in queue
+    }
+    return {
+        stratum: {
+            arm: {
+                "scheduled": len(question_ids),
+                "deterministic": sum(
+                    qid in deterministic[arm] for qid in question_ids
+                ),
+                "panel": sum((arm, qid) in panel_hosts for qid in question_ids),
+            }
+            for arm in ARM_NAMES
+        }
+        for stratum, question_ids in strata.items()
+    }
+
+
 def _text_report(result: dict[str, Any]) -> str:
     lines = [
         "QT-4 THREE-ARM RESULT",
         f"analysis_version: {result['analysis_version']}",
-        f"sealed answers: {result['sealed_completion']['accepted_answers']}/{result['sealed_completion']['expected_answers']}",
+        f"experiment_profile: {result['experiment_profile']}",
+        f"status: {result['status']}",
+        (
+            "sealed answers: "
+            f"{result['sealed_completion']['accepted_answers']}/"
+            f"{result['sealed_completion']['expected_answers']}"
+        ),
         "",
-        "ARM ACCURACY",
+        "ARM ACCURACY (POOLED)",
     ]
     for arm in ARM_NAMES:
         value = result["accuracy_by_arm"][arm]
-        lines.append(f"{arm}: {value['correct']}/{value['n']} ({value['accuracy']:.3%})")
+        label = result["arm_display_labels"][arm]
+        lines.append(
+            f"{label}: {value['correct']}/{value['n']} "
+            f"({value['accuracy']:.3%})"
+        )
+    if result["experiment_profile"] == "valid374":
+        for stratum in ("dispatched", "negative_control"):
+            lines.extend(["", f"ARM ACCURACY ({stratum.upper()})"])
+            for arm in ARM_NAMES:
+                value = result["accuracy_by_stratum"][stratum][arm]
+                label = result["arm_display_labels"][arm]
+                lines.append(
+                    f"{label}: {value['correct']}/{value['n']} "
+                    f"({value['accuracy']:.3%})"
+                )
     lines.extend(["", "REGISTERED CONTRASTS"])
     for name, _treatment, _reference in REGISTERED_CONTRASTS:
         contrast = result["contrasts"][name]
@@ -1520,18 +2032,44 @@ def _text_report(result: dict[str, Any]) -> str:
             else "unavailable (no discordant pairs)"
         )
         bootstrap = contrast["patient_cluster_bootstrap"]
-        lines.append(
-            f"{name}: {contrast['accuracy_difference']:+.3%}; "
-            f"discordant {contrast['discordant_treatment_only']}/"
-            f"{contrast['discordant_reference_only']}; McNemar {p_text}; "
-            f"cluster CI [{bootstrap['ci_low']:+.3%}, {bootstrap['ci_high']:+.3%}]"
+        h2_gate_closed = (
+            result["experiment_profile"] == "valid374"
+            and name == "qt4t_minus_qt4v"
+            and result["promotion_assessment"]["h2_traversal"]["tested"] is False
         )
+        if h2_gate_closed:
+            lines.append(
+                f"{name}: {contrast['accuracy_difference']:+.3%}; descriptive only; "
+                "H2 not tested because the fixed-sequence H1 gate did not pass"
+            )
+        else:
+            lines.append(
+                f"{name}: {contrast['accuracy_difference']:+.3%}; "
+                f"discordant {contrast['discordant_treatment_only']}/"
+                f"{contrast['discordant_reference_only']}; McNemar {p_text}; "
+                f"cluster CI [{bootstrap['ci_low']:+.3%}, {bootstrap['ci_high']:+.3%}]"
+            )
+        if result["experiment_profile"] == "valid374":
+            for stratum in ("pooled", "negative_control"):
+                safety = contrast["safety"][stratum]
+                lines.append(
+                    f"  {stratum} safety: {safety['accuracy_difference']:+.3%}; "
+                    f"within 1 point={safety['passed']}"
+                )
     mechanisms = result["mechanism_outcomes"]
     targets = mechanisms["traversal"]["target_outcomes"]
     lines.extend(
         [
             "",
             "REGISTERED MECHANISM OUTCOMES (sealed zero-model gate)",
+            (
+                "gold resource recall: "
+                + canonical_json(mechanisms["gold_resource_recall"])
+            ),
+            (
+                "packet resource footprint: "
+                + canonical_json(mechanisms["packet_resource_footprint"])
+            ),
             (
                 "vocabulary gold IDs gained/lost: "
                 f"{mechanisms['vocabulary_gold_change']['gold_id_occurrences_gained']}/"
@@ -1546,11 +2084,63 @@ def _text_report(result: dict[str, Any]) -> str:
                 "traversal targets: "
                 + ", ".join(f"{key}={value}" for key, value in targets.items())
             ),
+            (
+                "serialized path families: "
+                + canonical_json(
+                    mechanisms["traversal"]["serialized_path_family_counts"]
+                )
+            ),
+            (
+                "raw path statuses: "
+                + canonical_json(
+                    mechanisms["traversal"]["raw_path_status_counts"]
+                )
+            ),
+            (
+                "serialized path depths: "
+                + canonical_json(
+                    mechanisms["traversal"]["serialized_path_depth_counts"]
+                )
+            ),
         ]
     )
+    promotion = result["promotion_assessment"]
+    if result["experiment_profile"] == "valid374":
+        lines.extend(
+            [
+                "",
+                "FIXED-SEQUENCE PROMOTION",
+                f"decision: {promotion['decision']}",
+                "H1 gates: " + canonical_json(promotion["h1_vocabulary"]["gates"]),
+                (
+                    f"H2 tested: {promotion['h2_traversal']['tested']}; gates: "
+                    + canonical_json(promotion["h2_traversal"]["gates"])
+                ),
+                "persistent graph storage claim supported: False",
+            ]
+        )
+    lines.extend(["", "ABSTENTION BY STRATUM"])
+    for stratum, arms in result["abstention_by_stratum"].items():
+        for arm in ARM_NAMES:
+            value = arms[arm]
+            label = result["arm_display_labels"][arm]
+            rate = "n/a" if value["rate"] is None else f"{value['rate']:.3%}"
+            lines.append(
+                f"{stratum}/{label}: {value['count']}/{value['n']} ({rate})"
+            )
+    lines.extend(["", "DETERMINISTIC/PANEL ROUTING BY STRATUM"])
+    for stratum, arms in result["grading"]["routing_by_stratum"].items():
+        for arm in ARM_NAMES:
+            value = arms[arm]
+            label = result["arm_display_labels"][arm]
+            lines.append(
+                f"{stratum}/{label}: deterministic={value['deterministic']} "
+                f"panel={value['panel']} scheduled={value['scheduled']}"
+            )
     lines.extend(["", "ECONOMICS (accepted completion logs only)"])
     for arm in ARM_NAMES:
         economics = result["economics"]["arms"][arm]
+        label = result["arm_display_labels"][arm]
         input_total = economics["tokens"]["input_tokens"]["total"]
         output_total = economics["tokens"]["output_tokens"]["total"]
         total = economics["tokens"]["total_tokens"]["total"]
@@ -1559,7 +2149,7 @@ def _text_report(result: dict[str, Any]) -> str:
         packet_bytes = economics["model_visible_packet_bytes"]["total"]
         unavailable = ", ".join(economics["unavailable_dimensions"]) or "none"
         lines.append(
-            f"{arm}: input={input_total} output={output_total} total={total} "
+            f"{label}: input={input_total} output={output_total} total={total} "
             f"all_attempt_total={all_attempt_total} retries={retries} "
             f"packet_bytes={packet_bytes}; unavailable={unavailable}"
         )
@@ -1570,6 +2160,8 @@ def _text_report(result: dict[str, Any]) -> str:
         [
             "",
             "PANEL JUDGING ECONOMICS",
+            "verified judge config: "
+            + canonical_json(result["grading"]["panel_judge_config"]),
             (
                 f"accepted_calls={accepted_panel['calls']} "
                 f"accepted_total={accepted_panel['tokens']['total_tokens']} "
@@ -1605,7 +2197,7 @@ def assemble_result(
     input_path: Path,
     arms: Mapping[str, ArmArtifacts],
     grading_dir: Path,
-    expected_question_count: int = 42,
+    expected_question_count: int | None = None,
     n_boot: int = 10_000,
 ) -> dict[str, Any]:
     """Verify all bound labels, then emit the registered result and economics."""
@@ -1618,10 +2210,12 @@ def assemble_result(
         arms=arms,
         expected_question_count=expected_question_count,
     )
+    if validated.experiment_profile == "valid374" and n_boot != 10_000:
+        raise ValueError("valid374 analysis requires exactly 10000 bootstrap replicates")
     deterministic, queue, grading_manifest = _verify_grading_artifacts(
         validated, grading_dir
     )
-    panel_verdicts, panel_token_usage = _verify_panel(
+    panel_verdicts, panel_token_usage, panel_judge_config = _verify_panel(
         grading_dir=grading_dir,
         queue=queue,
         controller=validated.controller,
@@ -1633,26 +2227,15 @@ def assemble_result(
         panel_verdicts=panel_verdicts,
     )
 
-    accuracy_by_arm = {
-        arm: {
-            "n": len(validated.question_ids),
-            "correct": sum(labels[arm].values()),
-            "accuracy": sum(labels[arm].values()) / len(validated.question_ids),
-        }
-        for arm in ARM_NAMES
-    }
-    contrasts = {
-        name: _contrast(
-            name=name,
-            treatment=treatment,
-            reference=reference,
-            question_ids=validated.question_ids,
-            gold=validated.gold,
-            labels=labels,
-            n_boot=n_boot,
-        )
-        for name, treatment, reference in REGISTERED_CONTRASTS
-    }
+    accuracy_by_stratum = _accuracy_by_stratum(validated.strata, labels)
+    accuracy_by_arm = accuracy_by_stratum["pooled"]
+    contrasts = _profile_contrasts(
+        profile=validated.experiment_profile,
+        strata=validated.strata,
+        gold=validated.gold,
+        labels=labels,
+        n_boot=n_boot,
+    )
     arm_economics = {arm: _arm_economics(validated, arm) for arm in ARM_NAMES}
     contrast_economics = {
         name: _contrast_economics(
@@ -1664,7 +2247,17 @@ def assemble_result(
         for name, treatment, reference in REGISTERED_CONTRASTS
     }
     mechanism_outcomes = _sealed_mechanism_outcomes(validated)
-    promotion_assessment = _promotion_assessment(contrasts, mechanism_outcomes)
+    promotion_assessment = _promotion_assessment(
+        validated.experiment_profile,
+        contrasts,
+        mechanism_outcomes,
+    )
+    abstention_by_stratum = _abstention_by_stratum(validated)
+    routing_by_stratum = _routing_by_stratum(
+        strata=validated.strata,
+        deterministic=deterministic,
+        queue=queue,
+    )
     result_input_hashes = {
         **validated.input_hashes,
         "grading_manifest": sha256_file(grading_dir / "grading_manifest.json"),
@@ -1678,9 +2271,31 @@ def assemble_result(
     }
     result = {
         "analysis_version": ANALYSIS_VERSION,
-        "status": "exploratory_test_set_result",
+        "status": EXPERIMENT_PROFILES[validated.experiment_profile][
+            "result_status"
+        ],
+        "experiment_profile": validated.experiment_profile,
+        "analysis_profile": {
+            "name": validated.experiment_profile,
+            "fixed_sequence_alpha": (
+                0.05 if validated.experiment_profile == "valid374" else None
+            ),
+            "strata": {
+                name: {"n": len(question_ids)}
+                for name, question_ids in validated.strata.items()
+            },
+        },
         "question_ids": validated.question_ids,
         "arms": list(ARM_NAMES),
+        "arm_display_labels": {
+            "a6a": (
+                "A6a-r (qo-v2.1)"
+                if validated.experiment_profile == "valid374"
+                else "A6a"
+            ),
+            "qt4v": "QT-4V",
+            "qt4t": "QT-4T",
+        },
         "registered_contrasts": [name for name, _, _ in REGISTERED_CONTRASTS],
         "grading": {
             "deterministic_grader_version": grade_a6a_confirmatory.GRADER_VERSION,
@@ -1692,9 +2307,14 @@ def assemble_result(
                 grading_dir / "grading_manifest.json"
             ),
             "panel_queue_count": grading_manifest["outputs"]["panel_queue_count"],
+            "partition": grading_manifest["partition"],
+            "routing_by_stratum": routing_by_stratum,
+            "panel_judge_config": panel_judge_config,
         },
         "sealed_completion": validated.completion_summary,
         "accuracy_by_arm": accuracy_by_arm,
+        "accuracy_by_stratum": accuracy_by_stratum,
+        "abstention_by_stratum": abstention_by_stratum,
         "contrasts": contrasts,
         "mechanism_outcomes": mechanism_outcomes,
         "promotion_assessment": promotion_assessment,

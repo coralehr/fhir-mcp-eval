@@ -3,6 +3,7 @@ import datetime as dt
 import json
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 import codex_harness
@@ -27,7 +28,13 @@ class SyntheticQt4Run:
         self.spec = root / "spec.json"
         write_json(
             self.spec,
-            {"question_ids": self.qids, "expected_question_count": len(self.qids)},
+            {
+                "kind": "synthetic_question_spec",
+                "version": "synthetic2-v1",
+                "order_method": "fixture order",
+                "question_ids": self.qids,
+                "expected_question_count": len(self.qids),
+            },
         )
         self.input = root / "input.csv"
         with self.input.open("w", newline="", encoding="utf-8") as handle:
@@ -99,6 +106,10 @@ class SyntheticQt4Run:
         schema.write_text('{"type":"object"}\n', encoding="utf-8")
         runner = supporting / "runner.py"
         runner.write_text("# synthetic runner\n", encoding="utf-8")
+        run_lock = supporting / "run_lock.py"
+        run_lock.write_text("# synthetic run lock\n", encoding="utf-8")
+        gate_code = supporting / "gate.py"
+        gate_code.write_text("# synthetic gate\n", encoding="utf-8")
         gate = supporting / "gate.json"
         recall_arm = {
             "questions_with_gold": 2,
@@ -117,6 +128,8 @@ class SyntheticQt4Run:
                 "schema_version": "qt4-zero-model-packet-gate-v1",
                 "passed": True,
                 "failed_gates": [],
+                "scheduled_question_count": len(self.qids),
+                "scheduled_question_ids": self.qids,
                 "inputs": {
                     "question_spec": {
                         "sha256": qt4_analysis.sha256_file(self.input)
@@ -125,6 +138,12 @@ class SyntheticQt4Run:
                         arm: {"sha256": qt4_analysis.sha256_file(self.packets[arm])}
                         for arm in ARMS
                     },
+                },
+                "dispatch": {
+                    "version": "micro-dispatch-v1",
+                    "microbiology_questions": len(self.qids),
+                    "non_microbiology_questions": 0,
+                    "microbiology_question_ids": sorted(self.qids),
                 },
                 "evaluation_only_gold_metrics": {
                     "recall": {
@@ -180,6 +199,8 @@ class SyntheticQt4Run:
             "schema": schema,
             "harness": Path(codex_harness.__file__).resolve(),
             "runner": runner,
+            "run_lock": run_lock,
+            "gate_code": gate_code,
             **{f"packet_{arm}": self.packets[arm] for arm in ARMS},
         }
         for name, source in snapshot_sources.items():
@@ -195,13 +216,17 @@ class SyntheticQt4Run:
         self.controller = root / "controller" / "manifest.json"
         manifest = {
             "created_at": "2026-07-13T00:00:00+00:00",
-            "kind": "qt4_micro_interleaved_controller_manifest",
-            "schema_version": "qt4-controller-v2",
+            "kind": "qt4_interleaved_controller_manifest",
+            "schema_version": "qt4-controller-v3",
+            "experiment_profile": "synthetic2",
+            "transport_protocol": "separated-stdout-jsonl-stderr-v2",
             "question_ids": self.qids,
             "schedule": [
                 {"question_id": qid, "arm": arm}
-                for qid in self.qids
-                for arm in ARMS
+                for index, qid in enumerate(self.qids)
+                for arm in (
+                    ARMS[index % len(ARMS) :] + ARMS[: index % len(ARMS)]
+                )
             ],
             "execution": {
                 "model": "gpt-5.6-sol",
@@ -272,10 +297,12 @@ class SyntheticQt4Run:
                     "".join(json.dumps(event) + "\n" for event in events),
                     encoding="utf-8",
                 )
+                (qdir / "stderr.log").write_bytes(b"")
                 audit = codex_harness.audit_event_log(qdir / "events.jsonl")
+                stderr_audit = codex_harness.audit_stderr(qdir / "stderr.log")
                 receipt = {
                     "kind": "qt4_attempt_completion",
-                    "schema_version": "qt4-attempt-v2",
+                    "schema_version": "qt4-attempt-v3",
                     "controller_manifest_sha256": self.controller_sha,
                     "arm": arm,
                     "question_id": qid,
@@ -288,10 +315,14 @@ class SyntheticQt4Run:
                     "returncode": 0,
                     "status": "answered",
                     "event_integrity": audit,
+                    "stderr_integrity": stderr_audit,
                     "usage": usage_value,
                     "answer_sha256": qt4_analysis.sha256_file(qdir / "answer.json"),
                     "event_log_sha256": qt4_analysis.sha256_file(
                         qdir / "events.jsonl"
+                    ),
+                    "stderr_log_sha256": qt4_analysis.sha256_file(
+                        qdir / "stderr.log"
                     ),
                     "prompt_sha256": qt4_analysis.sha256_file(qdir / "prompt.txt"),
                 }
@@ -309,15 +340,377 @@ class SyntheticQt4Run:
 
 
 class Qt4AnalysisTests(unittest.TestCase):
-    def prepare(self, synthetic: SyntheticQt4Run, out: Path) -> dict:
-        return qt4_analysis.prepare_grading(
-            controller_manifest=synthetic.controller,
-            question_spec=synthetic.spec,
-            input_path=synthetic.input,
-            arms=synthetic.artifacts(),
-            out_dir=out,
-            expected_question_count=2,
+    @staticmethod
+    def synthetic_profile():
+        return mock.patch.dict(
+            qt4_analysis.EXPERIMENT_PROFILES,
+            {
+                "synthetic2": {
+                    "spec_kind": "synthetic_question_spec",
+                    "spec_version": "synthetic2-v1",
+                    "order_method": "fixture order",
+                    "expected_question_count": 2,
+                    "expected_dispatched_count": 2,
+                    "expected_negative_control_count": 0,
+                    "result_status": "exploratory_test_set_result",
+                }
+            },
         )
+
+    def test_registered_question_count_is_bound_to_controller_profile(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            controller = Path(tmp) / "manifest.json"
+            write_json(
+                controller,
+                {
+                    "kind": "qt4_interleaved_controller_manifest",
+                    "schema_version": "qt4-controller-v3",
+                    "experiment_profile": "valid374",
+                    "transport_protocol": "separated-stdout-jsonl-stderr-v2",
+                },
+            )
+
+            self.assertEqual(
+                qt4_analysis.registered_question_count(controller), 374
+            )
+
+    def test_prepare_grading_derives_count_from_controller_profile(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            synthetic = SyntheticQt4Run(root)
+            with mock.patch.dict(
+                qt4_analysis.EXPERIMENT_PROFILES,
+                {
+                    "synthetic2": {
+                        "spec_kind": "synthetic_question_spec",
+                        "spec_version": "synthetic2-v1",
+                        "order_method": "fixture order",
+                        "expected_question_count": 2,
+                        "expected_dispatched_count": 2,
+                        "expected_negative_control_count": 0,
+                        "result_status": "exploratory_test_set_result",
+                    }
+                },
+            ):
+                manifest = qt4_analysis.prepare_grading(
+                    controller_manifest=synthetic.controller,
+                    question_spec=synthetic.spec,
+                    input_path=synthetic.input,
+                    arms=synthetic.artifacts(),
+                    out_dir=root / "grading",
+                )
+
+            self.assertEqual(
+                manifest["sealed_completion"]["expected_questions_per_arm"],
+                2,
+            )
+
+    def test_frozen_valid374_spec_yields_registered_strata(self):
+        repo = Path(__file__).resolve().parents[1]
+        spec_path = repo / "docs" / "prereg" / "qt4_valid374_spec.json"
+        input_path = repo / "final_dataset" / "valid_holdout374.csv"
+        spec = json.loads(spec_path.read_text(encoding="utf-8"))
+
+        strata = qt4_analysis.load_question_strata(
+            spec_path,
+            profile="valid374",
+            question_ids=spec["question_ids"],
+        )
+
+        self.assertEqual(len(strata["dispatched"]), 44)
+        self.assertEqual(len(strata["negative_control"]), 330)
+        self.assertEqual(len(strata["pooled"]), 374)
+        self.assertEqual(
+            set(strata["dispatched"]), set(spec["microbiology_question_ids"])
+        )
+        self.assertEqual(
+            qt4_analysis.sha256_file(spec_path),
+            qt4_analysis.EXPERIMENT_PROFILES["valid374"][
+                "question_spec_sha256"
+            ],
+        )
+        self.assertEqual(
+            qt4_analysis.sha256_file(input_path),
+            qt4_analysis.EXPERIMENT_PROFILES["valid374"]["input_sha256"],
+        )
+
+    def test_profile_frozen_bytes_are_checked_before_grading(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            synthetic = SyntheticQt4Run(root)
+            config = {
+                "spec_kind": "synthetic_question_spec",
+                "spec_version": "synthetic2-v1",
+                "order_method": "fixture order",
+                "question_spec_sha256": "0" * 64,
+                "input_sha256": qt4_analysis.sha256_file(synthetic.input),
+                "expected_question_count": 2,
+                "expected_dispatched_count": 2,
+                "expected_negative_control_count": 0,
+                "result_status": "exploratory_test_set_result",
+            }
+            with mock.patch.dict(
+                qt4_analysis.EXPERIMENT_PROFILES, {"synthetic2": config}
+            ), self.assertRaisesRegex(ValueError, "preregistered frozen bytes"):
+                qt4_analysis.prepare_grading(
+                    controller_manifest=synthetic.controller,
+                    question_spec=synthetic.spec,
+                    input_path=synthetic.input,
+                    arms=synthetic.artifacts(),
+                    out_dir=root / "grading",
+                )
+
+    def test_controller_execution_and_rotating_schedule_are_pinned(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            synthetic = SyntheticQt4Run(root)
+            controller = json.loads(
+                synthetic.controller.read_text(encoding="utf-8")
+            )
+            controller["execution"]["model"] = "another-model"
+            write_json(synthetic.controller, controller)
+            with self.assertRaisesRegex(ValueError, "gpt-5.6-sol/high"):
+                self.prepare(synthetic, root / "wrong-model")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            synthetic = SyntheticQt4Run(root)
+            controller = json.loads(
+                synthetic.controller.read_text(encoding="utf-8")
+            )
+            controller["schedule"][3:6] = [
+                {"question_id": "q2", "arm": arm} for arm in ARMS
+            ]
+            write_json(synthetic.controller, controller)
+            with self.assertRaisesRegex(ValueError, "rotating arm order"):
+                self.prepare(synthetic, root / "wrong-schedule")
+
+    def test_valid374_promotion_is_fixed_sequence_and_loss_sensitive(self):
+        passing = {
+            "accuracy_difference": 0.1,
+            "mcnemar": {"estimable": True, "exact_two_sided_p": 0.01},
+            "patient_cluster_bootstrap": {"ci_low": 0.02, "ci_high": 0.2},
+            "safety": {
+                "pooled": {"passed": True},
+                "negative_control": {"passed": True},
+            },
+        }
+        contrasts = {
+            "qt4v_minus_a6a": json.loads(json.dumps(passing)),
+            "qt4t_minus_qt4v": json.loads(json.dumps(passing)),
+        }
+        mechanisms = {
+            "vocabulary_gold_change": {
+                "gold_id_occurrences_gained": 2,
+                "gold_id_occurrences_lost": 1,
+            },
+            "traversal_gold_gain": {
+                "gold_id_occurrences_gained": 2,
+                "gold_id_occurrences_lost": 1,
+            },
+        }
+
+        vocabulary_only = qt4_analysis._promotion_assessment(
+            "valid374", contrasts, mechanisms
+        )
+        self.assertTrue(vocabulary_only["h1_vocabulary"]["promoted"])
+        self.assertTrue(vocabulary_only["h2_traversal"]["tested"])
+        self.assertFalse(vocabulary_only["h2_traversal"]["promoted"])
+        self.assertEqual(vocabulary_only["decision"], "promote_vocabulary_only")
+
+        mechanisms["vocabulary_gold_change"] = {
+            "gold_id_occurrences_gained": 1,
+            "gold_id_occurrences_lost": 1,
+        }
+        h1_failed = qt4_analysis._promotion_assessment(
+            "valid374", contrasts, mechanisms
+        )
+        self.assertFalse(h1_failed["h1_vocabulary"]["promoted"])
+        self.assertFalse(h1_failed["h2_traversal"]["tested"])
+        self.assertEqual(
+            h1_failed["h2_traversal"]["decision"], "not_tested_h1_failed"
+        )
+
+    def test_valid374_registered_contrast_uses_only_dispatched_questions(self):
+        qids = ["d1", "d2", "n1", "n2"]
+        strata = {
+            "dispatched": qids[:2],
+            "negative_control": qids[2:],
+            "pooled": qids,
+        }
+        gold = {
+            qid: {"patient_fhir_id": f"patient-{index}"}
+            for index, qid in enumerate(qids)
+        }
+        labels = {
+            "a6a": {qid: 0 for qid in qids},
+            "qt4v": {"d1": 0, "d2": 0, "n1": 1, "n2": 1},
+            "qt4t": {"d1": 0, "d2": 0, "n1": 1, "n2": 1},
+        }
+
+        contrasts = qt4_analysis._profile_contrasts(
+            profile="valid374",
+            strata=strata,
+            gold=gold,
+            labels=labels,
+            n_boot=100,
+        )
+
+        vocabulary = contrasts["qt4v_minus_a6a"]
+        self.assertEqual(vocabulary["analysis_stratum"], "dispatched")
+        self.assertEqual(vocabulary["n"], 2)
+        self.assertEqual(vocabulary["accuracy_difference"], 0.0)
+        self.assertEqual(vocabulary["patient_cluster_bootstrap"]["n_pairs"], 2)
+        self.assertEqual(vocabulary["safety"]["pooled"]["accuracy_difference"], 0.5)
+        self.assertEqual(
+            vocabulary["safety"]["negative_control"]["accuracy_difference"],
+            1.0,
+        )
+
+    def test_valid374_promotion_boundaries_are_strict(self):
+        contrast = {
+            "accuracy_difference": 0.1,
+            "mcnemar": {"estimable": True, "exact_two_sided_p": 0.05},
+            "patient_cluster_bootstrap": {"ci_low": 0.01, "ci_high": 0.2},
+            "safety": {
+                "pooled": {"passed": True},
+                "negative_control": {"passed": True},
+            },
+        }
+        mechanisms = {
+            "vocabulary_gold_change": {
+                "gold_id_occurrences_gained": 1,
+                "gold_id_occurrences_lost": 0,
+            },
+            "traversal_gold_gain": {
+                "gold_id_occurrences_gained": 1,
+                "gold_id_occurrences_lost": 0,
+            },
+        }
+        contrasts = {
+            "qt4v_minus_a6a": contrast,
+            "qt4t_minus_qt4v": json.loads(json.dumps(contrast)),
+        }
+
+        at_alpha = qt4_analysis._promotion_assessment(
+            "valid374", contrasts, mechanisms
+        )
+        self.assertFalse(at_alpha["h1_vocabulary"]["promoted"])
+
+        contrasts["qt4v_minus_a6a"]["mcnemar"]["exact_two_sided_p"] = 0.049
+        contrasts["qt4v_minus_a6a"]["patient_cluster_bootstrap"]["ci_low"] = 0.0
+        at_zero = qt4_analysis._promotion_assessment(
+            "valid374", contrasts, mechanisms
+        )
+        self.assertFalse(at_zero["h1_vocabulary"]["promoted"])
+
+        qids = [f"q{index}" for index in range(100)]
+        labels = {
+            "reference": {qid: 1 for qid in qids},
+            "treatment": {
+                qid: int(index != 0) for index, qid in enumerate(qids)
+            },
+        }
+        exactly_one_point = qt4_analysis._safety_accuracy(
+            treatment="treatment",
+            reference="reference",
+            question_ids=qids,
+            labels=labels,
+        )
+        self.assertTrue(exactly_one_point["passed"])
+        labels["treatment"]["q1"] = 0
+        worse = qt4_analysis._safety_accuracy(
+            treatment="treatment",
+            reference="reference",
+            question_ids=qids,
+            labels=labels,
+        )
+        self.assertFalse(worse["passed"])
+
+    def test_valid374_no_discordance_and_invalid_mechanism_counts_fail_closed(self):
+        passing = {
+            "accuracy_difference": 0.1,
+            "mcnemar": {"estimable": False, "exact_two_sided_p": None},
+            "patient_cluster_bootstrap": {"ci_low": 0.01, "ci_high": 0.2},
+            "safety": {
+                "pooled": {"passed": True},
+                "negative_control": {"passed": True},
+            },
+        }
+        contrasts = {
+            name: json.loads(json.dumps(passing))
+            for name in ("qt4v_minus_a6a", "qt4t_minus_qt4v")
+        }
+        mechanisms = {
+            "vocabulary_gold_change": {
+                "gold_id_occurrences_gained": 1,
+                "gold_id_occurrences_lost": 0,
+            },
+            "traversal_gold_gain": {
+                "gold_id_occurrences_gained": 1,
+                "gold_id_occurrences_lost": 0,
+            },
+        }
+        assessment = qt4_analysis._promotion_assessment(
+            "valid374", contrasts, mechanisms
+        )
+        self.assertFalse(assessment["h1_vocabulary"]["promoted"])
+        self.assertFalse(assessment["h2_traversal"]["tested"])
+
+        for invalid in (True, 1.0, "1"):
+            with self.subTest(invalid=invalid):
+                changed = json.loads(json.dumps(mechanisms))
+                changed["traversal_gold_gain"][
+                    "gold_id_occurrences_gained"
+                ] = invalid
+                with self.assertRaisesRegex(ValueError, "nonnegative integers"):
+                    qt4_analysis._promotion_assessment(
+                        "valid374", contrasts, changed
+                    )
+
+    def test_valid374_fully_passing_fixed_sequence_promotes_both(self):
+        passing = {
+            "accuracy_difference": 0.1,
+            "mcnemar": {"estimable": True, "exact_two_sided_p": 0.01},
+            "patient_cluster_bootstrap": {"ci_low": 0.01, "ci_high": 0.2},
+            "safety": {
+                "pooled": {"passed": True},
+                "negative_control": {"passed": True},
+            },
+        }
+        contrasts = {
+            name: json.loads(json.dumps(passing))
+            for name in ("qt4v_minus_a6a", "qt4t_minus_qt4v")
+        }
+        mechanisms = {
+            "vocabulary_gold_change": {
+                "gold_id_occurrences_gained": 2,
+                "gold_id_occurrences_lost": 1,
+            },
+            "traversal_gold_gain": {
+                "gold_id_occurrences_gained": 1,
+                "gold_id_occurrences_lost": 0,
+            },
+        }
+        assessment = qt4_analysis._promotion_assessment(
+            "valid374", contrasts, mechanisms
+        )
+        self.assertTrue(assessment["h1_vocabulary"]["promoted"])
+        self.assertTrue(assessment["h2_traversal"]["tested"])
+        self.assertTrue(assessment["h2_traversal"]["promoted"])
+        self.assertEqual(
+            assessment["decision"], "promote_vocabulary_and_traversal"
+        )
+
+    def prepare(self, synthetic: SyntheticQt4Run, out: Path) -> dict:
+        with self.synthetic_profile():
+            return qt4_analysis.prepare_grading(
+                controller_manifest=synthetic.controller,
+                question_spec=synthetic.spec,
+                input_path=synthetic.input,
+                arms=synthetic.artifacts(),
+                out_dir=out,
+            )
 
     def complete_panel(self, grading_dir: Path) -> None:
         queue_path = grading_dir / "panel_queue.jsonl"
@@ -339,26 +732,30 @@ class Qt4AnalysisTests(unittest.TestCase):
             "qt4v": True,
             "qt4t": False,
         }
-        for item in cache["items"].values():
-            item["votes"] = [correctness[item["host"]["arm"]]] * 3
-        cache["usage_receipts"].append(
-            {
-                "status": "accepted",
-                "vote_round": 0,
-                "batch_number": 0,
-                "opaque_ids": sorted(cache["items"]),
-                "event_stream_sha256": "f" * 64,
-                "usage": {
-                    "input_tokens": 10,
-                    "cached_input_tokens": 3,
-                    "output_tokens": 2,
-                    "reasoning_output_tokens": 1,
-                    "total_tokens": 12,
+        for vote_round in range(3):
+            batch = panel_grade.deterministic_interleave(
+                blinded, vote_round=vote_round
+            )
+            panel_grade.record_accepted_batch(
+                cache,
+                batch_items=batch,
+                vote_round=vote_round,
+                batch_number=0,
+                result={
+                    item["opaque_id"]: correctness[item["host"]["arm"]]
+                    for item in batch
+                },
+                event_stream_sha256=f"{vote_round + 1}" * 64,
+                usage={
+                    "input_tokens": 10 if vote_round == 0 else 0,
+                    "cached_input_tokens": 3 if vote_round == 0 else 0,
+                    "output_tokens": 2 if vote_round == 0 else 0,
+                    "reasoning_output_tokens": 1 if vote_round == 0 else 0,
+                    "total_tokens": 12 if vote_round == 0 else 0,
                     "total_tokens_source": "reported",
                     "complete": True,
                 },
-            }
-        )
+            )
         cache_path = grading_dir / "panel_votes.json"
         panel_grade.write_cache(cache_path, cache)
         verdicts = panel_grade.majority_verdicts(cache, required_votes=3)
@@ -377,15 +774,15 @@ class Qt4AnalysisTests(unittest.TestCase):
     def assemble(
         self, synthetic: SyntheticQt4Run, grading_dir: Path
     ) -> dict:
-        return qt4_analysis.assemble_result(
-            controller_manifest=synthetic.controller,
-            question_spec=synthetic.spec,
-            input_path=synthetic.input,
-            arms=synthetic.artifacts(),
-            grading_dir=grading_dir,
-            expected_question_count=2,
-            n_boot=200,
-        )
+        with self.synthetic_profile():
+            return qt4_analysis.assemble_result(
+                controller_manifest=synthetic.controller,
+                question_spec=synthetic.spec,
+                input_path=synthetic.input,
+                arms=synthetic.artifacts(),
+                grading_dir=grading_dir,
+                n_boot=200,
+            )
 
     def test_three_arm_grading_is_single_queue_and_panel_prompt_is_arm_blind(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -432,6 +829,9 @@ class Qt4AnalysisTests(unittest.TestCase):
             first_bytes = (grading_dir / "final_result.json").read_bytes()
             result_again = self.assemble(synthetic, grading_dir)
             second_bytes = (grading_dir / "final_result.json").read_bytes()
+            text_report = (grading_dir / "final_result.txt").read_text(
+                encoding="utf-8"
+            )
             expected_packet_bytes = sum(
                 qt4_analysis.canonical_model_packet_bytes(record["packet"])
                 for record in qt4_analysis.load_packet_records(
@@ -470,6 +870,19 @@ class Qt4AnalysisTests(unittest.TestCase):
             ],
             12,
         )
+        self.assertEqual(
+            result["abstention_by_stratum"]["pooled"]["a6a"]["count"], 0
+        )
+        self.assertEqual(
+            result["grading"]["routing_by_stratum"]["pooled"]["a6a"],
+            {"scheduled": 2, "deterministic": 1, "panel": 1},
+        )
+        self.assertEqual(
+            result["grading"]["panel_judge_config"]["requested_votes"], 3
+        )
+
+        self.assertIn("gold resource recall:", text_report)
+        self.assertIn("packet resource footprint:", text_report)
 
         self.assertEqual(a6["model_visible_packet_bytes"]["total"], expected_packet_bytes)
         self.assertNotEqual(expected_packet_bytes, 999_999 * 2)
@@ -521,7 +934,7 @@ class Qt4AnalysisTests(unittest.TestCase):
             next(iter(cache["items"].values()))["votes"] = [True, True]
             write_json(cache_path, cache)
 
-            with self.assertRaisesRegex(ValueError, "fully voted"):
+            with self.assertRaisesRegex(ValueError, "receipt|fully voted"):
                 self.assemble(synthetic, grading_dir)
 
     def test_unregistered_self_consistent_panel_config_fails_closed(self):
@@ -565,6 +978,35 @@ class Qt4AnalysisTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "prompt does not match sealed"):
                 self.prepare(synthetic, grading_dir)
 
+    def test_self_consistent_nonempty_accepted_stderr_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            synthetic = SyntheticQt4Run(root)
+            question_dir = synthetic.run_dirs["a6a"] / "questions" / "q1"
+            stderr_path = question_dir / "stderr.log"
+            stderr_path.write_text("synthetic stderr noise\n", encoding="utf-8")
+            receipt_path = question_dir / "completion.json"
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            receipt["stderr_log_sha256"] = qt4_analysis.sha256_file(stderr_path)
+            receipt["stderr_integrity"] = codex_harness.audit_stderr(stderr_path)
+            write_json(receipt_path, receipt)
+
+            with self.assertRaisesRegex(ValueError, "accepted stderr integrity"):
+                self.prepare(synthetic, root / "grading")
+
+    def test_unregistered_controller_transport_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            synthetic = SyntheticQt4Run(root)
+            controller = json.loads(
+                synthetic.controller.read_text(encoding="utf-8")
+            )
+            controller["transport_protocol"] = "merged-stdout-stderr-v1"
+            write_json(synthetic.controller, controller)
+
+            with self.assertRaisesRegex(ValueError, "sealed QT-4 v3 transport"):
+                self.prepare(synthetic, root / "grading")
+
     def test_append_only_retry_usage_is_validated_and_counted(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -588,10 +1030,14 @@ class Qt4AnalysisTests(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
+            failed_stderr = attempt_dir / "stderr.log"
+            failed_stderr.write_text(
+                "synthetic transport diagnostic\n", encoding="utf-8"
+            )
             attempt_path = attempt_dir / "attempt.json"
             receipt = {
                 "kind": "qt4_attempt_completion",
-                "schema_version": "qt4-attempt-v2",
+                "schema_version": "qt4-attempt-v3",
                 "controller_manifest_sha256": synthetic.controller_sha,
                 "arm": "a6a",
                 "question_id": "q1",
@@ -608,6 +1054,8 @@ class Qt4AnalysisTests(unittest.TestCase):
                 "returncode": 1,
                 "status": "transient_failure",
                 "event_integrity": codex_harness.audit_event_log(failed_events),
+                "stderr_integrity": codex_harness.audit_stderr(failed_stderr),
+                "stderr_log_sha256": qt4_analysis.sha256_file(failed_stderr),
                 "usage": {
                     "input_tokens": 11,
                     "cached_input_tokens": 3,
@@ -618,7 +1066,11 @@ class Qt4AnalysisTests(unittest.TestCase):
                     "events.jsonl": {
                         "path": str(failed_events),
                         "sha256": qt4_analysis.sha256_file(failed_events),
-                    }
+                    },
+                    "stderr.log": {
+                        "path": str(failed_stderr),
+                        "sha256": qt4_analysis.sha256_file(failed_stderr),
+                    },
                 },
                 "attempt_receipt_path": str(attempt_path),
             }
@@ -682,6 +1134,8 @@ class Qt4AnalysisTests(unittest.TestCase):
                     "\n".join(json.dumps(event) for event in events) + "\n",
                     encoding="utf-8",
                 )
+                failed_stderr = attempt_dir / "stderr.log"
+                failed_stderr.write_bytes(b"")
                 audit = codex_harness.audit_event_log(failed_events)
                 marker_path = attempt_dir / "contamination.json"
                 write_json(marker_path, {**audit, "quarantine_path": None})
@@ -691,7 +1145,7 @@ class Qt4AnalysisTests(unittest.TestCase):
                 )
                 receipt = {
                     "kind": "qt4_attempt_completion",
-                    "schema_version": "qt4-attempt-v2",
+                    "schema_version": "qt4-attempt-v3",
                     "controller_manifest_sha256": synthetic.controller_sha,
                     "arm": "a6a",
                     "question_id": "q1",
@@ -706,12 +1160,22 @@ class Qt4AnalysisTests(unittest.TestCase):
                     "returncode": 1,
                     "status": "transient_failure",
                     "event_integrity": audit,
+                    "stderr_integrity": codex_harness.audit_stderr(
+                        failed_stderr
+                    ),
+                    "stderr_log_sha256": qt4_analysis.sha256_file(
+                        failed_stderr
+                    ),
                     "usage": {},
                     "answer_sha256": None,
                     "archived_files": {
                         "events.jsonl": {
                             "path": str(failed_events),
                             "sha256": qt4_analysis.sha256_file(failed_events),
+                        },
+                        "stderr.log": {
+                            "path": str(failed_stderr),
+                            "sha256": qt4_analysis.sha256_file(failed_stderr),
                         },
                         "contamination.json": {
                             "path": str(marker_path),
