@@ -96,6 +96,13 @@ REGISTERED_QT_ARMS = (
     frozenset({"micro-vocab", "micro-traversal"}),
 )
 
+# Product-facing evidence recipe promoted by the sealed QT-4 valid374 holdout.
+# Historical experiment entrypoints still default to explicit feature sets so
+# old manifests remain reproducible. ``compile_evidence.py`` opts into this
+# recipe by default for new packet builds.
+PROMOTED_EVIDENCE_RECIPE = "qt4-vocabulary-promoted-v1"
+EVIDENCE_RECIPES = (PROMOTED_EVIDENCE_RECIPE,)
+
 
 def validate_qt_features(
     features: set[str] | frozenset[str], *, planner: str
@@ -114,6 +121,34 @@ def validate_qt_features(
             f"QT features require the question-only {QO_PLANNER_VERSION} planner"
         )
     return normalized
+
+
+def resolve_evidence_recipe(
+    recipe: str | None,
+    *,
+    explicit_features: set[str] | frozenset[str],
+    planner: str,
+) -> frozenset[str]:
+    """Resolve a versioned product recipe without changing historical arms.
+
+    A recipe and an explicit experiment feature set are mutually exclusive:
+    the former is a promoted product configuration, while the latter keeps the
+    older single-treatment experiment interface reproducible.
+    """
+
+    if recipe is None:
+        return validate_qt_features(explicit_features, planner=planner)
+    if recipe not in EVIDENCE_RECIPES:
+        raise ValueError(
+            f"unknown evidence recipe: {recipe}; valid: {EVIDENCE_RECIPES}"
+        )
+    if explicit_features:
+        raise ValueError(
+            "--evidence-recipe and --features are mutually exclusive"
+        )
+    if recipe == PROMOTED_EVIDENCE_RECIPE:
+        return validate_qt_features({"micro-vocab"}, planner=planner)
+    raise AssertionError(f"unhandled evidence recipe: {recipe}")
 
 
 def resolve_a6a_root_bounds(
@@ -1389,8 +1424,13 @@ def write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
 
 
 def write_manifest(path: Path, *, input_path: Path, output_path: Path, args: argparse.Namespace, records: list[dict[str, Any]]) -> None:
-    features = validate_qt_features(
-        {f.strip() for f in getattr(args, "features", "").split(",") if f.strip()},
+    features = resolve_evidence_recipe(
+        getattr(args, "evidence_recipe", None),
+        explicit_features={
+            f.strip()
+            for f in getattr(args, "features", "").split(",")
+            if f.strip()
+        },
         planner=getattr(args, "planner", "metadata-oracle"),
     )
     max_total_resources, max_packet_chars = resolve_a6a_root_bounds(
@@ -1418,6 +1458,16 @@ def write_manifest(path: Path, *, input_path: Path, output_path: Path, args: arg
             ),
             "planner": getattr(args, "planner", "metadata-oracle"),
             "features": sorted(features),
+            "evidence_recipe": (
+                {
+                    "id": args.evidence_recipe,
+                    "status": "promoted_on_qt4_valid374",
+                    "features": sorted(features),
+                    "promotion_result": "docs/results/QT4_VALID374_RESULT.md",
+                }
+                if getattr(args, "evidence_recipe", None)
+                else None
+            ),
             "planner_version": QO_PLANNER_VERSION if getattr(args, "planner", "") == "question-only" else "metadata-v1",
             "max_total_resources": max_total_resources,
             "max_packet_chars": max_packet_chars,
@@ -1454,11 +1504,15 @@ def write_manifest(path: Path, *, input_path: Path, output_path: Path, args: arg
         "questions": len(records),
         "packet_hashes": {str(r["question_id"]): r["packet"]["sha256"] for r in records},
     }
+    if not getattr(args, "evidence_recipe", None):
+        # Preserve the historical manifest schema byte-for-field: old A6/QT
+        # entrypoints did not carry a recipe key at all.
+        manifest["config"].pop("evidence_recipe")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
 
 
-def main() -> int:
+def main(*, default_evidence_recipe: str | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build A6 query-aware frozen packets.")
     parser.add_argument("--input", type=Path, default=Path("final_dataset/full_test409.csv"))
     parser.add_argument("--output", type=Path, default=Path("runs/a6_query_aware_packets.jsonl"))
@@ -1486,11 +1540,23 @@ def main() -> int:
         default="",
         help=f"comma-separated single-treatment toggles on the frozen base: {','.join(QT_FEATURES)}",
     )
+    parser.add_argument(
+        "--evidence-recipe",
+        choices=EVIDENCE_RECIPES,
+        default=default_evidence_recipe,
+        help=(
+            "versioned promoted product recipe; mutually exclusive with "
+            "--features. Historical a6_packet_builder.py calls default to no recipe"
+        ),
+    )
     args = parser.parse_args()
 
     try:
-        features = validate_qt_features(
-            {f.strip() for f in args.features.split(",") if f.strip()},
+        features = resolve_evidence_recipe(
+            args.evidence_recipe,
+            explicit_features={
+                f.strip() for f in args.features.split(",") if f.strip()
+            },
             planner=args.planner,
         )
     except ValueError as exc:

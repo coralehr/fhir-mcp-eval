@@ -250,6 +250,19 @@ step-up model) is identity-first. This is the eval's most defensible unclaimed t
 
 ## 10. A11: graph and timeline retrieval
 
+**Implementation state (2026-07-14):** the original generic path/safety gate remains in
+`a11_path_required_benchmark.py`. The successor `a11-event-group-v1` gate is now implemented separately in
+`a11_event_group_benchmark.py` so the published v1 fixture is not silently reinterpreted. It freezes three
+synthetic mechanism proxies shaped like the planned V/T/E arms: a promoted-recipe-shaped star, flat
+traversal, and the same retrieved evidence compiled into typed event groups. The hardened ten-case gate passes
+question-only plan isolation, path replay, patient/practice/purpose/version scope, temporal rank,
+selected-event answerability, convergence/cycle behavior, and common byte bounds with zero model calls.
+It neither consumes nor proves byte-equivalence to actual `compile_evidence.py` packets, so a deterministic
+sealed-packet adapter is a hard gate before efficacy. It does not license an accuracy claim. A replay-validated inventory of the sealed QT-4 packets found only
+ten rows with fetched depth-two targets and one usable two-hop family, so the registered 120-question,
+four-family efficacy run must wait for a broader non-PHI substrate. See
+`docs/results/A11_CANDIDATE_INVENTORY.md`; do not convert the mechanism fixture into an answer benchmark.
+
 **Question:** Do explicit temporal/reference graphs improve long-horizon, multi-call clinical tasks beyond flat packets?
 
 **Scope:**

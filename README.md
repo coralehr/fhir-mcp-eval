@@ -27,6 +27,22 @@
 > token ledger, receipts, and forensic audit: [QT4_VALID374_RESULT.md](docs/results/QT4_VALID374_RESULT.md)
 > and [QT4_VALID374_FORENSIC_AUDIT.md](docs/results/QT4_VALID374_FORENSIC_AUDIT.md).
 
+> **New (2026-07-14): the promoted recipe and A11 event-group gate are executable.** New packet builds
+> can use `compile_evidence.py`, which defaults to the holdout-promoted vocabulary recipe while preserving
+> every historical experiment entrypoint. The zero-model A11 gate separately exercises synthetic
+> promoted-recipe-shaped star, flat-traversal, and event-group proxies. On ten non-PHI mechanism/safety
+> cases, traversal and event grouping reached 100% terminal-evidence recall with zero scope leakage; the
+> star proxy reached 0%. The hardened gate derives its plan from question text alone, enforces a registered
+> relation vocabulary plus
+> patient/purpose/practice/version scope, hides unavailable target IDs, and applies one byte bound to every
+> arm. This is a synthetic compiler/integrity result, not byte-equivalence to product packets or
+> answer-accuracy evidence. A sealed-packet adapter remains mandatory before efficacy. The QT-4 inventory has only
+> ten depth-two rows and one path family, so the 120-question efficacy run is correctly blocked pending a
+> multi-family non-PHI substrate. See
+> [A11_EVENT_GROUP_MECHANISM.md](docs/results/A11_EVENT_GROUP_MECHANISM.md) and the frozen
+> [A11_EVENT_GROUP.md](docs/prereg/A11_EVENT_GROUP.md) protocol, plus the
+> [candidate-inventory result](docs/results/A11_CANDIDATE_INVENTORY.md).
+
 ## TL;DR
 
 **What actually makes an LLM agent more accurate on FHIR clinical QA?** We swept the levers an engineer
@@ -73,6 +89,13 @@ apparent win is a context-overflow artifact (a null at matched budget), not a re
   29/44 and recovered substantially more mapped gold evidence, but its incremental correctness contrast
   did not pass the registered significance and interval gates. The failure audit points next to typed
   event grouping, temporal rank, and deterministic answerability—not simply deeper traversal.
+- **A11 is split at the mechanism boundary before spend.** The next answer-bearing experiment has three
+  arms: promoted vocabulary star (V), the same recipe plus flat bounded traversal (T), and the identical
+  fetched evidence compiled into typed event groups with canonical time, first/latest rank, path citations,
+  and an answerability receipt (E). `T−V` measures whether path-required topology makes traversal useful;
+  `E−T` measures whether structure fixes the temporal-binding failure seen in QT-4. The committed synthetic
+  gate proves compiler mechanics only; efficacy cannot start until an adapter proves V is byte-identical to
+  `compile_evidence.py` output and a broader dataset is sealed.
 - ⚠️ **Reproducibility is split.** For the trustworthy re-grade, the committed artifacts are the aggregate
   summary (`medplum-eval/full409_summary.json`) and a durable per-question answer backup
   (`medplum-eval/full409_answers.json`); the per-question panel/deterministic labels live under gitignored
@@ -136,7 +159,8 @@ future A6/A7 arms should report accuracy beside the same token/cost ledger, not 
 
 The repo is ready for GitHub issues. The issue-ready backlog lives in [ROADMAP.md](docs/ROADMAP.md):
 
-- Run the query-aware in-context projection arm.
+- Bind A11 V to sealed `compile_evidence.py` packets, build a multi-family non-PHI efficacy dataset, and
+  seal both before running V/T/E without inspecting answers mid-run.
 - Publish a minimized reproducibility artifact package with checksums.
 - Rerun A0, A0', and A5 on one substrate.
 - Add cross-family or human adjudication for A0' non-numeric labels.
