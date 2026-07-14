@@ -25,15 +25,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--controller-manifest", type=Path, required=True)
     parser.add_argument("--question-spec", type=Path, required=True)
-    parser.add_argument(
-        "--input", type=Path, default=Path("final_dataset/full_test409.csv")
-    )
+    parser.add_argument("--input", type=Path, required=True)
     for arm in ARM_NAMES:
         parser.add_argument(f"--{arm}-packets", type=Path, required=True)
         parser.add_argument(f"--{arm}-dir", type=Path, required=True)
-    parser.add_argument(
-        "--grading-dir", type=Path, default=Path("runs/qt4-micro42-grading")
-    )
+    parser.add_argument("--grading-dir", type=Path, required=True)
     parser.add_argument("--bootstrap-replicates", type=int, default=10_000)
     args = parser.parse_args()
     try:

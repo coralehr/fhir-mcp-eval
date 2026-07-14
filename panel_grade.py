@@ -65,7 +65,7 @@ Return JSON: {"verdicts": [{"item_id": "...", "correct": true|false}, ...]} cove
 ITEMS:
 """
 
-CACHE_FORMAT_VERSION = "panel-cache-v3"
+CACHE_FORMAT_VERSION = "panel-cache-v4"
 JUDGE_PROTOCOL_VERSION = "panel-judge-v2"
 ORDERING_VERSION = "opaque-round-robin-v1"
 OPAQUE_ID_VERSION = "opaque-content-config-v1"
@@ -372,6 +372,97 @@ def new_cache(manifest: dict, blinded_items: list[dict]) -> dict:
     }
 
 
+def _expected_batches(
+    blinded_items: list[dict], manifest: dict
+) -> dict[tuple[int, int], list[str]]:
+    judge_config = manifest["judge_config"]
+    batch_size = int(judge_config["batch_size"])
+    requested_votes = int(judge_config["requested_votes"])
+    expected: dict[tuple[int, int], list[str]] = {}
+    for vote_round in range(requested_votes):
+        ordered = deterministic_interleave(
+            blinded_items, vote_round=vote_round
+        )
+        for batch_number, start in enumerate(range(0, len(ordered), batch_size)):
+            expected[(vote_round, batch_number)] = [
+                item["opaque_id"]
+                for item in ordered[start : start + batch_size]
+            ]
+    return expected
+
+
+def _validate_receipt_coverage(
+    cache: dict, manifest: dict, blinded_items: list[dict]
+) -> None:
+    expected_batches = _expected_batches(blinded_items, manifest)
+    accepted_by_key: dict[tuple[int, int], dict] = {}
+    for receipt in cache["usage_receipts"]:
+        key = (receipt["vote_round"], receipt["batch_number"])
+        if key not in expected_batches or receipt["opaque_ids"] != expected_batches[key]:
+            raise ValueError("panel receipt coverage does not match a registered batch")
+        if receipt["status"] == "accepted":
+            if key in accepted_by_key:
+                raise ValueError("panel receipt coverage has duplicate accepted batches")
+            verdicts_sha256 = receipt.get("verdicts_sha256")
+            if not isinstance(verdicts_sha256, str) or len(verdicts_sha256) != 64:
+                raise ValueError("accepted panel receipt has no verdict binding")
+            accepted_by_key[key] = receipt
+
+    covered_rounds: dict[str, list[int]] = {
+        opaque_id: [] for opaque_id in cache["items"]
+    }
+    for (vote_round, _batch_number), receipt in accepted_by_key.items():
+        result: dict[str, bool] = {}
+        for opaque_id in receipt["opaque_ids"]:
+            votes = cache["items"][opaque_id]["votes"]
+            if len(votes) <= vote_round:
+                raise ValueError("panel receipt coverage has no corresponding cached vote")
+            result[opaque_id] = votes[vote_round]
+            covered_rounds[opaque_id].append(vote_round)
+        if receipt["verdicts_sha256"] != _sha256_json(result):
+            raise ValueError("panel receipt verdict binding changed")
+
+    for opaque_id, item in cache["items"].items():
+        rounds = sorted(covered_rounds[opaque_id])
+        if rounds != list(range(len(item["votes"]))):
+            raise ValueError("panel cached vote receipt coverage is not exact")
+
+
+def record_accepted_batch(
+    cache: dict,
+    *,
+    batch_items: list[dict],
+    vote_round: int,
+    batch_number: int,
+    result: dict[str, bool],
+    usage: dict,
+    event_stream_sha256: str,
+) -> None:
+    opaque_ids = [item["opaque_id"] for item in batch_items]
+    if set(result) != set(opaque_ids) or any(
+        type(value) is not bool for value in result.values()
+    ):
+        raise ValueError("accepted panel result does not cover the exact batch")
+    if any(
+        len(cache["items"][opaque_id]["votes"]) != vote_round
+        for opaque_id in opaque_ids
+    ):
+        raise ValueError("accepted panel batch is not the next vote round")
+    for opaque_id in opaque_ids:
+        cache["items"][opaque_id]["votes"].append(result[opaque_id])
+    cache["usage_receipts"].append(
+        {
+            "status": "accepted",
+            "vote_round": vote_round,
+            "batch_number": batch_number,
+            "opaque_ids": opaque_ids,
+            "event_stream_sha256": event_stream_sha256,
+            "verdicts_sha256": _sha256_json(result),
+            "usage": usage,
+        }
+    )
+
+
 def load_or_initialize_cache(
     path: Path, manifest: dict, blinded_items: list[dict]
 ) -> dict:
@@ -426,6 +517,7 @@ def load_or_initialize_cache(
             or len(cached_votes) > requested_votes
         ):
             raise ValueError(f"invalid cached votes for {opaque_id}")
+    _validate_receipt_coverage(loaded, manifest, blinded_items)
     return loaded
 
 
@@ -656,14 +748,16 @@ def main() -> int:
 
     for vote_round in range(args.votes):
         ordered = deterministic_interleave(blinded_items, vote_round=vote_round)
-        todo = [
-            item
-            for item in ordered
-            if len(cache["items"][item["opaque_id"]]["votes"])
-            <= vote_round
-        ]
-        for i in range(0, len(todo), args.batch_size):
-            batch_items = todo[i : i + args.batch_size]
+        for batch_number, i in enumerate(range(0, len(ordered), args.batch_size)):
+            batch_items = ordered[i : i + args.batch_size]
+            vote_counts = {
+                len(cache["items"][item["opaque_id"]]["votes"])
+                for item in batch_items
+            }
+            if vote_counts == {vote_round + 1}:
+                continue
+            if vote_counts != {vote_round}:
+                raise ValueError("panel batch has inconsistent cached vote rounds")
             try:
                 result, usage, event_stream_sha256 = _run_vote_with_receipt(
                     batch_items,
@@ -677,13 +771,13 @@ def main() -> int:
                     {
                         "status": "failed",
                         "vote_round": vote_round,
-                        "batch_number": i // args.batch_size,
+                        "batch_number": batch_number,
                         "opaque_ids": [item["opaque_id"] for item in batch_items],
                         "event_stream_sha256": exc.event_stream_sha256,
                         "usage": exc.usage,
                     }
                 )
-                print(f"vote round {vote_round} batch {i // args.batch_size}: FAILED {exc}")
+                print(f"vote round {vote_round} batch {batch_number}: FAILED {exc}")
                 # persist and stop — resumable
                 write_cache(args.cache, cache)
                 return 3
@@ -692,29 +786,24 @@ def main() -> int:
                     {
                         "status": "failed",
                         "vote_round": vote_round,
-                        "batch_number": i // args.batch_size,
+                        "batch_number": batch_number,
                         "opaque_ids": [item["opaque_id"] for item in batch_items],
                         "event_stream_sha256": _sha256_text(""),
                         "usage": parse_panel_usage(""),
                     }
                 )
-                print(f"vote round {vote_round} batch {i // args.batch_size}: FAILED {exc}")
+                print(f"vote round {vote_round} batch {batch_number}: FAILED {exc}")
                 write_cache(args.cache, cache)
                 return 3
-            cache["usage_receipts"].append(
-                {
-                    "status": "accepted",
-                    "vote_round": vote_round,
-                    "batch_number": i // args.batch_size,
-                    "opaque_ids": [item["opaque_id"] for item in batch_items],
-                    "event_stream_sha256": event_stream_sha256,
-                    "usage": usage,
-                }
+            record_accepted_batch(
+                cache,
+                batch_items=batch_items,
+                vote_round=vote_round,
+                batch_number=batch_number,
+                result=result,
+                usage=usage,
+                event_stream_sha256=event_stream_sha256,
             )
-            for opaque_id, correct in result.items():
-                votes = cache["items"][opaque_id]["votes"]
-                if len(votes) <= vote_round:
-                    votes.append(correct)
             write_cache(args.cache, cache)
             done_now = sum(
                 1
@@ -722,7 +811,12 @@ def main() -> int:
                 if len(cache["items"][item["opaque_id"]]["votes"])
                 >= args.votes
             )
-            print(f"round {vote_round + 1}/{args.votes} batch {i // args.batch_size + 1}: cached; fully-voted {done_now}/{len(queue)}", flush=True)
+            print(
+                f"round {vote_round + 1}/{args.votes} "
+                f"batch {batch_number + 1}: cached; "
+                f"fully-voted {done_now}/{len(queue)}",
+                flush=True,
+            )
 
     majority = majority_verdicts(cache, required_votes=args.votes)
     out = args.cache.with_name("panel_verdicts.json")

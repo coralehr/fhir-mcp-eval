@@ -220,7 +220,7 @@ class PanelBlindnessTests(unittest.TestCase):
         )[0]["opaque_id"]
         self.assertNotEqual(base_id, protocol_changed_id)
 
-    def test_cache_reuse_requires_exact_versioned_manifest_and_item_bindings(self):
+    def test_cache_reuse_requires_receipts_bound_to_every_cached_vote(self):
         queue = [queue_item("a6a", "q1"), queue_item("a0prime", "q1")]
         config = judge_config()
         blinded = panel_grade.prepare_blinded_items(queue, config)
@@ -233,6 +233,24 @@ class PanelBlindnessTests(unittest.TestCase):
             )
             first_id = blinded[0]["opaque_id"]
             cache["items"][first_id]["votes"].append(True)
+            panel_grade.write_cache(cache_path, cache)
+
+            with self.assertRaisesRegex(ValueError, "receipt coverage"):
+                panel_grade.load_or_initialize_cache(
+                    cache_path, manifest, blinded
+                )
+
+            cache = panel_grade.new_cache(manifest, blinded)
+            result = {item["opaque_id"]: True for item in blinded}
+            panel_grade.record_accepted_batch(
+                cache,
+                batch_items=blinded,
+                vote_round=0,
+                batch_number=0,
+                result=result,
+                usage=panel_grade.parse_panel_usage(""),
+                event_stream_sha256="f" * 64,
+            )
             panel_grade.write_cache(cache_path, cache)
 
             resumed = panel_grade.load_or_initialize_cache(
