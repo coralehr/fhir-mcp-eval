@@ -35,7 +35,8 @@ accuracy gains are never conflated with budget gains.
 
 **Statistical policy (family-level, binding on every item below):** one primary confirmatory hypothesis for
 the program (A6a question-only selection vs A0′, paired, patient-clustered); everything else is exploratory
-until promoted through a pre-registered confirmatory run on an untouched holdout. Development/debugging uses a
+until promoted through a pre-registered confirmatory run on an untouched holdout. QT-4 completed that path on
+2026-07-14: vocabulary was promoted and traversal was not. Development/debugging uses a
 dev slice; the 409-question test set is never reused for arm selection. All paired contrasts report
 patient-cluster-aware intervals; multiplicity is controlled within each item's declared contrast family; and
 post-hoc strata (overflow/resource-real, defined by A0's observed outcome) are descriptive only — acceptance
@@ -75,7 +76,7 @@ before it runs.**
 - Publish hashes/manifests and redacted scorer inputs for Codex-substrate runs; keep raw prompts/events under ignored `runs/` or a reviewed artifact package.
 - Report the serialization sub-table separately (exploratory unless pre-registered).
 
-**Successor arms (reworked 2026-07-12 after a second adversarial review — the A6g bundle is dead).** A Codex gpt-5.6-sol xhigh review of the chart-graph plan (verdict REWORK, 18 P1; verbatim in cstack plans/reviews/2026-07-12-chartgraph-adverse.md) killed "selection queries the chart graph" as a bundle and established: (1) single-feature arms vs A6a, one treatment each — _include pinning, query-time deterministic reducer, endpoint preservation, and a split microbiology sequence: QT-4V fixed vocabulary versus A6a, then QT-4T bounded exact-reference traversal versus QT-4V — each with its own mini-prereg; (2) results on the 409 are EXPLORATORY by definition (the mechanisms were chosen from this set's failures); confirmatory promotion requires an untouched holdout (unused valid-split or a second benchmark); (3) any index-vs-query-time comparison is a byte-equivalence engineering benchmark, never an accuracy arm. The frozen QT-4V/T paths and bounds live in `docs/prereg/QT_ARMS.md`; neither arm tests or selects a persistent graph database.
+**Successor arms (updated 2026-07-14 after QT-4 confirmation).** A Codex gpt-5.6-sol xhigh review of the chart-graph plan (verdict REWORK, 18 P1; verbatim in cstack plans/reviews/2026-07-12-chartgraph-adverse.md) killed "selection queries the chart graph" as a bundle and established single-feature arms plus untouched-holdout promotion. QT-4 then completed that sequence: fixed microbiology vocabulary was promoted on the 374-question holdout, while bounded exact-reference traversal was not accuracy-promoted ([result](results/QT4_VALID374_RESULT.md)). The audit found that traversal recovered linked evidence but flat presentation and temporal binding limited correctness. The next arm therefore starts from the promoted vocabulary baseline and tests a typed event-group compiler with canonical event time, explicit first/latest rank, path citations, and an answerability receipt. Any index-vs-query-time comparison remains a byte-equivalence engineering benchmark, never an accuracy arm; QT-4 did not test or select a persistent graph database.
 
 ## 2. A12: error fidelity — does an honest substrate make the agent smarter? (new)
 
@@ -252,16 +253,25 @@ step-up model) is identity-first. This is the eval's most defensible unclaimed t
 **Question:** Do explicit temporal/reference graphs improve long-horizon, multi-call clinical tasks beyond flat packets?
 
 **Scope:**
+- Use QT-4V, the holdout-promoted fixed-vocabulary packet, as the comparison baseline for relevant
+  microbiology families. Do not compare a new bundle against the retired query-blind baseline.
+- Compile an event group rather than appending fetched resources flat: root clinical event, linked
+  observations/specimen, canonical event timestamp, explicit first/latest rank, typed edge labels,
+  replayable path citations, and a deterministic answerability receipt.
 - Build a patient-scoped event timeline with typed edges: Encounter -> Observation, MedicationRequest -> Medication, Procedure -> Encounter, Condition -> evidence.
 - Add graph/path retrieval for questions that need chains, sequencing, or "around this event" context.
 - Keep traversal **bounded and typed** (allowed paths, allowed resource types, max depth, max resources — no generic traverse-everything tool); score edges best-first and stop when the evidence requirement is satisfied, preserving the traversal path for provenance.
 - **Lazy node views (tree-walk variant):** the agent is never handed a full raw resource — each visited node returns a compact typed summary plus reference stubs (type, id, one-line description), and the agent asks for specific fields when it needs them. Pair with a visited-set so re-visits return "already read" instead of re-inlining. Our existing data says the *naive* version of this fails: A0's multi-turn retrieval is already iterative and it accumulated to overflow (97 residual overflows with no single block >24.8k; 53% same-type re-requests), and Exp 3 showed traversal without query-awareness fetches 448 resources to capture 2 gold ones. Tree-walking is a live arm precisely when combined with compact node views + dedup + a stopping criterion — test it as that combination, not as bare reference-following.
-- Test on FHIR-AgentBench-style questions first, then extend to long-horizon tasks where multi-turn accumulation dominates.
+- Test first on the sealed path-required A11 dataset, where terminal evidence is absent from the star packet,
+  then extend to long-horizon tasks where multi-turn accumulation dominates. QT-4's existing benchmark was
+  mostly star-shaped and is not sufficient to establish general traversal value.
 
 **Acceptance:**
 - Report whether graph/timeline retrieval reduces repeated calls, residual overflow, and date-order errors.
 - Include path citations, not just resource citations.
 - Keep graph retrieval separate from vector memory so failures can be attributed.
+- Report useful-gold yield and cap allocation per path family; QT-4 fetched 159 resources but only 36 mapped
+  gold occurrences, concentrated in nine questions, while both DiagnosticReport path families contributed zero.
 
 ## 11. Re-grade the RL result with trustworthy grading (new)
 

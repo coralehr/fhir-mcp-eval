@@ -18,6 +18,15 @@
 > null branch committed in advance. Preliminary — single substrate, single-family panel, judge
 > re-measurement pending. Full table, strata, and caveats: [docs/A6A_RESULT.md](docs/A6A_RESULT.md).
 
+> **New (2026-07-14): QT-4 passed untouched-holdout confirmation for vocabulary only.** On the
+> predeclared 44-question microbiology stratum within a fresh 374-question valid split, A6a-r scored
+> 10/44, fixed terminology vocabulary 25/44, and vocabulary plus bounded traversal 29/44. Vocabulary
+> versus A6a-r was **+34.1pp** (patient-cluster 95% CI [+17.9, +50.0], exact McNemar p=.000275) with
+> the 330 negative controls inside the registered safety bound. Traversal's incremental **+9.1pp** was
+> unresolved (p=.219), so the fixed-sequence decision is **promote vocabulary only**. Full result,
+> token ledger, receipts, and forensic audit: [QT4_VALID374_RESULT.md](docs/results/QT4_VALID374_RESULT.md)
+> and [QT4_VALID374_FORENSIC_AUDIT.md](docs/results/QT4_VALID374_FORENSIC_AUDIT.md).
+
 ## TL;DR
 
 **What actually makes an LLM agent more accurate on FHIR clinical QA?** We swept the levers an engineer
@@ -58,6 +67,12 @@ apparent win is a context-overflow artifact (a null at matched budget), not a re
   multi-vote panel (two model families, 97% mutual
   agreement) mitigates it; (3) the grading methodology that also caught a boolean Yes/No grading bug in our own
   first fix; (4) the cap-factorial + paired-stats harness that caught the confound twice.
+- **QT-4 confirmatory result: terminology binding earned promotion; generic traversal did not.** Fixed
+  question-only microbiology vocabulary moved the registered untouched-holdout stratum from 10/44 to
+  25/44 while reducing accepted answer tokens 13.9% across all 374 questions. Bounded traversal reached
+  29/44 and recovered substantially more mapped gold evidence, but its incremental correctness contrast
+  did not pass the registered significance and interval gates. The failure audit points next to typed
+  event grouping, temporal rank, and deterministic answerability—not simply deeper traversal.
 - ⚠️ **Reproducibility is split.** For the trustworthy re-grade, the committed artifacts are the aggregate
   summary (`medplum-eval/full409_summary.json`) and a durable per-question answer backup
   (`medplum-eval/full409_answers.json`); the per-question panel/deterministic labels live under gitignored
@@ -67,7 +82,9 @@ apparent win is a context-overflow artifact (a null at matched budget), not a re
   locally recomputable when those dumps are present; [FINAL_REPORT.md](docs/FINAL_REPORT.md) records the exact scope.
   **Opus tool-ablation numbers are not** (run on torn-down EC2). See
   [Reproducibility status](#where-this-was-actually-run--reproducibility-status).
-- **Start here: [FINDINGS.md](docs/FINDINGS.md)** (the capstone conclusion). Then the tool-ablation deep-dive
+- **Start here: [QT4_VALID374_RESULT.md](docs/results/QT4_VALID374_RESULT.md)** for the latest confirmatory
+  result and [QT4_VALID374_FORENSIC_AUDIT.md](docs/results/QT4_VALID374_FORENSIC_AUDIT.md) for the
+  no-cheating/mechanism review. Then read [FINDINGS.md](docs/FINDINGS.md) (the earlier capstone conclusion), the tool-ablation deep-dive
   **[REPORT.md](docs/REPORT.md)** and the code result **[CODE_EXPERIMENT.md](docs/CODE_EXPERIMENT.md)**.
 
 ## Final result: A0 vs A0' vs A5
@@ -348,6 +365,8 @@ docs/                        # findings, reports, and figures
   ├── CODE_EXPERIMENT.md     # the code-interpreter result
   ├── FINAL_REPORT.md        # red-teamed A0 / A0' / A5 three-arm control
   ├── TRUSTWORTHY_REGRADE.md # judge-reliability finding + trustworthy re-grade
+  ├── results/QT4_VALID374_RESULT.md          # confirmatory vocabulary/traversal result + economics
+  ├── results/QT4_VALID374_FORENSIC_AUDIT.md # no-cheating and answer-level mechanism audit
   ├── RELATED_WORK.md, ROADMAP.md
   └── images/                # SVG figures
 scripts/                     # data setup + run + judge-panel shell scripts

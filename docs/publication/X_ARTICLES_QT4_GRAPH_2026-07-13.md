@@ -1,11 +1,9 @@
 # X Article series — clinical agents, context compilation, and graphs
 
-Status: publication-ready drafts based on sealed A6a and QT-4 v3b aggregates.
-Holdout note: the first 374-question controller was aborted pre-analysis after
-20 clean paired triplets and one quarantined transport-integrity attempt. No
-answer content or correctness was inspected, the 60 accepted outputs will not
-be reused, and no holdout outcome may be claimed. The preregistered v2 full
-restart is now running from zero.
+Status: updated 2026-07-14 with the completed sealed QT-4 valid374 result.
+Holdout decision: fixed microbiology vocabulary was promoted; bounded
+exact-reference traversal was not accuracy-promoted. The complete result and
+claim boundary are in `docs/results/QT4_VALID374_RESULT.md`.
 
 ## Article 1 — We improved a healthcare agent by giving it less
 
@@ -46,12 +44,12 @@ prompt. [link]
 
 ---
 
-## Article 2 — The graph did not automatically win. Vocabulary did.
+## Article 2 — Vocabulary survived the holdout. Traversal did not earn promotion.
 
 Healthcare records are graphs. That does not mean “add graph traversal” is a
 free accuracy win.
 
-We ran a sealed three-arm QT-4 experiment on 42 microbiology questions:
+Our first sealed 42-question mechanism screen looked dramatic:
 
 - A6a baseline: 7/42 correct (16.7%)
 - terminology vocabulary: 25/42 (59.5%)
@@ -61,26 +59,44 @@ Vocabulary versus A6a was +42.9 percentage points, with a paired 95% interval
 of +20.5 to +63.6 and exact McNemar p=.000277. Traversal versus vocabulary was
 +7.1 points, with an interval of 0 to +15.9 and p=.25.
 
-So the big measured win belonged to terminology-aware selection. Traversal was
-promising, but statistically unresolved.
+But that screen came from a set whose failures we had already studied. We did
+not promote anything from it. We froze the mechanisms and ran a fresh
+374-question valid-split holdout with 44 predeclared microbiology questions and
+330 negative controls.
 
-Our working explanation, consistent with the failure audit, is that the
-benchmark is mostly a patient-centered star. Many questions fail
-before graph topology matters: the planner asks for the wrong resource type,
-misses the local culture vocabulary, or never retrieves the relevant laboratory
-observations. A better edge-walker cannot repair a query that never reaches the
-right neighborhood.
+On that untouched stratum:
 
-The honest next test is not a broader graph. It is a path-required benchmark
-where the terminal evidence is deliberately absent from the star packet and
-can only be reached through a declared two- or three-hop FHIR reference path.
-That is what our A11 preregistration now specifies.
+- A6a-r baseline: 10/44 correct (22.7%)
+- fixed terminology vocabulary: 25/44 (56.8%)
+- vocabulary plus bounded traversal: 29/44 (65.9%)
+
+Vocabulary versus baseline was +34.1 percentage points, with a
+patient-cluster 95% interval of +17.9 to +50.0 and exact McNemar p=.000275.
+The negative controls stayed within the registered one-point safety bound.
+Vocabulary is promoted for this dataset, model, and harness.
+
+Traversal versus vocabulary was +9.1 points, with an interval of 0.0 to +20.9
+and p=.219. It recovered substantially more linked gold evidence, but it did
+not pass the registered correctness gates. Traversal is not promoted.
+
+The post-result audit explains both outcomes. Vocabulary prevented a missed
+local microbiology term from relaxing into a generic Observation firehose.
+Traversal recovered linked evidence, but a flat appended packet did not bind
+that evidence into a ranked clinical event. Its one unfavorable correctness
+flip retrieved far more gold resources and still selected an older root for a
+“last” question.
+
+The next test is not a broader graph. It is an event-group compiler on a
+path-required benchmark: root event, linked children and specimen, canonical
+event time, explicit first/latest rank, typed edges, path citations, and a
+deterministic answerability receipt.
 
 Graphs should earn their complexity on questions that actually require them.
 
-**Teaser post:** “Healthcare data is a graph” is true. “Therefore graph
-traversal improves agent accuracy” was not yet proven. In QT-4, vocabulary moved
-7/42 → 25/42; traversal moved 25/42 → 28/42 (p=.25). [link]
+**Teaser post:** Vocabulary survived an untouched holdout: 10/44 → 25/44
+(+34.1pp, p=.000275). Traversal reached 29/44, but its incremental effect was
+unresolved (p=.219), so we did not promote it. Better retrieval still needs
+better event structure. [link]
 
 ---
 
@@ -124,23 +140,30 @@ earns it.
 
 ---
 
-## Article 4 — Token usage is part of correctness economics
+## Article 4 — The confirmed accuracy win also reduced tokens
 
 Accuracy without token receipts is an incomplete agent result.
 
-In QT-4 v3b, accepted answer-generation usage was:
+Across all 374 holdout questions, accepted answer-generation usage was:
 
-- A6a: 3,724,515 tokens
-- terminology vocabulary: 945,296 tokens
-- vocabulary plus traversal: 1,002,695 tokens
+- A6a-r: 22,297,617 tokens
+- terminology vocabulary: 19,192,876 tokens
+- vocabulary plus traversal: 19,269,939 tokens
 
-Vocabulary used 74.6% fewer tokens than A6a while moving correctness from 7/42
-to 25/42. Traversal used 6.1% more tokens than vocabulary while adding three
-correct answers.
+Vocabulary used 3,104,741 fewer accepted tokens than A6a-r, a 13.9% reduction,
+while moving the registered microbiology stratum from 10/44 to 25/44.
+Traversal used 77,063 more accepted tokens than vocabulary and reached 29/44,
+but that incremental correctness result was not promoted.
 
-There were zero retries, so accepted and all-attempt totals were identical. That
-detail matters. A system can look efficient if it reports only successful calls
-and hides timeouts, rejected outputs, or retry traffic.
+There were 57 discarded attempts—20, 20, and 17 by arm—so accepted and
+all-attempt totals were not identical. Each discarded attempt had a complete
+tool-free answer but was rejected by the frozen runner because a benign
+model-list warning appeared on stderr. The retries were correctness-blind and
+are fully charged to all-attempt economics.
+
+All answer attempts used 63,737,565 tokens. The arm-blind panel used another
+1,820,656. We report the aborted v1 controller's 3,546,961 tokens separately as
+protocol overhead, not as arm economics.
 
 We now preserve five separate ledgers:
 
@@ -157,9 +180,10 @@ The deeper point: better retrieval can improve accuracy and reduce inference
 cost at the same time. “Send everything and let the model figure it out” is not
 only less reliable; it can be dramatically more token-intensive.
 
-**Teaser post:** QT-4 vocabulary improved 7/42 → 25/42 while cutting answer
-tokens 74.6%. Accuracy and economics moved together. Agent evals should report
-accepted *and all-attempt* tokens, not just a leaderboard score. [link]
+**Teaser post:** On the 374-question holdout, promoted vocabulary cut accepted
+answer tokens 13.9% while moving its registered stratum 10/44 → 25/44. We also
+charged 57 discarded attempts and panel judging separately. Accuracy without
+all-attempt economics is an incomplete result. [link]
 
 ---
 
@@ -208,12 +232,21 @@ That is not glamorous, but it is the work. Preregistration is not a PDF you
 write once. It is a discipline for deciding what may change, what must remain
 sealed, and which claims the resulting evidence actually licenses.
 
-A v2 controller with separated stdout and stderr is now running a full fresh
-374-by-3 restart in a new output namespace. Until that run and its
-blinded grading finish, the correct public statement is that there is no
-holdout result.
+The v2 controller then completed 1,122/1,122 sealed answers, deterministic
+grading, and 120 pinned arm-blind panel calls. Only after that did we inspect
+answer-level behavior. The result promoted vocabulary and did not promote
+traversal.
 
-**Teaser post:** Our first holdout controller hard-stopped on transport
-integrity after 20 clean triplets. We inspected no answers, discarded all 60
-accepted outputs from efficacy and economics, and restarted 374-by-3 from zero
-under a preregistered stdout/stderr-separated protocol. [link]
+The forensic pass found no answer labels, gold IDs, arm names, hidden tools, or
+cross-arm contamination in any reconstructed prompt or event stream. It also
+found weaknesses to fix: benign stderr warnings caused 57 correctness-blind
+retries, panel event streams were not retained, and the artifact bundle is
+hashed but not externally signed.
+
+That is what preregistration is for: not to make a run look perfect, but to
+prevent the imperfections from silently changing the decision rule.
+
+**Teaser post:** We discarded an aborted controller, restarted 374×3 from zero,
+counted every retry, and audited all 1,122 prompts for leakage and tool use.
+Vocabulary passed the frozen gates. Traversal did not. The protocol defects are
+published too. [link]
