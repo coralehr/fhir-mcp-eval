@@ -109,6 +109,17 @@ class A11GradingTests(unittest.TestCase):
             ),
             (0, None),
         )
+        self.assertEqual(
+            a11_grading.deterministic_partition(
+                question=question,
+                gold=unanswerable,
+                answer={
+                    "answer": "Unsupported substantive claim",
+                    "insufficiency_reason": None,
+                },
+            ),
+            (0, None),
+        )
 
         verdict, panel = a11_grading.deterministic_partition(
             question=question,

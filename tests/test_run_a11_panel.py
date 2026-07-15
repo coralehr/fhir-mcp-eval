@@ -8,6 +8,9 @@ from types import SimpleNamespace
 from unittest import mock
 
 import run_a11_panel as panel
+import codex_harness
+import panel_grade
+import run_lock
 from run_lock import AlreadyRunning, acquire_single_instance
 
 
@@ -55,7 +58,17 @@ class A11PanelTests(unittest.TestCase):
                 "grading": {"panel": panel_config},
                 "outputs": {"grading": str(grading), "panel": str(panel_out)},
                 "snapshots": {
-                    "run_a11_panel": {"sha256": panel_source_sha},
+                    name: {
+                        "snapshot_path": str(path),
+                        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                        "bytes": path.stat().st_size,
+                    }
+                    for name, path in {
+                        "run_a11_panel": Path(panel.__file__).resolve(),
+                        "panel_grade": Path(panel_grade.__file__).resolve(),
+                        "codex_harness": Path(codex_harness.__file__).resolve(),
+                        "run_lock": Path(run_lock.__file__).resolve(),
+                    }.items()
                 },
             },
         )
@@ -175,6 +188,19 @@ class A11PanelTests(unittest.TestCase):
         kwargs["stderr"].flush()
         return SimpleNamespace(returncode=1)
 
+    @staticmethod
+    def provider_failure_process(_command, **kwargs):
+        message = "Synthetic provider unavailable"
+        for event in (
+            {"type": "thread.started", "thread_id": "synthetic-thread"},
+            {"type": "turn.started"},
+            {"type": "error", "message": message},
+            {"type": "turn.failed", "error": {"message": message}},
+        ):
+            kwargs["stdout"].write(json.dumps(event) + "\n")
+        kwargs["stdout"].flush()
+        return SimpleNamespace(returncode=1)
+
     def run_live(self, paths, process):
         with mock.patch.object(panel, "codex_version", return_value="codex-test 1.0"):
             return panel.run_panel(
@@ -207,6 +233,8 @@ class A11PanelTests(unittest.TestCase):
             self.assertEqual(config["batch_size"], 20)
             self.assertEqual(config["timeout_seconds"], 600)
             self.assertEqual(config["max_operational_attempts_per_batch"], 3)
+            self.assertTrue(config["empty_nonrepository_cwd"])
+            self.assertFalse(config["tool_events_allowed"])
             self.assertEqual(config["codex_binary"], str(paths["codex"]))
             self.assertEqual(queue_bytes, paths["queue"].read_bytes())
             self.assertIn("acceptable_any", prompt)
@@ -275,7 +303,7 @@ class A11PanelTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             paths = self.make_inputs(Path(tmp))
             for expected_attempt in range(1, 4):
-                result = self.run_live(paths, self.failed_process)
+                result = self.run_live(paths, self.provider_failure_process)
                 self.assertEqual(result["status"], "operational_attempt_failed")
                 self.assertEqual(result["attempt_number"], expected_attempt)
 
@@ -294,16 +322,122 @@ class A11PanelTests(unittest.TestCase):
             self.assertTrue(
                 all(json.loads(path.read_text())["status"] == "failed" for path in receipts)
             )
+            self.assertTrue(
+                all(
+                    json.loads(path.read_text())["retryable_provider_failure"] is True
+                    for path in receipts
+                )
+            )
+
+    def test_completed_malformed_vote_is_never_resampled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = self.make_inputs(Path(tmp))
+            calls = 0
+
+            def malformed(command, **kwargs):
+                nonlocal calls
+                calls += 1
+                verdict_path = Path(command[command.index("--output-last-message") + 1])
+                write_json(verdict_path, {"verdicts": []})
+                kwargs["stdout"].write(
+                    json.dumps(
+                        {
+                            "type": "turn.completed",
+                            "usage": {
+                                "input_tokens": 20,
+                                "output_tokens": 5,
+                                "total_tokens": 25,
+                            },
+                        }
+                    )
+                    + "\n"
+                )
+                kwargs["stdout"].flush()
+                return SimpleNamespace(returncode=0)
+
+            with self.assertRaisesRegex(panel.PanelProtocolError, "nonretryable"):
+                self.run_live(paths, malformed)
+            self.assertEqual(calls, 1)
+            with self.assertRaisesRegex(panel.PanelProtocolError, "nonretryable"):
+                self.run_live(paths, malformed)
+            self.assertEqual(calls, 1)
+
+    def test_tool_event_invalidates_panel_attempt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = self.make_inputs(Path(tmp))
+
+            def tool_using(command, **kwargs):
+                result = self.accepted_process(command, **kwargs)
+                kwargs["stdout"].write(
+                    json.dumps(
+                        {
+                            "type": "item.completed",
+                            "item": {"type": "command_execution", "id": "synthetic-tool"},
+                        }
+                    )
+                    + "\n"
+                )
+                kwargs["stdout"].flush()
+                return result
+
+            with self.assertRaisesRegex(panel.PanelProtocolError, "nonretryable"):
+                self.run_live(paths, tool_using)
+            receipt = json.loads(
+                next(paths["out"].glob("attempts/**/receipt.json")).read_text()
+            )
+            self.assertFalse(receipt["retryable_provider_failure"])
+            self.assertTrue(
+                receipt["event_integrity"]["codex_event_audit"]["contaminated"]
+            )
 
     def test_accepted_vote_is_immutable_and_never_recalled(self):
         with tempfile.TemporaryDirectory() as tmp:
             paths = self.make_inputs(Path(tmp))
             self.run_live(paths, self.accepted_process)
             verdict = next(paths["out"].glob("attempts/**/verdict.json"))
+            verdict.chmod(0o644)
             verdict.write_text('{"verdicts": []}\n', encoding="utf-8")
 
             with self.assertRaisesRegex(panel.PanelProtocolError, "artifact changed"):
                 self.run_live(paths, self.accepted_process)
+
+    def test_audit_replays_attempts_and_derives_majority(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = self.make_inputs(Path(tmp))
+            self.run_live(paths, self.accepted_process)
+            with mock.patch.object(panel, "codex_version", return_value="codex-test 1.0"):
+                audit = panel.audit_completed_panel(
+                    queue_path=paths["queue"],
+                    controller_manifest=paths["controller"],
+                    expected_controller_sha256=paths["controller_sha"],
+                    out_dir=paths["out"],
+                )
+            self.assertTrue(audit["all_checks_passed"])
+            self.assertEqual(audit["votes_per_item"], 3)
+            self.assertEqual(
+                audit["verdicts"], {"e|secret-q2": 1, "v|secret-q1": 1}
+            )
+
+    def test_audit_rejects_unregistered_attempt_receipt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = self.make_inputs(Path(tmp))
+            self.run_live(paths, self.accepted_process)
+            paths["out"].chmod(0o755)
+            attempts = paths["out"] / "attempts"
+            attempts.chmod(0o755)
+            unregistered = attempts / "unregistered"
+            unregistered.mkdir()
+            write_json(unregistered / "receipt.json", {"status": "accepted"})
+            with mock.patch.object(panel, "codex_version", return_value="codex-test 1.0"):
+                with self.assertRaisesRegex(
+                    panel.PanelProtocolError, "unregistered receipt"
+                ):
+                    panel.audit_completed_panel(
+                        queue_path=paths["queue"],
+                        controller_manifest=paths["controller"],
+                        expected_controller_sha256=paths["controller_sha"],
+                        out_dir=paths["out"],
+                    )
 
     def test_binary_sha_is_rechecked_before_each_call(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -368,6 +502,23 @@ class A11PanelTests(unittest.TestCase):
                     panel.load_controller_codex_identity(
                         paths["controller"],
                         expected_controller_sha256=paths["controller_sha"],
+                    )
+
+    def test_controller_identity_rejects_loaded_helper_drift(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = self.make_inputs(Path(tmp))
+            manifest = json.loads(paths["controller"].read_text())
+            manifest["snapshots"]["panel_grade"]["sha256"] = "0" * 64
+            write_json(paths["controller"], manifest)
+            changed_sha = hashlib.sha256(paths["controller"].read_bytes()).hexdigest()
+            paths["controller"].with_suffix(".sha256").write_text(
+                changed_sha + "\n", encoding="ascii"
+            )
+            with mock.patch.object(panel, "codex_version", return_value="codex-test 1.0"):
+                with self.assertRaisesRegex(ValueError, "runtime differs"):
+                    panel.load_controller_codex_identity(
+                        paths["controller"],
+                        expected_controller_sha256=changed_sha,
                     )
 
 

@@ -211,7 +211,10 @@ def deterministic_partition(
     else:
         if gold.get("reference_answer") is not None:
             raise ValueError("unanswerable A11 gold must not expose a reference answer")
-        panel_gold = None
+        # The registered panel rubric only judges categorical aliases. A
+        # substantive answer to an unanswerable item is deterministically
+        # incorrect, so it must never become an undefined panel task.
+        return 0, None
     return None, {
         "question_id": question_id,
         "question": question_text,

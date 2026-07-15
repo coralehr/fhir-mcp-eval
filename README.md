@@ -56,14 +56,17 @@
 > `442ca8d204fbd81f06e0abaf2ea5022b375deabb71a93d5ebaeccef98e99fe3c`, and all 144 rows passed the complete
 > real-producer/strict-adapter/governed-retrieval preflight with zero model calls. An independent pre-answer
 > review also forced two competing temporal facts per case, balanced every failure mode 3 first/3 latest,
-> and added mechanism-level audits. The V/T/E answer run remains blocked only on its separate controller
-> manifest; no accuracy result exists yet. See
+> and added mechanism-level audits. The sealed V/T/E controller, grading, panel-replay and finalization
+> implementation subsequently passed 185 no-model tests plus an end-to-end local seal rehearsal and
+> independent adversarial review. The official Mac mini controller seal and live answer run remain pending;
+> no accuracy result exists yet. See
 > [A11_EVENT_GROUP_MECHANISM.md](docs/results/A11_EVENT_GROUP_MECHANISM.md) and the frozen
 > [A11_EVENT_GROUP.md](docs/prereg/A11_EVENT_GROUP.md) protocol, plus the
 > [adapter gate](docs/results/A11_PRODUCT_PACKET_ADAPTER.md),
 > [four-family producer gate](docs/results/A11_FOUR_FAMILY_PRODUCER_GATE.md),
 > [governed retrieval gate](docs/results/A11_GOVERNED_RETRIEVAL_GATE.md),
 > [dataset gate](docs/results/A11_DATASET_GATE.md),
+> [controller gate](docs/results/A11_CONTROLLER_GATE.md),
 > [candidate-inventory result](docs/results/A11_CANDIDATE_INVENTORY.md), and
 > [substrate audit](docs/results/A11_SUBSTRATE_AUDIT.md).
 

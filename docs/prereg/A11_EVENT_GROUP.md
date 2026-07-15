@@ -11,6 +11,43 @@ A11 producer recipe after the 2026-07-14 pre-answer amendment:
 
 Mechanism fixture: `fixtures/a11_event_group_cases.json`
 
+## Dated pre-answer controller-integrity amendment — 2026-07-15
+
+This amendment was committed before any A11 answer or judge call. It does not
+change an arm, question, contrast, promotion threshold, or analysis stratum.
+It closes implementation ambiguities found during independent controller
+review:
+
+- the exact dataset, answer-input, prompt, schema, runtime, controller, panel,
+  grading and preregistration bytes are bound before execution and replayed or
+  snapshotted into one immutable controller;
+- answer inputs are independently rematerialized from the registered dataset
+  and must compare byte-for-byte before sealing;
+- only the exact, well-formed, answerless provider-failure event shape may be
+  retried; a completed malformed/model-invalid output hard-stops the run and
+  is never resampled;
+- substantive responses to registered unanswerable questions are
+  deterministically incorrect, while the arm-blind panel judges only the
+  registered categorical aliases for answerable questions; and
+- accepted and all-attempt token receipts report missing-receipt counts and
+  completeness explicitly. Unreconciled economics remains a hard failure.
+
+Registered `retry yield` is questions recovered after at least one exact
+provider-failure retry divided by retry attempts, reported per arm (with both
+counts retained). A registered `unsupported answer` is a substantive answer
+to an unanswerable item, a substantive answer with no cited source id, or any
+cited source id absent from that arm's model-visible packet. Path validity is
+the sealed dataset audit's exact JSON-pointer replay against source resources;
+the final result also reports model-packet path structure separately. Panel
+majorities and judge-token economics are re-derived from the complete expected
+vote/batch attempt inventory, and unknown attempt receipts hard-fail audit.
+
+The governance/identity boundary is also clarified before answers: principal,
+practice, purpose, policy and source-version identifiers stay outside model
+packets. Opaque synthetic FHIR resource ids and references, including Patient
+references, are model-visible in every arm to preserve graph topology. They
+contain no PHI and may not encode arm or answer labels.
+
 ## Question
 
 On questions whose terminal evidence is absent from the promoted vocabulary
@@ -324,9 +361,12 @@ only an adapter-verified V bundle, an independently pinned source snapshot and
 an independently pinned canonical benchmark policy artifact; derives roots only from V; validates
 `meta.versionId`; preserves requested versus resolved historical references;
 and seals one immutable retrieval-source hash consumed unchanged by T and E.
-Principal, practice, patient and source identifiers are hashed in the outer
-receipt and never enter model-visible packets. This is benchmark governance,
-not proof of Bonfire's production ABAC. The multi-family dataset and its
+Governance identifiers for principal, practice, purpose, policy and source
+version are hashed in the outer receipt and never enter model-visible packets.
+Opaque synthetic FHIR resource ids and references, including the Patient id,
+do enter every arm because referential integrity is part of the graph task;
+they contain no PHI and may not encode arm or answer labels. This is benchmark
+governance, not proof of Bonfire's production ABAC. The multi-family dataset and its
 deterministic producer/eligibility audit subsequently passed as described in
 [`A11_DATASET_GATE.md`](../results/A11_DATASET_GATE.md). See
 [`A11_GOVERNED_RETRIEVAL_GATE.md`](../results/A11_GOVERNED_RETRIEVAL_GATE.md).

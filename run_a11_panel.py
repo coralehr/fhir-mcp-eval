@@ -19,7 +19,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+import codex_harness
 import panel_grade
+import run_lock
 from run_lock import AlreadyRunning, LOCK_BUSY_EXIT, acquire_single_instance
 
 
@@ -77,6 +79,7 @@ ATTEMPT_RECEIPT_FIELDS = frozenset(
         "verdict",
         "verdicts_sha256",
         "usage",
+        "retryable_provider_failure",
     }
 )
 
@@ -84,6 +87,7 @@ A11_JUDGE_PREAMBLE = """You are grading synthetic clinical question-answering ou
 For each item decide whether the model answer is CORRECT.
 
 Rules:
+- Do not use tools, commands, or files. Judge only the ITEMS included below.
 - `acceptable_any` is a list of independently acceptable categorical forms for
   the same answer. Matching ANY ONE value is sufficient; do not require all.
 - Matching is case- and harmless-format-insensitive. A categorical code or its
@@ -261,12 +265,26 @@ def load_controller_codex_identity(
     panel_snapshot = (
         snapshots.get("run_a11_panel") if isinstance(snapshots, dict) else None
     )
-    if (
-        not _is_sha256(panel_source_sha256)
-        or not isinstance(panel_snapshot, dict)
-        or panel_snapshot.get("sha256") != panel_source_sha256
-        or sha256_file(Path(__file__).resolve()) != panel_source_sha256
-    ):
+    if not _is_sha256(panel_source_sha256) or not isinstance(panel_snapshot, dict):
+        raise ValueError("loaded A11 panel source differs from the controller seal")
+    loaded_runtime = {
+        "run_a11_panel": Path(__file__).resolve(),
+        "panel_grade": Path(panel_grade.__file__).resolve(),
+        "codex_harness": Path(codex_harness.__file__).resolve(),
+        "run_lock": Path(run_lock.__file__).resolve(),
+    }
+    for name, loaded_path in loaded_runtime.items():
+        entry = snapshots.get(name) if isinstance(snapshots, dict) else None
+        if (
+            not isinstance(entry, dict)
+            or not _is_sha256(entry.get("sha256"))
+            or Path(str(entry.get("snapshot_path") or "")).resolve() != loaded_path
+            or not loaded_path.is_file()
+            or sha256_file(loaded_path) != entry.get("sha256")
+            or loaded_path.stat().st_size != entry.get("bytes")
+        ):
+            raise ValueError(f"loaded A11 panel runtime differs from seal: {name}")
+    if panel_snapshot.get("sha256") != panel_source_sha256:
         raise ValueError("loaded A11 panel source differs from the controller seal")
     outputs = controller.get("outputs")
     raw_panel_output = outputs.get("panel") if isinstance(outputs, dict) else None
@@ -441,6 +459,8 @@ def build_judge_config(
         "batch_size": REGISTERED_BATCH_SIZE,
         "timeout_seconds": REGISTERED_TIMEOUT_SECONDS,
         "max_operational_attempts_per_batch": MAX_OPERATIONAL_ATTEMPTS_PER_BATCH,
+        "empty_nonrepository_cwd": True,
+        "tool_events_allowed": False,
         "codex_binary": str(codex.path),
         "codex_version": codex.version,
         "codex_binary_sha256": codex.sha256,
@@ -643,12 +663,23 @@ def _attempt_dirs(out_dir: Path, vote_round: int, batch_number: int) -> list[Pat
 
 def _validate_event_stream(path: Path) -> dict[str, Any]:
     data = path.read_bytes()
+    codex_event_audit = codex_harness.audit_event_log(path)
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
-        return {"valid": False, "reason": "not_utf8", "bytes": len(data)}
+        return {
+            "valid": False,
+            "reason": "not_utf8",
+            "bytes": len(data),
+            "codex_event_audit": codex_event_audit,
+        }
     if not data or not data.endswith(b"\n"):
-        return {"valid": False, "reason": "missing_terminal_newline", "bytes": len(data)}
+        return {
+            "valid": False,
+            "reason": "missing_terminal_newline",
+            "bytes": len(data),
+            "codex_event_audit": codex_event_audit,
+        }
     count = 0
     for line in text.splitlines():
         if not line:
@@ -656,18 +687,61 @@ def _validate_event_stream(path: Path) -> dict[str, Any]:
         try:
             event = json.loads(line)
         except json.JSONDecodeError:
-            return {"valid": False, "reason": "invalid_jsonl", "bytes": len(data)}
+            return {
+                "valid": False,
+                "reason": "invalid_jsonl",
+                "bytes": len(data),
+                "codex_event_audit": codex_event_audit,
+            }
         if not isinstance(event, dict):
-            return {"valid": False, "reason": "non_object_event", "bytes": len(data)}
+            return {
+                "valid": False,
+                "reason": "non_object_event",
+                "bytes": len(data),
+                "codex_event_audit": codex_event_audit,
+            }
         count += 1
     usage = panel_grade.parse_panel_usage(text)
+    valid = (
+        count > 0
+        and usage["complete"] is True
+        and codex_event_audit.get("contaminated") is False
+    )
     return {
-        "valid": count > 0 and usage["complete"] is True,
-        "reason": None if count > 0 and usage["complete"] is True else "incomplete_usage",
+        "valid": valid,
+        "reason": (
+            None
+            if valid
+            else (
+                "event_integrity"
+                if codex_event_audit.get("contaminated") is True
+                else "incomplete_usage"
+            )
+        ),
         "bytes": len(data),
         "events": count,
         "usage": usage,
+        "codex_event_audit": codex_event_audit,
     }
+
+
+def _retryable_provider_failure(
+    *,
+    returncode: int | None,
+    error: str | None,
+    event_integrity: dict[str, Any],
+    stderr_empty: bool,
+    verdict_exists: bool,
+) -> bool:
+    return (
+        returncode not in (None, 0)
+        and error == "invalid_transport"
+        and stderr_empty
+        and not verdict_exists
+        and codex_harness.is_retryable_incomplete_packet_audit(
+            event_integrity.get("codex_event_audit")
+        )
+    )
 
 
 def _parse_verdict(path: Path, expected_ids: list[str]) -> dict[str, bool]:
@@ -742,7 +816,7 @@ def execute_attempt(
         "--output-last-message",
         str(verdict_path.resolve()),
         "-C",
-        str(attempt_dir.resolve()),
+        "__A11_EMPTY_CWD__",
         "-s",
         "read-only",
         "-m",
@@ -755,19 +829,21 @@ def execute_attempt(
     returncode: int | None = None
     error: str | None = None
     try:
-        with event_path.open("w", encoding="utf-8") as stdout_handle, stderr_path.open(
-            "w", encoding="utf-8"
-        ) as stderr_handle:
-            process = run_process(
-                command,
-                input=prompt,
-                stdout=stdout_handle,
-                stderr=stderr_handle,
-                text=True,
-                timeout=REGISTERED_TIMEOUT_SECONDS,
-                check=False,
-            )
-            returncode = process.returncode
+        with tempfile.TemporaryDirectory(prefix="a11-panel-empty-cwd-") as sandbox:
+            command[command.index("__A11_EMPTY_CWD__")] = str(Path(sandbox).resolve())
+            with event_path.open("w", encoding="utf-8") as stdout_handle, stderr_path.open(
+                "w", encoding="utf-8"
+            ) as stderr_handle:
+                process = run_process(
+                    command,
+                    input=prompt,
+                    stdout=stdout_handle,
+                    stderr=stderr_handle,
+                    text=True,
+                    timeout=REGISTERED_TIMEOUT_SECONDS,
+                    check=False,
+                )
+                returncode = process.returncode
     except subprocess.TimeoutExpired:
         error = "timeout"
     except Exception as exc:  # Persist transport failures without leaking details.
@@ -793,6 +869,16 @@ def execute_attempt(
         error = "invalid_transport"
 
     accepted = result is not None and error is None
+    retryable_provider_failure = (
+        not accepted
+        and _retryable_provider_failure(
+            returncode=returncode,
+            error=error,
+            event_integrity=event_integrity,
+            stderr_empty=stderr_empty,
+            verdict_exists=verdict_path.exists(),
+        )
+    )
     receipt = {
         "kind": "a11_panel_attempt",
         "schema_version": PANEL_ATTEMPT_VERSION,
@@ -819,6 +905,7 @@ def execute_attempt(
         "verdict": _artifact_receipt(verdict_path),
         "verdicts_sha256": sha256_json(result) if result is not None else None,
         "usage": event_integrity.get("usage", panel_grade.parse_panel_usage("")),
+        "retryable_provider_failure": retryable_provider_failure,
     }
     _write_json_atomic(attempt_dir / "receipt.json", receipt)
     return AttemptOutcome(accepted=accepted, receipt=receipt, result=result)
@@ -929,6 +1016,18 @@ def _validate_attempt_receipt(
             pass
         else:
             raise PanelProtocolError(f"valid panel vote was recorded as failed: {attempt_dir}")
+    expected_retryable = (
+        status == "failed"
+        and _retryable_provider_failure(
+            returncode=receipt.get("returncode"),
+            error=receipt.get("error"),
+            event_integrity=observed_event_integrity,
+            stderr_empty=observed_stderr_empty,
+            verdict_exists=(attempt_dir / "verdict.json").exists(),
+        )
+    )
+    if receipt.get("retryable_provider_failure") is not expected_retryable:
+        raise PanelProtocolError(f"panel retry classification changed: {attempt_dir}")
     return receipt, result
 
 
@@ -948,7 +1047,7 @@ def collect_panel_state(
         accepted_result: dict[str, bool] | None = None
         accepted_index: int | None = None
         for index, attempt_dir in enumerate(attempts):
-            _receipt, result = _validate_attempt_receipt(
+            receipt, result = _validate_attempt_receipt(
                 attempt_dir,
                 manifest=manifest,
                 vote_round=vote_round,
@@ -960,6 +1059,10 @@ def collect_panel_state(
                     raise PanelProtocolError("panel batch has multiple accepted attempts")
                 accepted_result = result
                 accepted_index = index
+            elif receipt.get("retryable_provider_failure") is not True:
+                raise PanelProtocolError(
+                    f"nonretryable panel failure is a hard stop: {attempt_dir}"
+                )
         if accepted_index is not None and accepted_index != len(attempts) - 1:
             raise PanelProtocolError("panel batch has attempts after an accepted vote")
         if accepted_result is not None:
@@ -982,6 +1085,26 @@ def _write_final_outputs(
     blinded_items: list[dict[str, Any]],
     votes: dict[str, list[bool]],
 ) -> None:
+    verdicts, final_manifest = _derived_final_outputs(
+        out_dir,
+        manifest=manifest,
+        blinded_items=blinded_items,
+        votes=votes,
+    )
+    _write_json_atomic(out_dir / "panel_verdicts.json", verdicts)
+    _write_json_atomic(out_dir / "panel_verdicts.manifest.json", final_manifest)
+    for path in sorted(out_dir.rglob("*"), reverse=True):
+        path.chmod(0o555 if path.is_dir() else 0o444)
+    out_dir.chmod(0o555)
+
+
+def _derived_final_outputs(
+    out_dir: Path,
+    *,
+    manifest: dict[str, Any],
+    blinded_items: list[dict[str, Any]],
+    votes: dict[str, list[bool]],
+) -> tuple[dict[str, int], dict[str, Any]]:
     if any(len(item_votes) != REGISTERED_VOTES for item_votes in votes.values()):
         raise PanelProtocolError("cannot finalize an incomplete A11 panel")
     hosts = {item["opaque_id"]: item["host"] for item in blinded_items}
@@ -992,8 +1115,17 @@ def _write_final_outputs(
         for opaque_id, item_votes in votes.items()
     }
     verdicts = dict(sorted(verdicts.items()))
-    _write_json_atomic(out_dir / "panel_verdicts.json", verdicts)
-    attempt_receipts = sorted((out_dir / "attempts").rglob("receipt.json"))
+    expected_attempt_dirs = [
+        attempt_dir
+        for vote_batch in expected_batches(blinded_items)
+        for attempt_dir in _attempt_dirs(out_dir, *vote_batch)
+    ]
+    attempt_receipts = sorted(
+        attempt_dir / "receipt.json" for attempt_dir in expected_attempt_dirs
+    )
+    discovered_receipts = sorted((out_dir / "attempts").rglob("receipt.json"))
+    if attempt_receipts != discovered_receipts:
+        raise PanelProtocolError("panel attempt inventory contains an unregistered receipt")
     receipts = [_read_json(path) for path in attempt_receipts]
     final_manifest = {
         "panel_manifest_sha256": sha256_file(out_dir / "manifest.json"),
@@ -1009,7 +1141,85 @@ def _write_final_outputs(
             {"usage_receipts": receipts}
         ),
     }
-    _write_json_atomic(out_dir / "panel_verdicts.manifest.json", final_manifest)
+    return verdicts, final_manifest
+
+
+def _validate_final_outputs(
+    out_dir: Path,
+    *,
+    expected_verdicts: dict[str, int],
+    expected_manifest: dict[str, Any],
+) -> None:
+    if (
+        _read_json(out_dir / "panel_verdicts.json") != expected_verdicts
+        or _read_json(out_dir / "panel_verdicts.manifest.json") != expected_manifest
+    ):
+        raise PanelProtocolError("A11 panel final outputs differ from replayed votes")
+
+
+def audit_completed_panel(
+    *,
+    queue_path: Path,
+    controller_manifest: Path,
+    expected_controller_sha256: str,
+    out_dir: Path,
+) -> dict[str, Any]:
+    """Replay every sealed attempt and derive the exact majority result."""
+
+    controller_sha256, codex, registered_panel_output = load_controller_codex_identity(
+        controller_manifest.resolve(),
+        expected_controller_sha256=expected_controller_sha256,
+    )
+    out_dir = out_dir.resolve()
+    if out_dir != registered_panel_output:
+        raise ValueError("out_dir differs from the registered panel output")
+    validate_registered_grading_queue(
+        controller_manifest=controller_manifest.resolve(),
+        controller_manifest_sha256=controller_sha256,
+        queue_path=queue_path,
+    )
+    queue_bytes, queue = load_a11_queue(queue_path)
+    judge_config = build_judge_config(
+        controller_manifest_sha256=controller_sha256,
+        codex=codex,
+    )
+    blinded = prepare_blinded_items(queue, judge_config)
+    identity = build_manifest_identity(
+        controller_manifest_sha256=controller_sha256,
+        queue_sha256=sha256_bytes(queue_bytes),
+        judge_config=judge_config,
+        blinded_items=blinded,
+    )
+    with acquire_single_instance(panel_lock_path(out_dir)):
+        manifest = _read_json(out_dir / "manifest.json")
+        if manifest != identity:
+            raise PanelProtocolError("immutable A11 panel manifest changed")
+        _batches, votes = collect_panel_state(
+            out_dir, manifest=manifest, blinded_items=blinded
+        )
+        verdicts, final_manifest = _derived_final_outputs(
+            out_dir,
+            manifest=manifest,
+            blinded_items=blinded,
+            votes=votes,
+        )
+        _validate_final_outputs(
+            out_dir,
+            expected_verdicts=verdicts,
+            expected_manifest=final_manifest,
+        )
+    return {
+        "schema_version": "a11-panel-replay-audit-v1",
+        "controller_manifest_sha256": controller_sha256,
+        "queue_sha256": sha256_bytes(queue_bytes),
+        "items": len(blinded),
+        "votes_per_item": REGISTERED_VOTES,
+        "verdicts": verdicts,
+        "verdicts_sha256": sha256_json(verdicts),
+        "panel_token_usage": final_manifest["panel_token_usage"],
+        "attempt_receipt_sha256": final_manifest["attempt_receipt_sha256"],
+        "all_checks_passed": True,
+    }
 
 
 def run_panel(
@@ -1095,6 +1305,10 @@ def run_panel(
                 run_process=run_process,
             )
             if not outcome.accepted:
+                if outcome.receipt.get("retryable_provider_failure") is not True:
+                    raise PanelProtocolError(
+                        "nonretryable panel failure is a hard stop"
+                    )
                 return {
                     "items": len(blinded),
                     "fully_voted": sum(
@@ -1110,12 +1324,25 @@ def run_panel(
             for opaque_id, value in outcome.result.items():
                 votes[opaque_id].append(value)
 
-        _write_final_outputs(
+        expected_verdicts, expected_final_manifest = _derived_final_outputs(
             out_dir,
             manifest=manifest,
             blinded_items=blinded,
             votes=votes,
         )
+        if (out_dir / "panel_verdicts.manifest.json").exists():
+            _validate_final_outputs(
+                out_dir,
+                expected_verdicts=expected_verdicts,
+                expected_manifest=expected_final_manifest,
+            )
+        else:
+            _write_final_outputs(
+                out_dir,
+                manifest=manifest,
+                blinded_items=blinded,
+                votes=votes,
+            )
         return {
             "items": len(blinded),
             "fully_voted": len(blinded),
@@ -1132,15 +1359,26 @@ def main() -> int:
     parser.add_argument("--expected-controller-sha256", required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--live", action="store_true")
+    parser.add_argument("--audit", action="store_true")
     args = parser.parse_args()
     try:
-        result = run_panel(
-            queue_path=args.queue,
-            controller_manifest=args.controller_manifest,
-            expected_controller_sha256=args.expected_controller_sha256,
-            out_dir=args.out_dir,
-            live=args.live,
-        )
+        if args.audit:
+            if args.live:
+                parser.error("--audit and --live are mutually exclusive")
+            result = audit_completed_panel(
+                queue_path=args.queue,
+                controller_manifest=args.controller_manifest,
+                expected_controller_sha256=args.expected_controller_sha256,
+                out_dir=args.out_dir,
+            )
+        else:
+            result = run_panel(
+                queue_path=args.queue,
+                controller_manifest=args.controller_manifest,
+                expected_controller_sha256=args.expected_controller_sha256,
+                out_dir=args.out_dir,
+                live=args.live,
+            )
     except AlreadyRunning as exc:
         print(f"ALREADY_RUNNING: {exc}")
         return LOCK_BUSY_EXIT

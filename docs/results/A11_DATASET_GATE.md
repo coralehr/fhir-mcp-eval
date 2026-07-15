@@ -1,6 +1,6 @@
 # A11 deterministic dataset gate
 
-Status: **passed and sealed before answer calls; controller seal pending**
+Status: **passed and sealed before answer calls; controller implementation approved, execution-host seal pending**
 
 Date: 2026-07-15
 
@@ -81,10 +81,12 @@ mechanisms fail closed. It proves dataset and compiler mechanics only.
 It does not prove graph traversal or event grouping improves answer accuracy,
 that a native graph database is preferable to Postgres, or that production
 authorization is complete. It licenses assembly of the separately sealed A11
-controller. Answer calls remain blocked until that controller independently
-binds the dataset hash, model, Codex version, prompts, answer schema, retry
-policy, panel, grading configuration, and fixed analysis order. Once that seal
-exists, no answers may be inspected mid-run and no sealed inputs may change.
+controller. That implementation and its local zero-model rehearsal now pass;
+see [`A11_CONTROLLER_GATE.md`](A11_CONTROLLER_GATE.md). Answer calls remain
+blocked until the execution-host seal independently binds the dataset hash,
+model, Codex version, prompts, answer schema, retry policy, panel, grading
+configuration, and fixed analysis order. Once that seal exists, no answers may
+be inspected mid-run and no sealed inputs may change.
 
 ## Reproduction
 
