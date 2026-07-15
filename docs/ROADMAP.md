@@ -42,9 +42,11 @@ patient-cluster-aware intervals; multiplicity is controlled within each item's d
 post-hoc strata (overflow/resource-real, defined by A0's observed outcome) are descriptive only — acceptance
 criteria use pre-treatment strata (independently tokenized record size, question class).
 
-**Ordering gate:** credibility repairs (items 13–16: reproducibility artifact, same-instance rerun,
-cross-family adjudication, judge re-measurement) gate any *published headline* from new arms — a new arm may
-be piloted first, but no accuracy claim ships while those four remain open.
+**Publication gate:** credibility repairs in items 13-16 continue to gate renewed
+headlines about the legacy A0/A0'/A5 program. A separately preregistered arm may
+publish only when its own inputs, controller, answer receipts, grading, raw
+archive, token ledger, and post-result forensic audit form a complete evidence
+chain. No new accuracy claim ships from a pilot or an incomplete chain.
 
 **Design-review debt:** an independent adversarial review (2026-07-11, gpt-5.6-sol xhigh) filed 37 findings
 against this file — bundle/confound splits per arm (A6a–d, A12's four-way split, A7's incremental sequence,
@@ -53,6 +55,33 @@ un-runnable acceptance criteria (A10-VEC has no note-grounded gold; the re-grade
 hard-coded to this fork's shapes). **Every arm's pre-registration must address its findings in
 [docs/reviews/2026-07-11-adversarial-roadmap-review.md](reviews/2026-07-11-adversarial-roadmap-review.md)
 before it runs.**
+
+## Current execution order after QT-4 and A11
+
+The evidence through 2026-07-15 changes the order of work:
+
+1. **Keep and operationalize the promoted vocabulary recipe.** QT-4 valid374
+   promoted fixed question-only microbiology vocabulary while its 330 negative
+   controls stayed inside the registered safety bound.
+2. **Do not promote generic traversal from QT-4.** It improved linked-evidence
+   recall, but its incremental correctness contrast did not pass the registered
+   gates.
+3. **Treat A11 as a path-required mechanism result, not a graph-product result.**
+   Traversal supplied all deliberately hidden terminal evidence, but event
+   grouping did not earn promotion and was confounded with explicit temporal
+   selection and an answerability receipt.
+4. **Run A11b next only after no-model protocol and corpus gates close.** Compare
+   flat traversal, flat traversal plus the same selection/completeness aids, and
+   event grouping plus those identical aids on a harder untouched holdout.
+5. **Build the graph-neutral compiler and materialized-edge benchmark in
+   parallel.** This is a byte-equivalence, authorization, correction, and latency
+   program, not an answer-accuracy arm or a storage-engine selection.
+6. **After A11b, prioritize A12 error fidelity, then A14 authorization.** Both
+   target production substrate guarantees that the completed graph experiments
+   did not measure.
+
+The executable gates, stop rules, and product/research split are in
+[NEXT_EXPERIMENT_PLAN.md](NEXT_EXPERIMENT_PLAN.md).
 
 ## 1. A6: run the query-aware in-context projection arm — **A6a RUN 2026-07-12: +9.5pp over A0′ (p=1.3e-5), see [A6A_RESULT.md](A6A_RESULT.md)**
 
@@ -76,7 +105,19 @@ before it runs.**
 - Publish hashes/manifests and redacted scorer inputs for Codex-substrate runs; keep raw prompts/events under ignored `runs/` or a reviewed artifact package.
 - Report the serialization sub-table separately (exploratory unless pre-registered).
 
-**Successor arms (updated 2026-07-14 after QT-4 confirmation).** A Codex gpt-5.6-sol xhigh review of the chart-graph plan (verdict REWORK, 18 P1; verbatim in cstack plans/reviews/2026-07-12-chartgraph-adverse.md) killed "selection queries the chart graph" as a bundle and established single-feature arms plus untouched-holdout promotion. QT-4 then completed that sequence: fixed microbiology vocabulary was promoted on the 374-question holdout, while bounded exact-reference traversal was not accuracy-promoted ([result](results/QT4_VALID374_RESULT.md)). The audit found that traversal recovered linked evidence but flat presentation and temporal binding limited correctness. The next arm therefore starts from the promoted vocabulary baseline and tests a typed event-group compiler with canonical event time, explicit first/latest rank, path citations, and an answerability receipt. Any index-vs-query-time comparison remains a byte-equivalence engineering benchmark, never an accuracy arm; QT-4 did not test or select a persistent graph database.
+**Successor arms (updated 2026-07-15 after QT-4 and A11).** A Codex
+gpt-5.6-sol xhigh review of the chart-graph plan (verdict REWORK, 18 P1;
+verbatim in cstack plans/reviews/2026-07-12-chartgraph-adverse.md) killed
+"selection queries the chart graph" as a bundle and established single-feature
+arms plus untouched-holdout promotion. QT-4 promoted fixed microbiology
+vocabulary on the 374-question holdout while bounded exact-reference traversal
+was not accuracy-promoted ([result](results/QT4_VALID374_RESULT.md)). A11 then
+showed that traversal solves deliberately path-hidden evidence, but its event-
+group arm bundled temporal selection and an answerability receipt and did not
+earn promotion ([result](results/A11_RESULT.md)). A11b must now hold those aids
+constant to isolate grouping. Any index-vs-query-time comparison remains a
+byte-equivalence engineering benchmark, never an accuracy arm; neither QT-4 nor
+A11 tested or selected a persistent graph database.
 
 ## 2. A12: error fidelity — does an honest substrate make the agent smarter? (new)
 
@@ -248,64 +289,58 @@ step-up model) is identity-first. This is the eval's most defensible unclaimed t
 - A leakage table: filter-in-prompt vs filter-at-retrieval under adversarial questions (expected: ≥1 vs 0).
 - Honest scoping note about what a 100-patient single-tenant corpus can and cannot support.
 
-## 10. A11: graph and timeline retrieval
+## 10. A11: graph and timeline retrieval - **A11 COMPLETE 2026-07-15; traversal mechanism passed, event grouping not promoted**
 
-**Implementation state (2026-07-15):** the original generic path/safety gate remains in
-`a11_path_required_benchmark.py`. The successor `a11-event-group-v1` gate is now implemented separately in
-`a11_event_group_benchmark.py` so the published v1 fixture is not silently reinterpreted. It freezes three
-synthetic mechanism proxies shaped like the planned V/T/E arms: a promoted-recipe-shaped star, flat
-traversal, and the same retrieved evidence compiled into typed event groups. The hardened ten-case gate passes
-question-only plan isolation, path replay, patient/practice/purpose/version scope, temporal rank,
-selected-event answerability, convergence/cycle behavior, and common byte bounds with zero model calls.
-The path-bound `a11_packet_adapter.py` now validates a strict promoted JSONL/manifest envelope against an
-independently supplied manifest hash and returns the literal model-visible V bytes without passing through the
-synthetic star proxy. Arbitrary clinical FHIR content still requires pinned source/extractor provenance. The
-2026-07-15 governed-retrieval gate now binds adapter-verified V roots to a pinned
-principal/practice/purpose/patient/source-version context and one immutable version-preserving T/E retrieval
-result. The deterministic dataset gate is now sealed, but no answer run or accuracy result exists yet. A
-replay-validated inventory of the sealed QT-4 packets found only ten rows with fetched depth-two targets and
-one usable two-hop family. A later local audit found a 7,883-resource synthetic export with many generic
-paths, but zero depth-two paths under A11's frozen microbiology registry and only 11 patient clusters. The
-registered 120-question, four-family efficacy run must therefore wait for a pinned, deterministically
-augmented non-PHI substrate. The separately versioned pre-answer
-`a11-four-family-v1` amendment now resolves the former producer blocker: it preserves historical
-`qo-v2.1` while binding `qo-v2.2-a11-four-family` only for the A11 recipe, and the actual entrypoint/adapter
-gate reaches all four registered root/path families without model calls. The governed authorization/
-source-version result is recorded in `docs/results/A11_GOVERNED_RETRIEVAL_GATE.md`. See
-`docs/results/A11_PRODUCT_PACKET_ADAPTER.md`, `docs/results/A11_CANDIDATE_INVENTORY.md`, and
-`docs/results/A11_SUBSTRATE_AUDIT.md`, plus
-`docs/results/A11_FOUR_FAMILY_PRODUCER_GATE.md`. The 2026-07-15 pre-answer source/depth amendment adds
-`a11-four-family-depth-aware-v1` plus a deterministic builder over the pinned official 115-patient Synthea
-sample archive. It freezes 24 development and 120 efficacy rows across all eight family-depth cells. The
-parent-side double build was byte-identical at manifest SHA-256
-`442ca8d204fbd81f06e0abaf2ea5022b375deabb71a93d5ebaeccef98e99fe3c`; all 144 rows passed the real producer,
-strict adapter, and governed shared-retrieval preflight with zero model calls. Each case now carries two
-distinct competing temporal facts and each failure mode is balanced 3 first/3 latest. The next step is to
-seal the controller manifest, then run frozen V/T/E without mid-run answer inspection.
-See `docs/results/A11_DATASET_GATE.md`; do not convert the mechanism fixture into an answer benchmark.
+**Result:** On the sealed 120-question non-PHI path-required corpus, V/T/E scored
+24/120, 119/120, and 120/120. Traversal moved terminal-evidence recall from
+0/96 to 96/96 on answerable questions. The registered E-minus-T primary was
++0.833 points with patient-cluster 95% interval [0, +2.564], so E did not earn
+promotion. See [A11_RESULT.md](results/A11_RESULT.md) and
+[A11_FORENSIC_AUDIT.md](results/A11_FORENSIC_AUDIT.md).
 
-**Question:** Do explicit temporal/reference graphs improve long-horizon, multi-call clinical tasks beyond flat packets?
+**Interpretation:** The result proves a narrow prerequisite: bounded traversal
+can make genuinely path-hidden evidence answerable on this constructed corpus.
+It does not prove event-group efficacy, natural-chart generality, or a native
+graph-store advantage. E's only gain occurred on an unanswerable case and E
+bundled grouping with canonical temporal selection and a deterministic
+answerability receipt.
 
-**Scope:**
-- Use QT-4V, the holdout-promoted fixed-vocabulary packet, as the comparison baseline for relevant
-  microbiology families. Do not compare a new bundle against the retired query-blind baseline.
-- Compile an event group rather than appending fetched resources flat: root clinical event, linked
-  observations/specimen, canonical event timestamp, explicit first/latest rank, typed edge labels,
-  replayable path citations, and a deterministic answerability receipt.
-- Build a patient-scoped event timeline with typed edges: Encounter -> Observation, MedicationRequest -> Medication, Procedure -> Encounter, Condition -> evidence.
-- Add graph/path retrieval for questions that need chains, sequencing, or "around this event" context.
-- Keep traversal **bounded and typed** (allowed paths, allowed resource types, max depth, max resources — no generic traverse-everything tool); score edges best-first and stop when the evidence requirement is satisfied, preserving the traversal path for provenance.
-- **Lazy node views (tree-walk variant):** the agent is never handed a full raw resource — each visited node returns a compact typed summary plus reference stubs (type, id, one-line description), and the agent asks for specific fields when it needs them. Pair with a visited-set so re-visits return "already read" instead of re-inlining. Our existing data says the *naive* version of this fails: A0's multi-turn retrieval is already iterative and it accumulated to overflow (97 residual overflows with no single block >24.8k; 53% same-type re-requests), and Exp 3 showed traversal without query-awareness fetches 448 resources to capture 2 gold ones. Tree-walking is a live arm precisely when combined with compact node views + dedup + a stopping criterion — test it as that combination, not as bare reference-following.
-- Test first on the sealed path-required A11 dataset, where terminal evidence is absent from the star packet,
-  then extend to long-horizon tasks where multi-turn accumulation dominates. QT-4's existing benchmark was
-  mostly star-shaped and is not sufficient to establish general traversal value.
+**Successor A11b question:** When selection and completeness aids are held
+constant, does event grouping improve correctness beyond flat traversal on a
+harder untouched multi-event holdout?
 
-**Acceptance:**
-- Report whether graph/timeline retrieval reduces repeated calls, residual overflow, and date-order errors.
-- Include path citations, not just resource citations.
-- Keep graph retrieval separate from vector memory so failures can be attributed.
-- Report useful-gold yield and cap allocation per path family; QT-4 fetched 159 resources but only 36 mapped
-  gold occurrences, concentrated in nine questions, while both DiagnosticReport path families contributed zero.
+**A11b arms:**
+
+- `T0`: flat bounded traversal with path citations.
+- `T1`: T0 plus canonical temporal rank, selected-event marker, and the
+  deterministic answerability receipt.
+- `E1`: the identical T1 clinical evidence and aids, compiled into typed event
+  groups.
+
+The primary contrast is E1 minus T1. T1 minus T0 is secondary. Do not rerun V:
+the missing-terminal mechanism is already established and does not resolve the
+remaining attribution question.
+
+**A11b acceptance:**
+
+- Patient-clustered paired correctness with an interval that excludes zero for
+  any promotion claim.
+- No increase in unsupported answers, citation failures, or temporal-binding
+  errors.
+- Identical clinical evidence and path receipts across T0/T1/E1; only the
+  registered representation/aids may differ.
+- A patient-disjoint efficacy split with at least three plausible events,
+  incomplete selected paths, plausible complete distractors, and balanced
+  timestamp/answerability/path-family difficulty.
+- A pre-answer external digest over the preregistration, packets, controller,
+  native executable, and grader; append-only attempt receipts and retained panel
+  event streams.
+- If E1 is not promoted, stop using event grouping as an accuracy claim. Keep it
+  only if a separately registered auditability, compression, usability, or
+  latency benchmark supports it.
+
+The complete build/run/stop plan is in
+[NEXT_EXPERIMENT_PLAN.md](NEXT_EXPERIMENT_PLAN.md).
 
 ## 11. Re-grade the RL result with trustworthy grading (new)
 

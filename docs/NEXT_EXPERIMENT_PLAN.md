@@ -1,0 +1,222 @@
+# Post-QT-4 / A11 execution plan
+
+Status: **active planning baseline**
+
+Updated: 2026-07-15
+
+Inputs:
+
+- [QT-4 valid374 result](results/QT4_VALID374_RESULT.md)
+- [QT-4 forensic audit](results/QT4_VALID374_FORENSIC_AUDIT.md)
+- [A11 result](results/A11_RESULT.md)
+- [A11 forensic audit](results/A11_FORENSIC_AUDIT.md)
+
+## Decision
+
+The program has resolved three questions:
+
+1. **Promote fixed, question-only vocabulary selection.** It passed the untouched
+   QT-4 holdout and reduced both packet size and answer tokens.
+2. **Keep bounded typed traversal as an available evidence mechanism, not as a
+   general accuracy claim.** It recovered linked evidence in QT-4 and completely
+   solved A11's deliberately path-required cases, but its incremental correctness
+   effect on the natural holdout was unresolved.
+3. **Do not promote event grouping yet.** A11 had one E-over-T correctness flip,
+   and E bundled event grouping with temporal selection and an answerability
+   receipt. The causal feature remains unidentified.
+
+No experiment selected a persistent graph database. Storage-engine work remains
+an engineering benchmark until it changes an agent-visible packet or a measured
+production constraint.
+
+## Execution order
+
+```text
+completed evidence
+  QT-4: vocabulary promoted; traversal not promoted
+  A11: path retrieval works; event grouping not promoted
+                 |
+                 v
+P0  close protocol hardening and build an untouched A11b corpus
+                 |
+                 v
+P1  run T0 vs T1 vs E1 causal isolation
+                 |
+       +---------+----------+
+       |                    |
+       v                    v
+P2 research              P2 product engineering
+   A12 error fidelity       query-time vs materialized-edge
+   then A14 authz           byte-equivalence + latency benchmark
+```
+
+The P0 work consumes no answer-model quota. No A11b answer call should start
+until every P0 gate is green.
+
+## P0: harden the protocol before another answer run
+
+### Execution receipts
+
+- Hash the actual native Codex executable in addition to the JavaScript launcher.
+- Externally anchor the controller, preregistration, packets, native executable,
+  and grader digests before the first answer call.
+- Use append-only attempt receipts during execution and make completed namespaces
+  read-only immediately, not only after final grading.
+- Retain and hash raw panel event streams under the same no-tool audit as answer
+  calls.
+- Freeze a benign-stderr classifier so provider warnings do not cause avoidable
+  correctness-blind retries.
+- Use random opaque question nonces or a keyed construction rather than a
+  dictionary-recoverable deterministic question ID.
+
+### Grading
+
+- Route exact codes, displays, aliases, and registered abstentions through a
+  deterministic grader first.
+- Use an arm-blind panel only where deterministic grading cannot decide.
+- Keep responses from the same question or patient out of the same panel batch.
+- Add a cross-model-family sensitivity panel for every correctness contrast that
+  depends on model judgment.
+- Continue reporting accepted and all-attempt tokens separately, including
+  discarded transport attempts and panel spend.
+
+### P0 acceptance gate
+
+The controller must fail closed before answering unless:
+
+- every sealed input rehashes;
+- the external pre-answer digest exists and matches;
+- the native executable and model configuration are bound;
+- a complete dry-run receipt can be replayed from a fresh temporary directory;
+- gold-only fields are absent from all model-visible payloads; and
+- two independent no-model builds produce byte-identical packets and manifests.
+
+## P0: construct the untouched A11b holdout
+
+A11 left almost no error headroom: T was already 119/120. Repeating that corpus
+cannot identify an event-group effect. A11b must be harder without using efficacy
+answers to tune difficulty.
+
+Required properties:
+
+- At least three plausible events per question, not two templated roots.
+- Tied, missing, date-only, timezone-shifted, and conflicting timestamps.
+- Incomplete selected paths plus later or earlier complete distractor paths.
+- Balanced first/latest, answerable/unanswerable, family, path depth, and failure
+  mode cells.
+- Multiple path families with useful-gold yield measured before model calls.
+- Identical clinical resources and path receipts across all treatment arms.
+- A development slice for packet and difficulty debugging, followed by an
+  untouched patient-disjoint efficacy split.
+- Sample size and minimum effect of interest locked from a patient-cluster power
+  analysis before efficacy packet IDs or answers are opened.
+
+The builder may use deterministic non-PHI augmentation, but no gold answer,
+answerability label, selected terminal ID, or failure-mode field may enter the
+answer-input materializer.
+
+## P1: A11b causal isolation
+
+Run three paired arms over the identical governed retrieval result:
+
+| Arm | Model-visible treatment | What the contrast measures |
+|---|---|---|
+| **T0** | Flat bounded traversal with path citations | Reference condition |
+| **T1** | T0 plus canonical temporal rank, selected-event marker, and deterministic answerability receipt | Value of explicit selection/completeness aids |
+| **E1** | T1 aids plus typed event grouping; identical clinical evidence | Incremental value of event grouping |
+
+The registered contrast family is:
+
+1. **Primary: E1 minus T1.** This is the event-grouping test.
+2. **Secondary: T1 minus T0.** This tests the aids as one pragmatic bundle;
+   it does not separate temporal rank from the answerability receipt.
+
+The preregistration must choose one multiplicity policy before answering, such
+as Holm control or an explicit alpha split. It may not promote both contrasts
+from two unadjusted 95% intervals.
+
+Do not include the vocabulary-star V arm. QT-4 and A11 already established the
+missing-terminal mechanism, and repeating V would spend quota without resolving
+the remaining causal question.
+
+### Outcomes
+
+- Correctness with patient-cluster uncertainty and paired discordance counts.
+- Temporal-binding errors, unsupported answers on insufficient evidence, false
+  abstentions, and citation/path support.
+- Answerability calibration and selected-event accuracy.
+- Packet bytes, accepted/all-attempt tokens, wall time, compilation time, and
+  retry yield.
+- Results by path family, depth, temporal difficulty, and answerability, using
+  only preregistered strata for decision gates.
+
+### Promotion rules
+
+- Promote E1 only if its point estimate is favorable, the patient-cluster
+  interval excludes zero, and it does not increase unsupported answers or
+  citation failures.
+- If E1 is not promoted but T1 is, ship the explicit selection/completeness aids
+  without claiming event-group efficacy.
+- If neither contrast passes, stop answer-accuracy work on event grouping. Keep
+  grouping only where it wins a separate usability, auditability, compression,
+  or latency benchmark.
+
+## P2: product engineering that does not wait for A11b
+
+Build the graph-neutral context contract now:
+
+```text
+canonical versioned FHIR
+          |
+          v
+compileEvidence(plan, principal, purpose, sourceVersion)
+          |
+          +--> bounded typed traversal receipts
+          +--> citations and answerability state
+          +--> deterministic model-visible packet
+```
+
+Implement explicit FHIR-reference extraction and a rebuildable materialized-edge
+projection behind that contract. Compare query-time FHIR traversal with the
+materialized projection using zero model calls.
+
+Required engineering gates:
+
+- byte-identical model-visible packets and path citations;
+- identical policy denials and source-version receipts;
+- correction, deletion, and rebuild behavior verified;
+- no cross-patient, cross-practice, or cross-purpose path leakage;
+- p50/p95 compilation latency, storage overhead, and rebuild cost reported.
+
+Postgres remains the default implementation. Evaluate a native graph engine only
+if the materialized Postgres projection misses a registered production latency or
+scale target and an alternative produces identical governed packets.
+
+## P2: next independent model experiment
+
+After A11b, prioritize **A12 error fidelity**. It targets observed malformed and
+silently ignored query failures, is independent of event grouping, and maps
+directly to a production substrate guarantee. Start with zero-model server probes,
+then preregister the smallest paired answer slice where the treatment can actually
+change behavior.
+
+Run **A14 principal/authorization** after A12 establishes explicit `denied` versus
+`empty` semantics. A13 inference-time scaling and vector retrieval remain lower
+priority until these substrate contracts are measured.
+
+## Not in scope now
+
+- A Neo4j, Neptune, or other native graph migration.
+- Deeper generic traversal or a traverse-everything agent tool.
+- Another V-versus-T path-required rerun with the same ceiling-saturated corpus.
+- A bundled "Bonfire graph" accuracy arm that changes selection, retrieval,
+  representation, authorization, and storage at once.
+- Production or real-chart claims from the synthetic A11 corpus.
+
+## Deliverables
+
+1. P0 protocol-hardening PR and sealed dry-run receipt.
+2. A11b dataset/preregistration PR with a zero-model independent replay report.
+3. A11b controller PR, externally anchored before execution.
+4. Frozen result, forensic audit, token ledger, and explicit promotion decision.
+5. Separate materialized-edge equivalence/latency report, with no accuracy claim.
