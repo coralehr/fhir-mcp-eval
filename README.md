@@ -43,11 +43,15 @@
 > The QT-4 inventory has only ten depth-two rows and one path family, so the 120-question efficacy run is
 > correctly blocked pending a multi-family non-PHI substrate. A local HolyFHIR export is graph-rich in general
 > but has zero depth-two paths under A11's frozen microbiology registry and only 11 patient clusters. The
-> frozen `qo-v2.1` planner also never queries `DiagnosticReport` for microbiology questions, so a pre-answer
-> planner/protocol amendment is required before the registered four-family efficacy design can exist. See
+> frozen `qo-v2.1` planner also never queries `DiagnosticReport` for microbiology questions. That producer
+> blocker is now resolved without rewriting history: the explicit pre-answer `a11-four-family-v1` recipe
+> binds `qo-v2.2-a11-four-family`, reaches all four registered root/path families, and passes the actual
+> entrypoint-to-adapter zero-model gate. The authorization/source-version and multi-family substrate gates
+> remain open, so no A11 answer run is licensed yet. See
 > [A11_EVENT_GROUP_MECHANISM.md](docs/results/A11_EVENT_GROUP_MECHANISM.md) and the frozen
 > [A11_EVENT_GROUP.md](docs/prereg/A11_EVENT_GROUP.md) protocol, plus the
 > [adapter gate](docs/results/A11_PRODUCT_PACKET_ADAPTER.md),
+> [four-family producer gate](docs/results/A11_FOUR_FAMILY_PRODUCER_GATE.md),
 > [candidate-inventory result](docs/results/A11_CANDIDATE_INVENTORY.md), and
 > [substrate audit](docs/results/A11_SUBSTRATE_AUDIT.md).
 
@@ -167,8 +171,8 @@ future A6/A7 arms should report accuracy beside the same token/cost ledger, not 
 
 The repo is ready for GitHub issues. The issue-ready backlog lives in [ROADMAP.md](docs/ROADMAP.md):
 
-- Publish the pre-answer A11 producer amendment, add the governed authorization/source-version receipt,
-  build a multi-family non-PHI efficacy dataset, and seal all three before running V/T/E without inspecting
+- Add the governed A11 authorization/source-version receipt, build a multi-family non-PHI efficacy dataset,
+  and seal both before running V/T/E without inspecting
   answers mid-run.
 - Publish a minimized reproducibility artifact package with checksums.
 - Rerun A0, A0', and A5 on one substrate.

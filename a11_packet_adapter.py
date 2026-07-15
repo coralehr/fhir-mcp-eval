@@ -13,15 +13,20 @@ import hashlib
 import io
 import json
 import re
+import urllib.parse
 from pathlib import Path
 from typing import Any
 
 import a6_packet_builder as a6
 import codex_harness
-from a11_event_group_benchmark import plan_question
+from a11_event_group_benchmark import (
+    A11_FOUR_FAMILY_QUESTION_PLANNER_VERSION,
+    QUESTION_PLANNER_VERSION,
+    plan_question,
+)
 
 
-ADAPTER_VERSION = "a11-promoted-packet-adapter-v1"
+ADAPTER_VERSION = "a11-promoted-packet-adapter-v2"
 A11_MAX_PROMOTED_QUESTIONS = 1_000
 A11_MAX_PROMOTED_FILE_BYTES = 256 * 1024 * 1024
 A11_MAX_PROMOTED_RECORD_BYTES = 2 * a6.A6A_MAX_PACKET_CHARS + 1024 * 1024
@@ -153,6 +158,41 @@ _DEPENDENCY_FILES = (
 _BUNDLE_FACTORY_TOKEN = object()
 
 
+def _recipe_contract(recipe: str) -> dict[str, Any]:
+    # Keep this allowlist independent from the producer registry. The adapter
+    # is the verifier at the trust boundary; deriving its expectation from the
+    # producer would let the same accidental edit bless and validate drift.
+    if recipe == a6.PROMOTED_EVIDENCE_RECIPE:
+        return {
+            "features": ["micro-vocab"],
+            "planner_version": a6.QO_PLANNER_VERSION,
+            "question_planner_version": QUESTION_PLANNER_VERSION,
+            "receipt": {
+                "id": a6.PROMOTED_EVIDENCE_RECIPE,
+                "status": "promoted_on_qt4_valid374",
+                "features": ["micro-vocab"],
+                "promotion_result": "docs/results/QT4_VALID374_RESULT.md",
+            },
+        }
+    if recipe == a6.A11_EVIDENCE_RECIPE:
+        return {
+            "features": ["micro-vocab"],
+            "planner_version": a6.A11_QO_PLANNER_VERSION,
+            "question_planner_version": (
+                A11_FOUR_FAMILY_QUESTION_PLANNER_VERSION
+            ),
+            "receipt": {
+                "id": a6.A11_EVIDENCE_RECIPE,
+                "status": "preregistered_pre_answer_a11",
+                "features": ["micro-vocab"],
+                "protocol": "docs/prereg/A11_EVENT_GROUP.md",
+            },
+        }
+    raise ValueError(
+        f"unsupported A11 evidence recipe: {recipe}; valid: {a6.EVIDENCE_RECIPES}"
+    )
+
+
 def _canonical_text(value: Any) -> str:
     return json.dumps(
         value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
@@ -275,12 +315,36 @@ def _root_refs(
 def _normalize_patient_reference(reference: Any) -> str | None:
     if not isinstance(reference, str):
         return None
-    match = re.search(
-        r"(?:^|/)Patient/([A-Za-z0-9\-.]{1,64})"
-        r"(?:/_history/[A-Za-z0-9\-.]{1,64})?(?:$|[?#])",
-        reference,
+    parsed = urllib.parse.urlsplit(reference)
+    if parsed.scheme or parsed.netloc:
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return None
+        segments = [segment for segment in parsed.path.split("/") if segment]
+        if segments.count("Patient") != 1:
+            return None
+        patient_index = segments.index("Patient")
+        tail = segments[patient_index:]
+        if len(tail) not in {2, 4}:
+            return None
+        if len(tail) == 4 and tail[2] != "_history":
+            return None
+        if a6.FHIR_ID_PATTERN.fullmatch(tail[1]) is None:
+            return None
+        if len(tail) == 4 and a6.FHIR_ID_PATTERN.fullmatch(tail[3]) is None:
+            return None
+        return f"Patient/{tail[1]}"
+    match = re.fullmatch(
+        r"Patient/([A-Za-z0-9\-.]{1,64})"
+        r"(?:/_history/[A-Za-z0-9\-.]{1,64})?",
+        parsed.path,
     )
     return f"Patient/{match.group(1)}" if match is not None else None
+
+
+def _contains_patient_path(reference: str) -> bool:
+    return "Patient" in {
+        segment for segment in urllib.parse.urlsplit(reference).path.split("/") if segment
+    }
 
 
 def _validate_patient_reference_tree(
@@ -294,6 +358,10 @@ def _validate_patient_reference_tree(
         reference = value.get("reference")
         if isinstance(reference, str):
             normalized = _normalize_patient_reference(reference)
+            if normalized is None and _contains_patient_path(reference):
+                raise ValueError(
+                    f"packet resource contains an ambiguous patient reference: {resource_ref}"
+                )
             if normalized is not None and normalized != patient_ref:
                 raise ValueError(
                     f"packet resource contains a cross-patient reference: {resource_ref}"
@@ -451,8 +519,8 @@ def _validate_nonclinical_packet_metadata(packet: dict[str, Any]) -> None:
             raise ValueError("promoted packet has an empty relaxation path receipt")
 
 
-def _validate_intent(intent: dict[str, Any]) -> None:
-    if intent.get("planner") != a6.QO_PLANNER_VERSION:
+def _validate_intent(intent: dict[str, Any], *, planner_version: str) -> None:
+    if intent.get("planner") != planner_version:
         raise ValueError("promoted record intent planner changed")
     for field in ("resource_types", "search_terms"):
         value = intent.get(field)
@@ -480,20 +548,27 @@ def _validate_intent(intent: dict[str, Any]) -> None:
 
 
 def _validate_question_only_semantics(
-    record: dict[str, Any], intent: dict[str, Any], packet: dict[str, Any]
+    record: dict[str, Any],
+    intent: dict[str, Any],
+    packet: dict[str, Any],
+    *,
+    planner_version: str,
+    features: list[str],
 ) -> frozenset[str]:
     safe_row = {
         field: record[field]
         for field in ("question_id", "question", "patient_fhir_id", "assumption")
     }
-    expected_intent = a6.qo_infer_intent(safe_row)
+    expected_intent = a6.qo_infer_intent(
+        safe_row, planner_version=planner_version
+    )
     if intent != expected_intent:
         raise ValueError("promoted record intent is not question-only reproducible")
     expected_plan = a6.build_search_plan(
         safe_row,
         expected_intent,
         count=100,
-        features={"micro-vocab"},
+        features=set(features),
     )
     actual_plan = packet.get("source_queries")
     if not isinstance(actual_plan, list) or len(actual_plan) != len(expected_plan):
@@ -510,7 +585,10 @@ def _validate_question_only_semantics(
     return frozenset(item["resource_type"] for item in expected_plan)
 
 
-def _validate_manifest(manifest: dict[str, Any]) -> None:
+def _validate_manifest(
+    manifest: dict[str, Any], *, expected_evidence_recipe: str
+) -> None:
+    contract = _recipe_contract(expected_evidence_recipe)
     if set(manifest) != _MANIFEST_FIELDS:
         raise ValueError("promoted packet manifest fields changed")
     if manifest.get("kind") != "a6_query_aware_packet_manifest":
@@ -523,19 +601,27 @@ def _validate_manifest(manifest: dict[str, Any]) -> None:
     if set(config) != _MANIFEST_CONFIG_FIELDS:
         raise ValueError("promoted packet manifest config fields changed")
     recipe = config.get("evidence_recipe")
-    if not isinstance(recipe, dict) or recipe.get("id") != a6.PROMOTED_EVIDENCE_RECIPE:
-        raise ValueError("manifest does not identify the promoted evidence recipe")
-    if recipe.get("features") != ["micro-vocab"]:
+    if not isinstance(recipe, dict) or recipe.get("id") != expected_evidence_recipe:
+        raise ValueError("manifest does not identify the expected evidence recipe")
+    if recipe.get("features") != contract["features"]:
         raise ValueError("manifest promoted recipe feature set changed")
-    if recipe.get("status") != "promoted_on_qt4_valid374":
+    if recipe.get("status") != contract["receipt"]["status"]:
         raise ValueError("manifest promoted recipe status changed")
-    if recipe.get("promotion_result") != "docs/results/QT4_VALID374_RESULT.md":
+    if "promotion_result" in contract["receipt"] and recipe.get(
+        "promotion_result"
+    ) != contract["receipt"]["promotion_result"]:
         raise ValueError("manifest promoted recipe result changed")
-    if config.get("features") != ["micro-vocab"]:
+    if "protocol" in contract["receipt"] and recipe.get("protocol") != contract[
+        "receipt"
+    ]["protocol"]:
+        raise ValueError("manifest A11 recipe protocol changed")
+    if recipe != contract["receipt"]:
+        raise ValueError("manifest evidence recipe receipt changed")
+    if config.get("features") != contract["features"]:
         raise ValueError("manifest feature set is not the promoted vocabulary arm")
     if config.get("planner") != "question-only":
         raise ValueError("manifest planner is not question-only")
-    if config.get("planner_version") != a6.QO_PLANNER_VERSION:
+    if config.get("planner_version") != contract["planner_version"]:
         raise ValueError("manifest question-only planner version changed")
     if config.get("max_total_resources") != a6.A6A_MAX_TOTAL_RESOURCES:
         raise ValueError("manifest promoted resource bound changed")
@@ -577,7 +663,7 @@ def _validate_manifest(manifest: dict[str, Any]) -> None:
         raise ValueError("manifest question_spec receipt fields changed")
 
     recipe = config["evidence_recipe"]
-    if set(recipe) != {"id", "status", "features", "promotion_result"}:
+    if set(recipe) != set(contract["receipt"]):
         raise ValueError("manifest evidence recipe fields changed")
     vocabulary = config.get("micro_vocabulary")
     if not isinstance(vocabulary, dict) or set(vocabulary) != {
@@ -650,7 +736,9 @@ def _validate_record(
     *,
     question_id: str,
     manifest_packet_hash: Any,
+    expected_evidence_recipe: str,
 ) -> dict[str, Any]:
+    contract = _recipe_contract(expected_evidence_recipe)
     unexpected = set(record) - _RECORD_FIELDS
     missing = _RECORD_FIELDS - set(record)
     if unexpected or missing:
@@ -678,32 +766,45 @@ def _validate_record(
     if not isinstance(record.get("assumption"), str):
         raise ValueError("promoted record assumption is not a string")
     patient_ref = _patient_ref(record.get("patient_fhir_id"))
-    question_plan = plan_question(question)
+    question_plan = plan_question(
+        question, version=contract["question_planner_version"]
+    )
     planned_root_types = _planned_root_types(question_plan)
 
     intent = record.get("intent")
     if not isinstance(intent, dict) or set(intent) != _INTENT_FIELDS:
         raise ValueError("promoted record intent fields changed")
-    _validate_intent(intent)
+    _validate_intent(intent, planner_version=contract["planner_version"])
 
     if set(packet) != _PACKET_FIELDS:
         raise ValueError("promoted packet metadata fields changed")
     if packet.get("kind") != "a6a_question_only_packet":
         raise ValueError("promoted packet kind changed")
-    if packet.get("planner") != a6.QO_PLANNER_VERSION:
+    if packet.get("planner") != contract["planner_version"]:
         raise ValueError("promoted packet planner version changed")
-    if packet.get("features") != ["micro-vocab"]:
+    if packet.get("features") != contract["features"]:
         raise ValueError("A11 requires a micro-dispatched promoted packet")
     if packet.get("plan_only") is not False:
         raise ValueError("plan-only promoted packet is ineligible for A11")
     if "reference_traversal" in packet:
         raise ValueError("promoted V packet unexpectedly contains traversal")
     _validate_nonclinical_packet_metadata(packet)
-    selected_resource_types = _validate_question_only_semantics(record, intent, packet)
+    selected_resource_types = _validate_question_only_semantics(
+        record,
+        intent,
+        packet,
+        planner_version=contract["planner_version"],
+        features=contract["features"],
+    )
 
     resources = packet.get("resources")
     if not isinstance(resources, list):
         raise ValueError("promoted packet resources are not a list")
+    # A11 V packets admit only patient-scoped Observation/DiagnosticReport
+    # roots, so benchmark-only keys are never legitimate clinical fields here.
+    # Reject them inside the model-visible resource tree, not just in the
+    # surrounding manifest and packet metadata.
+    _reject_forbidden_input(resources, "record.packet.resources")
     if packet.get("resource_count") != len(resources):
         raise ValueError("promoted packet resource_count is inconsistent")
     if len(resources) > a6.A6A_MAX_TOTAL_RESOURCES:
@@ -795,6 +896,7 @@ class PromotedBundle:
         manifest_sha256: str,
         packet_file_sha256: str,
         dependency_hashes: dict[str, str],
+        evidence_recipe: str,
         _factory_token: object | None = None,
     ) -> None:
         if _factory_token is not _BUNDLE_FACTORY_TOKEN:
@@ -803,6 +905,7 @@ class PromotedBundle:
         self._manifest_sha256 = manifest_sha256
         self._packet_file_sha256 = packet_file_sha256
         self._dependency_hashes = dependency_hashes
+        self.evidence_recipe = evidence_recipe
         self.question_ids = tuple(records)
 
     def load(self, question_id: str) -> dict[str, Any]:
@@ -822,6 +925,7 @@ class PromotedBundle:
 
         return {
             "schema_version": ADAPTER_VERSION,
+            "evidence_recipe": self.evidence_recipe,
             "question_id": question_id,
             "question": record["question"],
             "patient_fhir_id": record["patient_fhir_id"],
@@ -856,6 +960,7 @@ def load_promoted_bundle(
     manifest_path: Path,
     *,
     expected_manifest_sha256: str,
+    expected_evidence_recipe: str = a6.PROMOTED_EVIDENCE_RECIPE,
 ) -> PromotedBundle:
     """Read and validate a promoted packet corpus exactly once."""
 
@@ -871,7 +976,9 @@ def load_promoted_bundle(
     if not isinstance(manifest, dict):
         raise ValueError("promoted packet manifest is not an object")
     _reject_forbidden_input(manifest, "manifest")
-    _validate_manifest(manifest)
+    _validate_manifest(
+        manifest, expected_evidence_recipe=expected_evidence_recipe
+    )
 
     if packet_path.stat().st_size > A11_MAX_PROMOTED_FILE_BYTES:
         raise ValueError("promoted packet file exceeds the A11 byte bound")
@@ -893,6 +1000,7 @@ def load_promoted_bundle(
             record,
             question_id=question_id,
             manifest_packet_hash=manifest_hashes[question_id],
+            expected_evidence_recipe=expected_evidence_recipe,
         )
         for question_id, record in records.items()
     }
@@ -906,6 +1014,7 @@ def load_promoted_bundle(
         manifest_sha256=manifest_sha256,
         packet_file_sha256=actual_file_hash,
         dependency_hashes=dependency_hashes,
+        evidence_recipe=expected_evidence_recipe,
         _factory_token=_BUNDLE_FACTORY_TOKEN,
     )
 
@@ -916,6 +1025,7 @@ def load_promoted_record(
     question_id: str,
     *,
     expected_manifest_sha256: str,
+    expected_evidence_recipe: str = a6.PROMOTED_EVIDENCE_RECIPE,
 ) -> dict[str, Any]:
     """Convenience loader for a single micro-dispatched promoted packet."""
 
@@ -923,4 +1033,5 @@ def load_promoted_record(
         packet_path,
         manifest_path,
         expected_manifest_sha256=expected_manifest_sha256,
+        expected_evidence_recipe=expected_evidence_recipe,
     ).load(question_id)

@@ -6,6 +6,9 @@ Protocol and fixture version: `a11-event-group-v1`
 
 Promoted baseline recipe: `qt4-vocabulary-promoted-v1`
 
+A11 producer recipe after the 2026-07-14 pre-answer amendment:
+`a11-four-family-v1`
+
 Mechanism fixture: `fixtures/a11_event_group_cases.json`
 
 ## Question
@@ -21,9 +24,62 @@ this protocol distinguishes Postgres, a materialized edge table, or a native
 graph store unless those backends first produce byte- and authorization-
 equivalent packets in a separate engineering benchmark.
 
+## Dated pre-answer producer amendment — 2026-07-14
+
+This amendment was committed before any A11 answer or judge call. The
+producer-feasibility audit showed that the historical `qo-v2.1` planner could
+never emit `DiagnosticReport` roots, making two of the four registered path
+families structurally unreachable. Removing those families after seeing that
+failure would weaken the topology test, while silently changing the promoted
+recipe would invalidate QT-4 reproduction. The protocol therefore adds a new,
+explicit recipe rather than reinterpreting the old one.
+
+`a11-four-family-v1` freezes:
+
+- question-only planner `qo-v2.2-a11-four-family`;
+- the exact QT-4-promoted `micro-vocab` terms, dispatcher, resource and byte
+  bounds, serializer, and no-relaxation policy;
+- `Observation` roots unless the question explicitly says `diagnostic report`
+  or `DiagnosticReport`; and
+- `DiagnosticReport` roots only under that explicit question wording.
+
+Because the FHIR `DiagnosticReport` `date` search parameter may include
+`issued`, the A11 recipe does not use server-side `date` sorting or date
+windows for DiagnosticReport questions. It fetches the bounded vocabulary
+union, then orders and bounds roots locally from `effectiveDateTime` or
+`effectivePeriod.end/start` only. A root without `effective[x]` fails packet
+construction; `issued`, `meta.lastUpdated`, and generic `date` never substitute.
+
+Every eligible v2 template must also contain at least one frozen microbiology
+dispatcher term (`microbiolog*`, `microbial`, `culture`, `specimen`,
+`organism`, `smear`, `gram stain`, or `screen`). Generic `finding` wording by
+itself is rejected rather than creating a question plan whose producer packet
+would not receive the vocabulary treatment.
+
+The separately versioned `a11-question-plan-v2-four-family` maps question text
+to exactly these registered shapes:
+
+| Explicit root wording | Terminal wording | Registered path |
+|---|---|---|
+| Observation/default | organism/finding/gram stain | `Observation.hasMember -> Observation.hasMember` |
+| Observation/default | specimen | `Observation.hasMember -> Observation.specimen` |
+| DiagnosticReport | organism/finding/gram stain | `DiagnosticReport.result -> Observation.hasMember` |
+| DiagnosticReport | specimen | `DiagnosticReport.result -> Observation.specimen` |
+
+The historical `qt4-vocabulary-promoted-v1`, `qo-v2.1`, and
+`a11-question-plan-v1` paths remain unchanged and are covered by regression
+tests. For A11 efficacy, V/T/E must all start from the explicit
+`a11-four-family-v1` packet for each question. V is still the no-traversal
+packet; T and E may only add the registered governed retrieval. This amendment
+is a reachability and protocol result, not evidence that DiagnosticReport
+selection, traversal, event grouping, or a graph database improves accuracy.
+
 ## Efficacy arms and synthetic mechanism proxies
 
-All arms start from the QT-4 holdout-promoted fixed vocabulary recipe.
+All arms start from `a11-four-family-v1`, the dated versioned extension of the
+QT-4 holdout-promoted fixed vocabulary recipe. It preserves the promoted
+Observation behavior and adds only the explicit DiagnosticReport root route
+needed to make the registered protocol executable.
 
 The committed zero-model fixture does not run `compile_evidence.py`; it uses
 hand-sealed synthetic resources and seed roots to exercise the compiler state
@@ -33,13 +89,15 @@ V packet byte equality, and bind both packet and adapter hashes. Until that
 gate passes, the synthetic V/T/E proxies do not establish product-packet
 equivalence.
 
-### V — promoted vocabulary star
+### V — A11 four-family vocabulary star
 
-Patient-scoped root selection using `qt4-vocabulary-promoted-v1`. Do not
-follow outbound references. This is the product baseline, not the retired
-query-blind projection.
+Patient-scoped root selection using `a11-four-family-v1`. Do not follow
+outbound references. For Observation-root questions this is the promoted
+product behavior; for explicitly worded DiagnosticReport questions it is the
+pre-answer versioned extension above. It is not the retired query-blind
+projection.
 
-### T — promoted vocabulary plus flat traversal
+### T — A11 four-family vocabulary plus flat traversal
 
 Follow only the registered relative FHIR references, within the frozen type,
 relation, depth, target, edge, path-citation, byte, practice, purpose, patient,
@@ -52,7 +110,7 @@ so nested references cannot masquerade as a registered edge. Append the
 retrieved resources and replayable JSON-pointer paths flat. This is the same
 shape that exposed QT-4's temporal-binding failure.
 
-### E — promoted vocabulary plus event-group compilation
+### E — A11 four-family vocabulary plus event-group compilation
 
 Use the exact T retrieval result. Replace the flat evidence list with:
 
@@ -65,9 +123,12 @@ Use the exact T retrieval result. Replace the flat evidence list with:
   operator; and
 - a deterministic answerability receipt over registered path shapes.
 
-Before gold or audit fields are consulted, `plan_question(question)` deterministically
-derives and seals the family, temporal policy, path signatures, and question
-hash. E may consume only that question plan plus T's exact retrieval result.
+Before gold or audit fields are consulted, the recipe-bound adapter calls
+`plan_question(question, version="a11-question-plan-v2-four-family")` and
+deterministically seals the family, temporal policy, path signatures, and
+question hash. Calling `plan_question(question)` without the version remains
+the historical mechanism-fixture behavior and is ineligible for A11 efficacy.
+E may consume only the v2 question plan plus T's exact retrieval result.
 Counterfactual changes to reference answers, expected roots, expected
 evidence, answerability labels, or audit-only path metadata must not change
 the model packet.
@@ -80,7 +141,9 @@ registered resource-specific `effective[x]` fields; `issued`,
 `meta.lastUpdated`, and other publication/store timestamps may not rank
 events.
 
-Every seed must explicitly name the requested patient. Same-practice seeds
+Every seed must explicitly name the requested patient. Patient references must
+be one unambiguous relative or absolute `Patient/{id}` resource path; a path
+containing multiple `Patient` segments fails closed. Same-practice seeds
 for another patient and patient-ambiguous seeds fail closed before traversal.
 Requested and resolved references are carried separately for available exact
 versions. Each canonical target is charged to the target budget once, while
@@ -179,13 +242,15 @@ four registered microbiology families and only 11 patient clusters. It does
 not unblock efficacy. The pinned-source and deterministic-augmentation options
 are recorded in [`A11_SUBSTRATE_AUDIT.md`](../results/A11_SUBSTRATE_AUDIT.md).
 
-The same 2026-07-14 producer-feasibility audit found a second hard blocker:
-`qo-v2.1` maps microbiology questions to `Observation` queries and has no
-`DiagnosticReport` query path. Therefore exact promoted V packets cannot
-currently supply roots for the two registered DiagnosticReport families. No
-efficacy run may begin until a dated pre-answer amendment either adds and
-versions that product query behavior or changes the family requirement, then
-re-seals the adapter and dataset without consulting answer outputs.
+The same 2026-07-14 producer-feasibility audit found that `qo-v2.1` could not
+supply roots for the two registered DiagnosticReport families. The dated
+amendment above resolves that reachability blocker without changing the
+historical recipe. The actual `compile_evidence.py` entrypoint now emits both
+root types under `a11-four-family-v1`, and adapter v2 re-derives and validates
+the corresponding planner, manifest, query plan, packet bytes, and root type
+on synthetic non-PHI integration records. No model was called. The efficacy
+run remains blocked on the governed authorization/source-version receipt and a
+sealed multi-family non-PHI substrate.
 
 ## Outcomes and fixed analysis order
 
@@ -231,6 +296,7 @@ python a11_event_group_benchmark.py \
 python -m pytest -q \
   tests/test_a11_candidate_inventory.py \
   tests/test_promoted_evidence_recipe.py \
+  tests/test_a11_four_family_recipe.py \
   tests/test_a11_packet_adapter.py \
   tests/test_a11_event_group_benchmark.py
 ```

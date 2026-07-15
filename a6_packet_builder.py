@@ -18,6 +18,7 @@ import json
 import math
 import re
 import urllib.parse
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
@@ -38,6 +39,8 @@ class PacketFetchError(RuntimeError):
 # It preserves qo-v2 bounds and feature isolation while applying the structural
 # routing/query-validity repair pre-built from the earlier 409-question audit.
 QO_PLANNER_VERSION = "qo-v2.1"
+A11_QO_PLANNER_VERSION = "qo-v2.2-a11-four-family"
+QUESTION_ONLY_PLANNER_VERSIONS = (QO_PLANNER_VERSION, A11_QO_PLANNER_VERSION)
 A6A_MAX_TOTAL_RESOURCES = 200
 A6A_MAX_PACKET_CHARS = 160_000
 
@@ -101,7 +104,63 @@ REGISTERED_QT_ARMS = (
 # old manifests remain reproducible. ``compile_evidence.py`` opts into this
 # recipe by default for new packet builds.
 PROMOTED_EVIDENCE_RECIPE = "qt4-vocabulary-promoted-v1"
-EVIDENCE_RECIPES = (PROMOTED_EVIDENCE_RECIPE,)
+A11_EVIDENCE_RECIPE = "a11-four-family-v1"
+
+
+@dataclass(frozen=True)
+class EvidenceRecipeContract:
+    recipe_id: str
+    features: frozenset[str]
+    planner_version: str
+    status: str
+    evidence_key: str
+    evidence_path: str
+
+    def manifest_receipt(self) -> dict[str, Any]:
+        return {
+            "id": self.recipe_id,
+            "status": self.status,
+            "features": sorted(self.features),
+            self.evidence_key: self.evidence_path,
+        }
+
+
+EVIDENCE_RECIPE_CONTRACTS = {
+    PROMOTED_EVIDENCE_RECIPE: EvidenceRecipeContract(
+        recipe_id=PROMOTED_EVIDENCE_RECIPE,
+        features=frozenset({"micro-vocab"}),
+        planner_version=QO_PLANNER_VERSION,
+        status="promoted_on_qt4_valid374",
+        evidence_key="promotion_result",
+        evidence_path="docs/results/QT4_VALID374_RESULT.md",
+    ),
+    A11_EVIDENCE_RECIPE: EvidenceRecipeContract(
+        recipe_id=A11_EVIDENCE_RECIPE,
+        features=frozenset({"micro-vocab"}),
+        planner_version=A11_QO_PLANNER_VERSION,
+        status="preregistered_pre_answer_a11",
+        evidence_key="protocol",
+        evidence_path="docs/prereg/A11_EVENT_GROUP.md",
+    ),
+}
+EVIDENCE_RECIPES = tuple(EVIDENCE_RECIPE_CONTRACTS)
+
+
+def evidence_recipe_contract(recipe: str) -> EvidenceRecipeContract:
+    try:
+        return EVIDENCE_RECIPE_CONTRACTS[recipe]
+    except KeyError as exc:
+        raise ValueError(
+            f"unknown evidence recipe: {recipe}; valid: {EVIDENCE_RECIPES}"
+        ) from exc
+
+
+def question_only_planner_version(recipe: str | None) -> str:
+    """Return the frozen question-only planner for one evidence recipe."""
+
+    if recipe is None:
+        return QO_PLANNER_VERSION
+    return evidence_recipe_contract(recipe).planner_version
 
 
 def validate_qt_features(
@@ -146,9 +205,12 @@ def resolve_evidence_recipe(
         raise ValueError(
             "--evidence-recipe and --features are mutually exclusive"
         )
-    if recipe == PROMOTED_EVIDENCE_RECIPE:
-        return validate_qt_features({"micro-vocab"}, planner=planner)
-    raise AssertionError(f"unhandled evidence recipe: {recipe}")
+    # A11 changes only the question-only root-type planner. It reuses the
+    # QT-4-promoted vocabulary treatment exactly and does not silently promote
+    # traversal or create a new historical QT arm.
+    return validate_qt_features(
+        evidence_recipe_contract(recipe).features, planner=planner
+    )
 
 
 def resolve_a6a_root_bounds(
@@ -262,6 +324,7 @@ TABLE_TO_RESOURCES = {
 }
 
 RESOURCE_DATE_PARAM = {
+    "DiagnosticReport": "date",
     "Encounter": "date",
     "MedicationRequest": "authoredon",
     "Observation": "date",
@@ -472,8 +535,19 @@ def _qo_keyword_matches(question: str, keyword: str) -> bool:
     return re.search(r"(?<![a-z0-9])" + re.escape(normalized), question) is not None
 
 
-def qo_infer_resource_types(question: str) -> list[str]:
+def qo_infer_resource_types(
+    question: str, *, planner_version: str = QO_PLANNER_VERSION
+) -> list[str]:
     q = str(question or "").lower()
+    if planner_version not in QUESTION_ONLY_PLANNER_VERSIONS:
+        raise ValueError(f"unknown question-only planner version: {planner_version}")
+    if (
+        planner_version == A11_QO_PLANNER_VERSION
+        and re.search(r"(?<![a-z0-9])diagnostic\s*report(?![a-z0-9])", q)
+    ):
+        # This explicit root declaration is part of the sealed A11 question
+        # family. Do not infer DiagnosticReport from generic diagnosis text.
+        return ["DiagnosticReport"]
     medication_match = any(
         _qo_keyword_matches(q, keyword) for keyword in QO_TYPE_KEYWORDS[0][0]
     )
@@ -572,14 +646,20 @@ def blunt_infer_intent(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def qo_infer_intent(row: dict[str, Any]) -> dict[str, Any]:
+def qo_infer_intent(
+    row: dict[str, Any], *, planner_version: str = QO_PLANNER_VERSION
+) -> dict[str, Any]:
+    if planner_version not in QUESTION_ONLY_PLANNER_VERSIONS:
+        raise ValueError(f"unknown question-only planner version: {planner_version}")
     qrow = {k: row.get(k) for k in QUESTION_ONLY_FIELDS}
     question = str(qrow.get("question") or "")
     current_date = current_date_from_assumption(qrow.get("assumption"))
     window = parse_nlq_window(question, current_date)
     return {
-        "planner": QO_PLANNER_VERSION,
-        "resource_types": qo_infer_resource_types(question),
+        "planner": planner_version,
+        "resource_types": qo_infer_resource_types(
+            question, planner_version=planner_version
+        ),
         "search_terms": qo_extract_terms(question),
         "date_windows": [window] if window else [],
         "temporal_policy": qo_temporal_policy(question),
@@ -624,7 +704,7 @@ def _query_for(resource_type: str, row: dict[str, Any], intent: dict[str, Any], 
     _add_date_params(parts, resource_type, window)
 
     terms = intent.get("search_terms") or []
-    if resource_type == "Observation" and terms:
+    if resource_type in {"Observation", "DiagnosticReport"} and terms:
         code_text = _observation_code_text(terms[0])
         if code_text:
             parts.append(f"code:text={urllib.parse.quote(code_text)}")
@@ -650,17 +730,36 @@ def build_search_plan(
     features: set[str] | frozenset[str] = frozenset(),
 ) -> list[dict[str, Any]]:
     intent = intent or infer_intent(row)
-    planner = "question-only" if intent.get("planner") == QO_PLANNER_VERSION else str(intent.get("planner"))
+    planner = (
+        "question-only"
+        if intent.get("planner") in QUESTION_ONLY_PLANNER_VERSIONS
+        else str(intent.get("planner"))
+    )
     features = validate_qt_features(features, planner=planner)
     plan = []
     micro_vocab = "micro-vocab" in features and is_microbiology_question(row.get("question"))
     for resource_type in intent["resource_types"]:
-        if intent["temporal_policy"] == "first_last" and resource_type in RESOURCE_DATE_PARAM:
+        if (
+            intent.get("planner") == A11_QO_PLANNER_VERSION
+            and resource_type == "DiagnosticReport"
+        ):
+            # DiagnosticReport's FHIR `date` search parameter may fall back to
+            # `issued`. A11 forbids publication time as clinical rank, so fetch
+            # the bounded vocabulary union without server date sorting and rank
+            # locally from effective[x] only.
+            if intent.get("date_windows"):
+                raise ValueError(
+                    "A11 DiagnosticReport questions do not permit date windows"
+                )
+            sorts = [None]
+        elif intent["temporal_policy"] == "first_last" and resource_type in RESOURCE_DATE_PARAM:
             sorts = ["date", "-date"]
         else:
             sorts = ["-date"] if resource_type in RESOURCE_DATE_PARAM else [None]
         terms: tuple[str | None, ...] = (
-            MICRO_CODE_TEXT_TERMS if micro_vocab and resource_type == "Observation" else (None,)
+            MICRO_CODE_TEXT_TERMS
+            if micro_vocab and resource_type in {"Observation", "DiagnosticReport"}
+            else (None,)
         )
         for term in terms:
             query_intent = intent
@@ -676,7 +775,7 @@ def build_search_plan(
                         if term is not None
                         else (
                             "question-only selection (whitelisted fields: question, patient, assumption)"
-                            if intent.get("planner") == QO_PLANNER_VERSION
+                            if intent.get("planner") in QUESTION_ONLY_PLANNER_VERSIONS
                             else "query-aware selection from benchmark-construction metadata (oracle ceiling)"
                         )
                     ),
@@ -886,6 +985,25 @@ def _resource_clinical_date(resource: dict[str, Any]) -> str:
     return ""
 
 
+def a11_canonical_clinical_date(resource: dict[str, Any]) -> str:
+    """A11 root time: effective[x] only, never publication/store time."""
+
+    if resource.get("resourceType") not in {"Observation", "DiagnosticReport"}:
+        return _resource_clinical_date(resource)
+    value = resource.get("effectiveDateTime")
+    if isinstance(value, str) and value:
+        return value
+    period = resource.get("effectivePeriod")
+    if isinstance(period, dict):
+        for endpoint in ("end", "start"):
+            value = period.get(endpoint)
+            if isinstance(value, str) and value:
+                return value
+    raise ValueError(
+        "A11 Observation/DiagnosticReport root has no canonical effective[x] time"
+    )
+
+
 def project_resource(resource: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in resource.items() if k not in PROJECTION_DROP_KEYS}
 
@@ -1056,6 +1174,7 @@ def bound_resources(
     max_total_resources: int,
     max_packet_chars: int,
     endpoint_reserve: bool = False,
+    clinical_date: Callable[[dict[str, Any]], str] = _resource_clinical_date,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Enforce hard resource-count and char ceilings (review finding 2).
 
@@ -1073,7 +1192,7 @@ def bound_resources(
 
     ordered_by_type: dict[str, list[dict[str, Any]]] = {}
     for rtype, items in by_type.items():
-        items = sorted(items, key=_resource_clinical_date)
+        items = sorted(items, key=clinical_date)
         if temporal_policy == "first_last":
             head, tail = 0, len(items) - 1
             order = []
@@ -1277,8 +1396,20 @@ def build_packet_record(
     plan: list[dict[str, Any]] | None = None,
     features: set[str] | frozenset[str] = frozenset(),
     reference_fetcher: Callable[[str, list[str]], list[dict[str, Any]]] | None = None,
+    evidence_recipe: str | None = None,
 ) -> dict[str, Any]:
     features = validate_qt_features(features, planner=planner)
+    if evidence_recipe is not None:
+        recipe_features = resolve_evidence_recipe(
+            evidence_recipe,
+            explicit_features=frozenset(),
+            planner=planner,
+        )
+        if features != recipe_features:
+            raise ValueError(
+                "packet features do not match the selected evidence recipe"
+            )
+    qo_planner_version = question_only_planner_version(evidence_recipe)
     max_total_resources, max_packet_chars = resolve_a6a_root_bounds(
         planner=planner,
         max_total_resources=max_total_resources,
@@ -1286,7 +1417,9 @@ def build_packet_record(
     )
     if planner == "question-only":
         safe = {k: row.get(k) for k in QUESTION_ONLY_FIELDS}
-        intent = qo_infer_intent(safe)
+        intent = qo_infer_intent(
+            safe, planner_version=qo_planner_version
+        )
         kind = "a6a_question_only_packet"
     elif planner == "blunt-projection":
         safe = {k: row.get(k) for k in QUESTION_ONLY_FIELDS}
@@ -1315,6 +1448,11 @@ def build_packet_record(
             max_total_resources=max_total_resources,
             max_packet_chars=max_packet_chars,
             endpoint_reserve="endpoint-reserve" in features,
+            clinical_date=(
+                a11_canonical_clinical_date
+                if evidence_recipe == A11_EVIDENCE_RECIPE
+                else _resource_clinical_date
+            ),
         )
     root_fetch_receipt = None
     if not plan_only:
@@ -1459,16 +1597,17 @@ def write_manifest(path: Path, *, input_path: Path, output_path: Path, args: arg
             "planner": getattr(args, "planner", "metadata-oracle"),
             "features": sorted(features),
             "evidence_recipe": (
-                {
-                    "id": args.evidence_recipe,
-                    "status": "promoted_on_qt4_valid374",
-                    "features": sorted(features),
-                    "promotion_result": "docs/results/QT4_VALID374_RESULT.md",
-                }
+                evidence_recipe_contract(args.evidence_recipe).manifest_receipt()
                 if getattr(args, "evidence_recipe", None)
                 else None
             ),
-            "planner_version": QO_PLANNER_VERSION if getattr(args, "planner", "") == "question-only" else "metadata-v1",
+            "planner_version": (
+                question_only_planner_version(
+                    getattr(args, "evidence_recipe", None)
+                )
+                if getattr(args, "planner", "") == "question-only"
+                else "metadata-v1"
+            ),
             "max_total_resources": max_total_resources,
             "max_packet_chars": max_packet_chars,
             "micro_vocabulary": (
@@ -1562,6 +1701,10 @@ def main(*, default_evidence_recipe: str | None = None) -> int:
     except ValueError as exc:
         parser.error(str(exc))
     try:
+        qo_planner_version = question_only_planner_version(args.evidence_recipe)
+    except ValueError as exc:
+        parser.error(str(exc))
+    try:
         args.max_total_resources, args.max_packet_chars = resolve_a6a_root_bounds(
             planner=args.planner,
             max_total_resources=args.max_total_resources,
@@ -1596,7 +1739,12 @@ def main(*, default_evidence_recipe: str | None = None) -> int:
     for row in rows:
         if args.planner == "question-only":
             qrow = {k: row.get(k) for k in QUESTION_ONLY_FIELDS}
-            plan = build_search_plan(qrow, qo_infer_intent(qrow), count=args.count, features=features)
+            plan = build_search_plan(
+                qrow,
+                qo_infer_intent(qrow, planner_version=qo_planner_version),
+                count=args.count,
+                features=features,
+            )
         elif args.planner == "blunt-projection":
             qrow = {k: row.get(k) for k in QUESTION_ONLY_FIELDS}
             plan = build_search_plan(qrow, blunt_infer_intent(qrow), count=args.count, features=features)
@@ -1616,6 +1764,7 @@ def main(*, default_evidence_recipe: str | None = None) -> int:
                 plan=plan,
                 features=features,
                 reference_fetcher=reference_fetcher,
+                evidence_recipe=args.evidence_recipe,
             )
         )
     write_jsonl(args.output, records)
