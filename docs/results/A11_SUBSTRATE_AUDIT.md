@@ -6,9 +6,15 @@ Completed: 2026-07-14
 
 Update: the separately versioned `a11-four-family-v1` producer amendment now
 resolves the DiagnosticReport reachability blocker described by this audit,
-without changing historical `qo-v2.1`. The topology and patient-cluster gaps
-below remain unchanged, so the efficacy run is still blocked. See
+without changing historical `qo-v2.1`. At the time of this audit, the topology
+and patient-cluster gaps below remained, so efficacy was still blocked. See
 [`A11_FOUR_FAMILY_PRODUCER_GATE.md`](A11_FOUR_FAMILY_PRODUCER_GATE.md).
+
+Later update (2026-07-15): the pinned official Synthea source plus deterministic
+augmentation closed the topology and patient-count gaps without
+reinterpreting this audit. The dataset/receipt gates are sealed; answer calls
+remain blocked on the separate controller manifest. See
+[`A11_DATASET_GATE.md`](A11_DATASET_GATE.md).
 
 ## Decision
 

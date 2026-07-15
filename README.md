@@ -38,8 +38,8 @@
 > arm. This is a synthetic compiler/integrity result, not byte-equivalence to product packets or
 > answer-accuracy evidence. The new path-bound A11 adapter now proves literal V model-packet equality for
 > non-plan-only promoted records and rejects unsealed artifacts, forbidden benchmark metadata, duplicate,
-> non-dispatched, or patient-ambiguous/directly cross-patient resources. A future efficacy corpus must still
-> add independently pinned source provenance plus a governed authorization/source-version receipt.
+> non-dispatched, or patient-ambiguous/directly cross-patient resources. The sealed efficacy corpus now
+> adds independently pinned source provenance plus a governed authorization/source-version receipt.
 > The QT-4 inventory has only ten depth-two rows and one path family, so the 120-question efficacy run is
 > correctly blocked pending a multi-family non-PHI substrate. A local HolyFHIR export is graph-rich in general
 > but has zero depth-two paths under A11's frozen microbiology registry and only 11 patient clusters. The
@@ -51,9 +51,13 @@
 > without claiming production Bonfire ABAC. A second pre-answer amendment adds the isolated
 > `a11-four-family-depth-aware-v1` recipe and deterministic 24-development/120-efficacy corpus builder over
 > a pinned official 115-patient Synthea sample archive. It freezes all eight family-depth cells and exact
-> unanswerable/temporal quotas without changing older recipes. The receipt gate is closed; the builder must
-> still be double-built, sealed, and preflighted through the complete producer/adapter/governed path, so no
-> answer run is licensed. See
+> unanswerable/temporal quotas without changing older recipes. On 2026-07-15 the receipt and dataset gates
+> both closed: two independent official-source builds were byte-identical at manifest SHA-256
+> `442ca8d204fbd81f06e0abaf2ea5022b375deabb71a93d5ebaeccef98e99fe3c`, and all 144 rows passed the complete
+> real-producer/strict-adapter/governed-retrieval preflight with zero model calls. An independent pre-answer
+> review also forced two competing temporal facts per case, balanced every failure mode 3 first/3 latest,
+> and added mechanism-level audits. The V/T/E answer run remains blocked only on its separate controller
+> manifest; no accuracy result exists yet. See
 > [A11_EVENT_GROUP_MECHANISM.md](docs/results/A11_EVENT_GROUP_MECHANISM.md) and the frozen
 > [A11_EVENT_GROUP.md](docs/prereg/A11_EVENT_GROUP.md) protocol, plus the
 > [adapter gate](docs/results/A11_PRODUCT_PACKET_ADAPTER.md),
@@ -114,8 +118,8 @@ apparent win is a context-overflow artifact (a null at matched budget), not a re
   fetched evidence compiled into typed event groups with canonical time, first/latest rank, path citations,
   and an answerability receipt (E). `T−V` measures whether path-required topology makes traversal useful;
   `E−T` measures whether structure fixes the temporal-binding failure seen in QT-4. The committed synthetic
-  gate proves compiler mechanics only; efficacy cannot start until an adapter proves V is byte-identical to
-  `compile_evidence.py` output and a broader dataset is sealed.
+  gate proves compiler mechanics only. The adapter, governed receipt, and byte-identical 120-question
+  efficacy dataset seals are now complete; the preregistered answer run is the next evidence-bearing step.
 - ⚠️ **Reproducibility is split.** For the trustworthy re-grade, the committed artifacts are the aggregate
   summary (`medplum-eval/full409_summary.json`) and a durable per-question answer backup
   (`medplum-eval/full409_answers.json`); the per-question panel/deterministic labels live under gitignored
@@ -179,9 +183,8 @@ future A6/A7 arms should report accuracy beside the same token/cost ledger, not 
 
 The repo is ready for GitHub issues. The issue-ready backlog lives in [ROADMAP.md](docs/ROADMAP.md):
 
-- Build the multi-family non-PHI A11 efficacy dataset against the governed source-version receipt,
-  and seal it before running V/T/E without inspecting
-  answers mid-run.
+- Run the sealed 120-question A11 V/T/E efficacy experiment without inspecting
+  answers mid-run, then grade and analyze in the preregistered order.
 - Publish a minimized reproducibility artifact package with checksums.
 - Rerun A0, A0', and A5 on one substrate.
 - Add cross-family or human adjudication for A0' non-numeric labels.

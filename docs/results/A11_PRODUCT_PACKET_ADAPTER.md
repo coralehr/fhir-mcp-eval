@@ -1,7 +1,7 @@
 # A11 versioned product-packet adapter gate
 
-Status: **implementation gate passed on synthetic non-PHI product records;
-sealed efficacy corpus and governed authorization receipt still pending**
+Status: **implementation gate passed; downstream dataset and governed receipt
+also sealed; controller pending**
 
 Completed: 2026-07-14
 
@@ -16,7 +16,8 @@ payload it verifies:
 - the whole JSONL SHA-256 against `manifest.output.sha256`;
 - unique question IDs, exact question coverage, and manifest count;
 - either the historical `qt4-vocabulary-promoted-v1` contract or the explicit
-  pre-answer `a11-four-family-v1` contract selected independently by the
+  pre-answer `a11-four-family-v1` or
+  `a11-four-family-depth-aware-v1` contract selected independently by the
   caller;
 - the recipe-bound question-only planner (`qo-v2.1` or
   `qo-v2.2-a11-four-family`), `micro-vocab` only, live rather than plan-only
@@ -59,8 +60,11 @@ against a local synthetic FHIR client and pass its real non-plan-only JSONL
 and manifest through the adapter. Adapter v2 proves that the explicit A11
 recipe yields Observation roots for Observation/default questions and
 DiagnosticReport roots only for explicitly worded DiagnosticReport questions,
-with all four registered question-plan shapes reachable. It has not yet been
-run against the future efficacy corpus because that corpus does not exist.
+with all four registered question-plan shapes reachable. The strict adapter
+was subsequently run through the complete zero-model governed preflight for
+all 144 sealed corpus rows on 2026-07-15. That corpus and its governed
+retrieval receipt are recorded in
+[`A11_DATASET_GATE.md`](A11_DATASET_GATE.md).
 
 The adapter now rejects benchmark-only keys and prefixes recursively inside
 the registered Observation/DiagnosticReport roots as well as packet metadata.
@@ -83,7 +87,7 @@ Observation-only and reproducible; the A11 recipe binds
 `qo-v2.2-a11-four-family` and its distinct preregistration receipt. This proves
 producer reachability, not efficacy.
 
-Before T/E efficacy, a governed, non-model-visible source receipt must bind:
+The downstream governed, non-model-visible source receipt now binds:
 
 - principal, practice, purpose, patient, and allowed purposes;
 - immutable source/snapshot version;
@@ -103,6 +107,6 @@ python3 -m unittest tests.test_a11_packet_adapter tests.test_a11_four_family_rec
 ```
 
 This gate removes the packet-rendering ambiguity that made the synthetic V
-proxy insufficient. It does not remove the separate authorization and dataset
-gates described in [`A11_EVENT_GROUP.md`](../prereg/A11_EVENT_GROUP.md) and
-[`A11_SUBSTRATE_AUDIT.md`](A11_SUBSTRATE_AUDIT.md).
+proxy insufficient. The authorization and dataset gates described in
+[`A11_EVENT_GROUP.md`](../prereg/A11_EVENT_GROUP.md) subsequently passed; the
+answer run still requires its separate controller seal.

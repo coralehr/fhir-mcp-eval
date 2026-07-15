@@ -262,7 +262,7 @@ independently supplied manifest hash and returns the literal model-visible V byt
 synthetic star proxy. Arbitrary clinical FHIR content still requires pinned source/extractor provenance. The
 2026-07-15 governed-retrieval gate now binds adapter-verified V roots to a pinned
 principal/practice/purpose/patient/source-version context and one immutable version-preserving T/E retrieval
-result. Efficacy remains blocked on the deterministic multi-family dataset, so no accuracy claim is licensed. A
+result. The deterministic dataset gate is now sealed, but no answer run or accuracy result exists yet. A
 replay-validated inventory of the sealed QT-4 packets found only ten rows with fetched depth-two targets and
 one usable two-hop family. A later local audit found a 7,883-resource synthetic export with many generic
 paths, but zero depth-two paths under A11's frozen microbiology registry and only 11 patient clusters. The
@@ -276,8 +276,12 @@ source-version result is recorded in `docs/results/A11_GOVERNED_RETRIEVAL_GATE.m
 `docs/results/A11_SUBSTRATE_AUDIT.md`, plus
 `docs/results/A11_FOUR_FAMILY_PRODUCER_GATE.md`. The 2026-07-15 pre-answer source/depth amendment adds
 `a11-four-family-depth-aware-v1` plus a deterministic builder over the pinned official 115-patient Synthea
-sample archive. It freezes 24 development and 120 efficacy rows across all eight family-depth cells, but the
-parent-side double-build seal and governed authorization/source-version receipt must pass before answers.
+sample archive. It freezes 24 development and 120 efficacy rows across all eight family-depth cells. The
+parent-side double build was byte-identical at manifest SHA-256
+`442ca8d204fbd81f06e0abaf2ea5022b375deabb71a93d5ebaeccef98e99fe3c`; all 144 rows passed the real producer,
+strict adapter, and governed shared-retrieval preflight with zero model calls. Each case now carries two
+distinct competing temporal facts and each failure mode is balanced 3 first/3 latest. The next step is to
+seal the controller manifest, then run frozen V/T/E without mid-run answer inspection.
 See `docs/results/A11_DATASET_GATE.md`; do not convert the mechanism fixture into an answer benchmark.
 
 **Question:** Do explicit temporal/reference graphs improve long-horizon, multi-call clinical tasks beyond flat packets?

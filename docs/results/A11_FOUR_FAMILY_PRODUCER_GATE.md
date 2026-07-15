@@ -1,6 +1,7 @@
 # A11 four-family producer gate
 
-Status: **passed before answer calls; efficacy still blocked**
+Status: **passed before answer calls; downstream dataset/receipt sealed;
+controller pending**
 
 Completed: 2026-07-14
 
@@ -43,16 +44,15 @@ use `a11-question-plan-v1`. The new A11 route binds
 `qo-v2.2-a11-four-family` and `a11-question-plan-v2-four-family` only when the
 new recipe is selected.
 
-## What remains blocked
+## Downstream status
 
 This gate proves producer reachability, version isolation and packet
 integrity. It does not prove that any arm answers correctly, that traversal or
-event grouping helps, or that a graph database is superior. Before V/T/E may
-run, the program still needs a deterministically generated, sealed non-PHI corpus with at least 120
-  questions, four families, patient-disjoint partitions and the registered
-  unanswerable conditions. The later
-  [`A11_GOVERNED_RETRIEVAL_GATE.md`](A11_GOVERNED_RETRIEVAL_GATE.md) now binds
-  authorized V roots to a source version and one immutable T/E retrieval.
+event grouping helps, or that a graph database is superior. The later
+[`A11_GOVERNED_RETRIEVAL_GATE.md`](A11_GOVERNED_RETRIEVAL_GATE.md) and
+[`A11_DATASET_GATE.md`](A11_DATASET_GATE.md) now bind authorized V roots to a
+source version and one immutable T/E retrieval over the sealed 120-question
+efficacy corpus. Answer calls remain blocked on the separate controller seal.
 
 ## Reproduction
 
@@ -64,5 +64,5 @@ python3 -m unittest \
 ```
 
 The binding protocol amendment is
-[`A11_EVENT_GROUP.md`](../prereg/A11_EVENT_GROUP.md). The remaining dataset
+[`A11_EVENT_GROUP.md`](../prereg/A11_EVENT_GROUP.md). The historical substrate
 gap is documented in [`A11_SUBSTRATE_AUDIT.md`](A11_SUBSTRATE_AUDIT.md).

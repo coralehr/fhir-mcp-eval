@@ -10,17 +10,26 @@ import csv
 import hashlib
 import io
 import json
+import os
 import re
+import stat
+import tempfile
+import urllib.parse
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
 
 import a6_packet_builder as a6
+from a11_governed_retrieval import (
+    SOURCE_SNAPSHOT_VERSION,
+    build_governed_retrieval_bundle,
+)
 from a11_evidence_core import (
     REGISTERED_REFERENCE_PATHS,
     canonical_bytes,
     iter_explicit_references,
+    parse_relative_reference,
     project_star,
     project_traversal,
     resource_ref,
@@ -33,6 +42,7 @@ from a11_event_group_benchmark import (
     plan_question,
     rank_event_roots,
 )
+from a11_packet_adapter import load_promoted_bundle
 
 
 DATASET_VERSION = "a11-dataset-v1"
@@ -43,7 +53,7 @@ REQUIRED_SOURCE_PATIENTS = 115
 DEVELOPMENT_QUESTIONS = 24
 EFFICACY_QUESTIONS = 120
 MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
-MAX_ENTRY_BYTES = 64 * 1024 * 1024
+MAX_ENTRY_BYTES = 96 * 1024 * 1024
 MAX_ARCHIVE_ENTRIES = 10_000
 MAX_TOTAL_UNCOMPRESSED_BYTES = 4 * 1024 * 1024 * 1024
 PRACTICE_ID = "synthetic-practice-a11"
@@ -96,7 +106,10 @@ DEPENDENCY_FILES = (
     "a11_dataset_builder.py",
     "a11_evidence_core.py",
     "a11_event_group_benchmark.py",
+    "a11_governed_retrieval.py",
+    "a11_packet_adapter.py",
     "a6_packet_builder.py",
+    "codex_harness.py",
 )
 
 
@@ -181,15 +194,93 @@ def _question_csv(rows: list[dict[str, Any]]) -> bytes:
 
 
 def _policy_context(source: dict[str, Any]) -> dict[str, Any]:
+    source_case_sha256 = sha256(canonical_bytes(source))
     return {
-        "schema_version": "a11-policy-context-v1",
-        "question_id": source["case_id"],
-        "source_epoch": SOURCE_EPOCH,
-        "source_case_sha256": sha256(canonical_bytes(source)),
-        "patient_ref": source["patient_ref"],
-        "principal": copy.deepcopy(source["principal"]),
+        "principal_id": source["principal"]["principal_id"],
+        "practice_id": source["principal"]["practice_id"],
+        "purpose": source["principal"]["purpose"],
         "allowed_purposes": list(source["allowed_purposes"]),
+        "patient_ref": source["patient_ref"],
+        "source_id": f"a11-case-{_opaque(source['case_id'], 'source', length=20)}",
+        "source_version": f"{SOURCE_EPOCH}-{source_case_sha256[:16]}",
+        "traversal_bounds": {
+            "max_depth": source["max_depth"],
+            "max_targets": source["max_targets"],
+            "max_packet_bytes": source["max_packet_bytes"],
+            "vocabulary_allowed_resource_types": ["Observation", "Specimen"],
+        },
     }
+
+
+def _source_snapshot(
+    source: dict[str, Any], policy: dict[str, Any]
+) -> dict[str, Any]:
+    return {
+        "schema_version": SOURCE_SNAPSHOT_VERSION,
+        "source_id": policy["source_id"],
+        "source_version": policy["source_version"],
+        "practice_id": policy["practice_id"],
+        "patient_ref": policy["patient_ref"],
+        "resources": copy.deepcopy(source["resources"]),
+    }
+
+
+class _DatasetFhirClient:
+    """Minimal deterministic FHIR search facade over the augmented corpus."""
+
+    def __init__(self, sources: list[dict[str, Any]]) -> None:
+        resources: dict[str, dict[str, Any]] = {}
+        for source in sources:
+            for entry in source["resources"]:
+                if entry["practice_id"] != PRACTICE_ID:
+                    continue
+                resource = entry["resource"]
+                reference = resource_ref(resource)
+                if reference in resources:
+                    raise ValueError("preflight FHIR store has a duplicate resource")
+                resources[reference] = resource
+        self._resources = resources
+
+    def search_with_pagination(
+        self, query_string: str, *, max_results: int | None = None
+    ) -> list[dict[str, Any]]:
+        resource_type, separator, query = query_string.partition("?")
+        if not separator:
+            raise ValueError("preflight FHIR query has no parameters")
+        params = urllib.parse.parse_qs(query, keep_blank_values=True)
+        patient_values = params.get("patient")
+        if not patient_values or len(patient_values) != 1:
+            raise ValueError("preflight FHIR query has no unique patient")
+        patient_ref = f"Patient/{patient_values[0]}"
+        code_terms = [value.casefold() for value in params.get("code:text", [])]
+        resources = []
+        for resource in self._resources.values():
+            if resource.get("resourceType") != resource_type:
+                continue
+            subject = resource.get("subject")
+            if not isinstance(subject, dict) or subject.get("reference") != patient_ref:
+                continue
+            code = resource.get("code")
+            code_text = code.get("text", "") if isinstance(code, dict) else ""
+            if code_terms and not all(term in str(code_text).casefold() for term in code_terms):
+                continue
+            resources.append(resource)
+
+        by_ref = {resource_ref(resource): resource for resource in resources}
+        ranked, missing_time = rank_event_roots(
+            by_ref,
+            list(by_ref),
+            version=A11_NORMALIZED_EVENT_RANK_VERSION,
+        )
+        if missing_time:
+            raise ValueError("preflight FHIR root has no canonical event time")
+        ordered = [by_ref[row[3]] for row in ranked]
+        sort_values = params.get("_sort", [])
+        if sort_values and sort_values[0].startswith("-"):
+            ordered.reverse()
+        return copy.deepcopy(
+            ordered if max_results is None else ordered[:max_results]
+        )
 
 
 def _is_hash(value: Any, length: int) -> bool:
@@ -229,97 +320,205 @@ def _check_safe_member(name: str) -> None:
         raise ValueError(f"unsafe archive member path: {name}")
 
 
-def inspect_source(input_path: Path) -> tuple[dict[str, Any], list[tuple[str, bytes]]]:
-    """Return a logical, path-stable receipt and JSON payloads without extraction."""
+def _update_content_hash(
+    digest: Any, logical_path: str, data: bytes
+) -> None:
+    encoded = logical_path.encode("utf-8")
+    digest.update(len(encoded).to_bytes(8, "big"))
+    digest.update(encoded)
+    digest.update(len(data).to_bytes(8, "big"))
+    digest.update(data)
+
+
+def _collect_patients(
+    patients: dict[str, dict[str, Any]], raw: bytes, logical_path: str
+) -> None:
+    value = _loads(raw, logical_path)
+    for resource in _iter_resources(value):
+        if resource.get("resourceType") != "Patient":
+            continue
+        patient_id = resource.get("id")
+        if not isinstance(patient_id, str) or not patient_id:
+            raise ValueError(f"source Patient has no id: {logical_path}")
+        if patient_id in patients:
+            raise ValueError(f"duplicate source Patient id: {patient_id}")
+        patients[patient_id] = copy.deepcopy(resource)
+
+
+def _read_regular_file_at(root_fd: int, relative: PurePosixPath) -> tuple[bytes, int]:
+    """Read one directory-source file without following any path-component link."""
+
+    if not relative.parts:
+        raise ValueError("source directory entry has no relative path")
+    directory_fd = os.dup(root_fd)
+    try:
+        for part in relative.parts[:-1]:
+            next_fd = os.open(
+                part,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=directory_fd,
+            )
+            os.close(directory_fd)
+            directory_fd = next_fd
+        file_fd = os.open(
+            relative.parts[-1],
+            os.O_RDONLY | os.O_NOFOLLOW,
+            dir_fd=directory_fd,
+        )
+        try:
+            file_stat = os.fstat(file_fd)
+            if not stat.S_ISREG(file_stat.st_mode):
+                raise ValueError(f"source directory entry is not regular: {relative}")
+            if file_stat.st_size > MAX_ENTRY_BYTES:
+                raise ValueError(f"source entry exceeds byte bound: {relative}")
+            chunks = []
+            received = 0
+            while True:
+                chunk = os.read(file_fd, min(1024 * 1024, MAX_ENTRY_BYTES + 1 - received))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                received += len(chunk)
+                if received > MAX_ENTRY_BYTES:
+                    raise ValueError(f"source entry exceeds byte bound: {relative}")
+            if received != file_stat.st_size:
+                raise ValueError(f"source entry byte count changed: {relative}")
+            return b"".join(chunks), received
+        finally:
+            os.close(file_fd)
+    except OSError as exc:
+        raise ValueError(f"unsafe source directory entry: {relative}") from exc
+    finally:
+        os.close(directory_fd)
+
+
+def inspect_source(input_path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Return a path-stable receipt and Patients from one verified read pass."""
 
     input_path = input_path.resolve()
-    payloads: list[tuple[str, bytes]] = []
+    patients: dict[str, dict[str, Any]] = {}
+    content_digest = hashlib.sha256()
     if input_path.is_file():
-        archive = input_path.read_bytes()
-        if len(archive) > MAX_ARCHIVE_BYTES:
+        archive_bytes = input_path.stat().st_size
+        if archive_bytes > MAX_ARCHIVE_BYTES:
             raise ValueError("source archive exceeds byte bound")
-        if not zipfile.is_zipfile(input_path):
-            raise ValueError("source file must be a ZIP archive")
         seen: set[str] = set()
         receipts: list[dict[str, Any]] = []
         total = 0
-        with zipfile.ZipFile(input_path) as handle:
-            infos = sorted(handle.infolist(), key=lambda info: info.filename)
-            if len(infos) > MAX_ARCHIVE_ENTRIES:
-                raise ValueError("source archive exceeds entry bound")
-            for info in infos:
-                if info.is_dir():
-                    continue
-                _check_safe_member(info.filename)
-                if info.filename in seen:
-                    raise ValueError(f"duplicate archive member: {info.filename}")
-                seen.add(info.filename)
-                if info.flag_bits & 0x1:
-                    raise ValueError("encrypted source archive entries are forbidden")
-                if info.file_size > MAX_ENTRY_BYTES:
-                    raise ValueError(f"source entry exceeds byte bound: {info.filename}")
-                total += info.file_size
-                if total > MAX_TOTAL_UNCOMPRESSED_BYTES:
-                    raise ValueError("source archive exceeds uncompressed byte bound")
-                data = handle.read(info)
-                if len(data) != info.file_size:
-                    raise ValueError(f"source entry byte count mismatch: {info.filename}")
-                receipt = {
-                    "path": info.filename,
-                    "sha256": sha256(data),
-                    "bytes": len(data),
-                }
-                receipts.append(receipt)
-                if info.filename.lower().endswith(".json"):
-                    payloads.append((info.filename, data))
-        if not payloads:
+        archive_digest = hashlib.sha256()
+        git_blob_digest = hashlib.sha1(usedforsecurity=False)
+        git_blob_digest.update(f"blob {archive_bytes}\0".encode("ascii"))
+        copied = 0
+        with tempfile.TemporaryFile() as snapshot:
+            with input_path.open("rb") as source:
+                for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                    copied += len(chunk)
+                    if copied > MAX_ARCHIVE_BYTES:
+                        raise ValueError("source archive exceeds byte bound")
+                    archive_digest.update(chunk)
+                    git_blob_digest.update(chunk)
+                    snapshot.write(chunk)
+            if copied != archive_bytes:
+                raise ValueError("source archive byte count changed during snapshot")
+            snapshot.seek(0)
+            if not zipfile.is_zipfile(snapshot):
+                raise ValueError("source file must be a ZIP archive")
+            snapshot.seek(0)
+            with zipfile.ZipFile(snapshot) as handle:
+                infos = sorted(handle.infolist(), key=lambda info: info.filename)
+                if len(infos) > MAX_ARCHIVE_ENTRIES:
+                    raise ValueError("source archive exceeds entry bound")
+                for info in infos:
+                    if info.is_dir():
+                        continue
+                    _check_safe_member(info.filename)
+                    if info.filename in seen:
+                        raise ValueError(f"duplicate archive member: {info.filename}")
+                    seen.add(info.filename)
+                    if info.flag_bits & 0x1:
+                        raise ValueError("encrypted source archive entries are forbidden")
+                    if info.file_size > MAX_ENTRY_BYTES:
+                        raise ValueError(f"source entry exceeds byte bound: {info.filename}")
+                    total += info.file_size
+                    if total > MAX_TOTAL_UNCOMPRESSED_BYTES:
+                        raise ValueError("source archive exceeds uncompressed byte bound")
+                    data = handle.read(info)
+                    if len(data) != info.file_size:
+                        raise ValueError(f"source entry byte count mismatch: {info.filename}")
+                    receipt = {
+                        "path": info.filename,
+                        "sha256": sha256(data),
+                        "bytes": len(data),
+                    }
+                    receipts.append(receipt)
+                    if info.filename.lower().endswith(".json"):
+                        _update_content_hash(content_digest, info.filename, data)
+                        _collect_patients(patients, data, info.filename)
+        if not patients:
             raise ValueError("source archive contains no JSON entries")
         receipt = {
             "kind": "zip",
-            "logical_path": input_path.name,
-            "sha256": sha256(archive),
-            "bytes": len(archive),
+            "logical_path": "source.zip",
+            "sha256": archive_digest.hexdigest(),
+            "git_blob_sha1": git_blob_digest.hexdigest(),
+            "bytes": archive_bytes,
             "entries": receipts,
             "entry_manifest_sha256": sha256(canonical_bytes(receipts)),
-            "content_sha256": _content_hash(payloads),
+            "content_sha256": content_digest.hexdigest(),
         }
-        return receipt, payloads
+        return receipt, list(patients.values())
 
     if not input_path.is_dir():
         raise ValueError("source input does not exist")
     receipts = []
-    for path in sorted(input_path.rglob("*.json")):
-        if path.is_symlink() or not path.is_file():
-            raise ValueError(f"source directory contains an unsafe JSON path: {path.name}")
-        relative = path.relative_to(input_path).as_posix()
-        data = path.read_bytes()
-        if len(data) > MAX_ENTRY_BYTES:
-            raise ValueError(f"source entry exceeds byte bound: {relative}")
-        receipts.append({"path": relative, "sha256": sha256(data), "bytes": len(data)})
-        payloads.append((relative, data))
-    if not payloads:
+    paths = []
+    json_sizes: dict[str, int] = {}
+    total = 0
+    for entry_count, path in enumerate(input_path.rglob("*"), start=1):
+        if entry_count > MAX_ARCHIVE_ENTRIES:
+            raise ValueError("source directory exceeds entry bound")
+        metadata = path.lstat()
+        if stat.S_ISLNK(metadata.st_mode):
+            raise ValueError(f"source directory contains a symbolic link: {path.name}")
+        if stat.S_ISDIR(metadata.st_mode):
+            continue
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError(f"source directory contains a non-regular entry: {path.name}")
+        total += metadata.st_size
+        if total > MAX_TOTAL_UNCOMPRESSED_BYTES:
+            raise ValueError("source directory exceeds total byte bound")
+        if path.suffix.lower() == ".json":
+            paths.append(path)
+            json_sizes[path.relative_to(input_path).as_posix()] = metadata.st_size
+    paths.sort()
+    root_fd = os.open(input_path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for path in paths:
+            relative_path = PurePosixPath(path.relative_to(input_path).as_posix())
+            data, entry_bytes = _read_regular_file_at(root_fd, relative_path)
+            total += entry_bytes - json_sizes[relative_path.as_posix()]
+            if total > MAX_TOTAL_UNCOMPRESSED_BYTES:
+                raise ValueError("source directory exceeds total byte bound")
+            relative = relative_path.as_posix()
+            receipts.append(
+                {"path": relative, "sha256": sha256(data), "bytes": entry_bytes}
+            )
+            _update_content_hash(content_digest, relative, data)
+            _collect_patients(patients, data, relative)
+    finally:
+        os.close(root_fd)
+    if not patients:
         raise ValueError("source directory contains no JSON files")
     receipt = {
         "kind": "directory",
-        "logical_path": input_path.name,
+        "logical_path": "source-directory",
         "entries": receipts,
         "entry_manifest_sha256": sha256(canonical_bytes(receipts)),
-        "content_sha256": _content_hash(payloads),
+        "content_sha256": content_digest.hexdigest(),
     }
     receipt["sha256"] = sha256(canonical_bytes(receipts))
     receipt["bytes"] = sum(item["bytes"] for item in receipts)
-    return receipt, payloads
-
-
-def _content_hash(payloads: list[tuple[str, bytes]]) -> str:
-    digest = hashlib.sha256()
-    for logical_path, data in sorted(payloads):
-        encoded = logical_path.encode("utf-8")
-        digest.update(len(encoded).to_bytes(8, "big"))
-        digest.update(encoded)
-        digest.update(len(data).to_bytes(8, "big"))
-        digest.update(data)
-    return digest.hexdigest()
+    return receipt, list(patients.values())
 
 
 def _validate_provenance(provenance: dict[str, Any], source: dict[str, Any]) -> None:
@@ -379,6 +578,8 @@ def _validate_provenance(provenance: dict[str, Any], source: dict[str, Any]) -> 
                 raise ValueError(f"invalid provenance {field}")
         if provenance.get("archive_sha256") != source["sha256"]:
             raise ValueError("source archive sha256 changed")
+        if provenance.get("git_blob_sha1") != source["git_blob_sha1"]:
+            raise ValueError("source archive git blob changed")
         if provenance.get("archive_bytes") != source["bytes"]:
             raise ValueError("source archive byte count changed")
         if not isinstance(provenance.get("artifact_path"), str) or not provenance["artifact_path"]:
@@ -441,19 +642,13 @@ def _iter_resources(value: Any) -> Iterable[dict[str, Any]]:
         yield value
 
 
-def _load_patients(payloads: list[tuple[str, bytes]]) -> list[dict[str, Any]]:
+def _load_patients(patient_resources: list[dict[str, Any]]) -> list[dict[str, Any]]:
     patients: dict[str, dict[str, Any]] = {}
-    for logical_path, raw in payloads:
-        value = _loads(raw, logical_path)
-        for resource in _iter_resources(value):
-            if resource.get("resourceType") != "Patient":
-                continue
-            patient_id = resource.get("id")
-            if not isinstance(patient_id, str) or not patient_id:
-                raise ValueError(f"source Patient has no id: {logical_path}")
-            if patient_id in patients:
-                raise ValueError(f"duplicate source Patient id: {patient_id}")
-            patients[patient_id] = copy.deepcopy(resource)
+    for resource in patient_resources:
+        patient_id = resource["id"]
+        if patient_id in patients:
+            raise ValueError(f"duplicate source Patient id: {patient_id}")
+        patients[patient_id] = copy.deepcopy(resource)
     if len(patients) != REQUIRED_SOURCE_PATIENTS:
         raise ValueError(
             f"source has {len(patients)} unique Patients; need exactly "
@@ -507,6 +702,53 @@ def _terminal_fact(terminal: dict[str, Any]) -> dict[str, str]:
     return {"code": coding["code"], "display": coding["display"]}
 
 
+def _make_terminal(
+    patient_id: str,
+    patient_ref: str,
+    split: str,
+    ordinal: int,
+    family: Family,
+    branch: str,
+) -> dict[str, Any]:
+    token = _opaque(
+        patient_id, split, str(ordinal), branch, "fact", length=10
+    ).upper()
+    terminal_id = _opaque(patient_id, split, str(ordinal), branch, "terminal")
+    if family.terminal_type == "Observation":
+        return _resource(
+            "Observation",
+            terminal_id,
+            patient_ref,
+            status="final",
+            code={"text": "Synthetic microbiology finding"},
+            valueCodeableConcept={
+                "coding": [
+                    {
+                        "system": "https://example.invalid/a11-organism",
+                        "code": f"O-{token}",
+                        "display": f"Synthetic organism {token}",
+                    }
+                ]
+            },
+        )
+    return _resource(
+        "Specimen",
+        terminal_id,
+        patient_ref,
+        status="available",
+        type={
+            "coding": [
+                {
+                    "system": "https://example.invalid/a11-specimen",
+                    "code": f"S-{token}",
+                    "display": f"Synthetic sample {token}",
+                }
+            ],
+            "text": f"Synthetic sample {token}",
+        },
+    )
+
+
 def _question_text(
     question_id: str,
     family: Family,
@@ -555,47 +797,26 @@ def _make_case(
     if question_plan["path_signatures"] != [signature]:
         raise ValueError(f"question plan does not match generated cell: {question_id}")
 
-    token = _opaque(patient_id, split, str(ordinal), "fact", length=10).upper()
-    terminal_id = _opaque(patient_id, split, str(ordinal), "z")
-    if family.terminal_type == "Observation":
-        terminal = _resource(
-            "Observation",
-            terminal_id,
-            patient_ref,
-            status="final",
-            code={"text": "Synthetic microbiology finding"},
-            valueCodeableConcept={
-                "coding": [
-                    {
-                        "system": "https://example.invalid/a11-organism",
-                        "code": f"O-{token}",
-                        "display": f"Synthetic organism {token}",
-                    }
-                ]
-            },
-        )
-    else:
-        terminal = _resource(
-            "Specimen",
-            terminal_id,
-            patient_ref,
-            status="available",
-            type={
-                "coding": [
-                    {
-                        "system": "https://example.invalid/a11-specimen",
-                        "code": f"S-{token}",
-                        "display": f"Synthetic sample {token}",
-                    }
-                ],
-                "text": f"Synthetic sample {token}",
-            },
-        )
+    terminal = _make_terminal(
+        patient_id, patient_ref, split, ordinal, family, "selected"
+    )
+    distractor_terminal = _make_terminal(
+        patient_id, patient_ref, split, ordinal, family, "nonselected"
+    )
     fact = _terminal_fact(terminal)
+    distractor_fact = _terminal_fact(distractor_terminal)
+    if distractor_fact == fact:
+        raise ValueError("temporal roots have identical terminal facts")
 
-    early_id = _opaque(patient_id, split, str(ordinal), "a")
-    late_id = _opaque(patient_id, split, str(ordinal), "b")
-    root_ids = [early_id, late_id]
+    selected_index = 0 if temporal_policy == "first" else 1
+    root_ids = sorted(
+        [
+            _opaque(patient_id, split, str(ordinal), "root-a"),
+            _opaque(patient_id, split, str(ordinal), "root-b"),
+        ]
+    )
+    if failure_mode == "bound_exhaustion" and selected_index == 0:
+        root_ids.reverse()
     root_times = ["2099-01-15T08:00:00-05:00", "2100-01-15T13:00:00Z"]
     roots = [
         _resource(
@@ -608,48 +829,50 @@ def _make_case(
         )
         for root_id, event_time in zip(root_ids, root_times, strict=True)
     ]
-    selected_index = 0 if temporal_policy == "first" else 1
     selected_root = roots[selected_index]
     distractor_root = roots[1 - selected_index]
 
-    resources: list[dict[str, Any]] = roots[:]
     entries: list[dict[str, Any]] = [
         {"practice_id": PRACTICE_ID, "resource": resource} for resource in roots
     ]
-    missing_distractor = _resource(
-        "Observation", _opaque(patient_id, split, str(ordinal), "d"), patient_ref
-    )
-    _append_relation(distractor_root, family.first_relation, missing_distractor)
 
-    current = selected_root
-    bridges: list[dict[str, Any]] = []
-    bridge_count = depth - 1
-    for bridge_index in range(bridge_count):
-        bridge = _resource(
-            "Observation",
-            _opaque(patient_id, split, str(ordinal), f"m{bridge_index}"),
-            patient_ref,
-            status="final",
-            code={"text": "Synthetic microbiology panel"},
+    def append_branch(
+        root: dict[str, Any], branch: str, branch_terminal: dict[str, Any]
+    ) -> None:
+        current = root
+        for bridge_index in range(depth - 1):
+            bridge = _resource(
+                "Observation",
+                _opaque(
+                    patient_id,
+                    split,
+                    str(ordinal),
+                    branch,
+                    f"bridge-{bridge_index}",
+                ),
+                patient_ref,
+                status="final",
+                code={"text": "Synthetic microbiology panel"},
+            )
+            relation = family.first_relation if bridge_index == 0 else OBS_MEMBER
+            _append_relation(current, relation, bridge)
+            entries.append({"practice_id": PRACTICE_ID, "resource": bridge})
+            current = bridge
+        _append_relation(
+            current,
+            family.terminal_relation,
+            branch_terminal,
+            requested_version="1",
         )
-        relation = family.first_relation if bridge_index == 0 else OBS_MEMBER
-        _append_relation(current, relation, bridge)
-        bridges.append(bridge)
-        resources.append(bridge)
-        entries.append({"practice_id": PRACTICE_ID, "resource": bridge})
-        current = bridge
 
-    requested_version = "1"
+    append_branch(distractor_root, "nonselected", distractor_terminal)
+    entries.append(
+        {"practice_id": PRACTICE_ID, "resource": distractor_terminal}
+    )
     if failure_mode == "stale_version":
         terminal["meta"]["versionId"] = "2"
-    _append_relation(
-        current,
-        family.terminal_relation,
-        terminal,
-        requested_version=requested_version,
-    )
+    append_branch(selected_root, "selected", terminal)
     if failure_mode != "missing":
-        resources.append(terminal)
         entries.append(
             {
                 "practice_id": (
@@ -659,7 +882,7 @@ def _make_case(
             }
         )
 
-    max_targets = depth - 1 if failure_mode == "bound_exhaustion" else 8
+    max_targets = 2 * depth - 1 if failure_mode == "bound_exhaustion" else 8
     source_case = {
         "case_id": question_id,
         "patient_ref": patient_ref,
@@ -695,6 +918,8 @@ def _make_case(
         "reference_answer": fact if failure_mode is None else None,
         "selected_root_ref": resource_ref(selected_root),
         "terminal_resource_ref": resource_ref(terminal),
+        "nonselected_terminal_resource_ref": resource_ref(distractor_terminal),
+        "nonselected_reference_answer": distractor_fact,
         "path_signature": signature,
         "depth": depth,
     }
@@ -715,15 +940,22 @@ def _rows_for_split(
         for family, depth in cells:
             specs.append((family, depth, occurrence))
 
+    if split == "development" and len(patients) == 15 and question_count == 24:
+        patient_indices = [*range(15), 0, 4, 5, 6, 7, 1, 2, 3, 8]
+    elif split == "efficacy" and len(patients) == 100 and question_count == 120:
+        patient_indices = [*range(100), *range(20)]
+    else:
+        raise ValueError("patient schedule does not match the frozen split profile")
+
     source_rows = []
     question_rows = []
     gold_rows = []
     for ordinal, (family, depth, occurrence) in enumerate(specs):
-        patient = patients[ordinal % len(patients)]
+        patient = patients[patient_indices[ordinal]]
         cell_index = cells.index((family, depth))
         temporal = "first" if (occurrence + cell_index) % 2 == 0 else "latest"
         if split == "efficacy" and occurrence < 3:
-            failure_mode = FAILURE_MODES[(cell_index * 3 + occurrence) % 4]
+            failure_mode = FAILURE_MODES[(cell_index // 2 + occurrence) % 4]
         elif split == "development" and occurrence == 0:
             failure_mode = FAILURE_MODES[cell_index % 4]
         else:
@@ -836,6 +1068,9 @@ def _audit_case(
             ):
                 raise ValueError(f"{packet_name} leaks a cross-patient resource")
     routes = []
+    nonselected_routes = []
+    nonselected_terminal_ref = gold["nonselected_terminal_resource_ref"]
+    selected_unavailable = []
     for citation in traversal["audit_path_citations"]:
         steps = citation["steps"]
         for step in steps:
@@ -851,10 +1086,39 @@ def _audit_case(
             and citation["state"] == "available"
         ):
             routes.append([_relation_for_step(step) for step in steps])
+        if (
+            steps
+            and steps[0]["source"] != gold["selected_root_ref"]
+            and citation["resolved_target"] == nonselected_terminal_ref
+            and citation["state"] == "available"
+        ):
+            nonselected_routes.append(
+                [_relation_for_step(step) for step in steps]
+            )
+        requested = parse_relative_reference(citation["requested_target"])
+        if (
+            steps
+            and steps[0]["source"] == gold["selected_root_ref"]
+            and requested is not None
+            and f"{requested[0]}/{requested[1]}" == terminal_ref
+            and citation["state"] == "unavailable"
+        ):
+            selected_unavailable.append(citation)
 
     answerable = gold["answerable"]
     event_packet = compile_event_groups(traversal, plan)
     event_state = event_packet["answerability_receipt"]["state"]
+    if nonselected_terminal_ref not in traversal_refs:
+        raise ValueError("nonselected temporal event lacks a complete terminal")
+    if nonselected_routes != [gold["path_signature"]]:
+        raise ValueError("nonselected temporal event lacks one registered route")
+    if gold["nonselected_reference_answer"] == gold["reference_answer"]:
+        raise ValueError("temporal events do not carry distinct facts")
+    selected_groups = [
+        group
+        for group in event_packet["event_groups"]
+        if group["temporal_rank"]["selected_for_question"]
+    ]
     if answerable:
         if terminal_ref not in traversal_refs:
             raise ValueError("answerable traversal does not contain terminal")
@@ -865,6 +1129,8 @@ def _audit_case(
             raise ValueError("terminal is reachable by an alternate shorter path")
         if event_state != "sufficient":
             raise ValueError("answerable E packet is not sufficient")
+        if len(selected_groups) != 1:
+            raise ValueError("answerable E packet does not select one temporal event")
     else:
         if terminal_ref in traversal_refs:
             raise ValueError("unanswerable traversal exposes terminal")
@@ -872,6 +1138,41 @@ def _audit_case(
             raise ValueError("unanswerable terminal has an available route")
         if event_state != "insufficient":
             raise ValueError("unanswerable E packet is not insufficient")
+        if len(selected_unavailable) != 1:
+            raise ValueError("unanswerable selected event lacks one unavailable route")
+
+        terminal_entries = [
+            entry
+            for entry in source["resources"]
+            if resource_ref(entry["resource"]) == terminal_ref
+        ]
+        failure_mode = gold["failure_mode"]
+        if failure_mode == "missing":
+            mechanism_ok = not terminal_entries
+        elif failure_mode == "stale_version":
+            mechanism_ok = (
+                len(terminal_entries) == 1
+                and terminal_entries[0]["practice_id"] == PRACTICE_ID
+                and terminal_entries[0]["resource"]["meta"]["versionId"] == "2"
+                and selected_unavailable[0]["requested_target"].endswith(
+                    "/_history/1"
+                )
+            )
+        elif failure_mode == "out_of_scope":
+            mechanism_ok = (
+                len(terminal_entries) == 1
+                and terminal_entries[0]["practice_id"] == DENIED_PRACTICE_ID
+            )
+        elif failure_mode == "bound_exhaustion":
+            mechanism_ok = (
+                len(terminal_entries) == 1
+                and terminal_entries[0]["practice_id"] == PRACTICE_ID
+                and "target_limit" in traversal["bounds"]["outcomes"]
+            )
+        else:
+            mechanism_ok = False
+        if not mechanism_ok:
+            raise ValueError(f"unanswerable mechanism does not match {failure_mode}")
 
     timed_roots, missing_time = rank_event_roots(
         source_index,
@@ -892,6 +1193,8 @@ def _audit_case(
         "exact_shortest_path": True,
         "scope_leakage": 0,
         "answerability_matches": True,
+        "temporal_competitor_complete": True,
+        "failure_mechanism_matches": True,
         "normalized_utc_rank_matches": True,
     }
 
@@ -934,6 +1237,19 @@ def _audit_dataset(
         if row["patient_fhir_id"] not in expected:
             raise ValueError("question patient leaks across partitions")
 
+    questions_by_patient: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
+    for row in questions:
+        questions_by_patient[row["patient_fhir_id"]].append(row)
+    for patient_questions in questions_by_patient.values():
+        if len(patient_questions) > 2:
+            raise ValueError("patient contributes more than two question rows")
+        if len(patient_questions) == 2:
+            root_types = {
+                FAMILY_BY_ID[row["family"]].root_type for row in patient_questions
+            }
+            if root_types != {"DiagnosticReport", "Observation"}:
+                raise ValueError("reused patient has an ambiguous root-type search")
+
     cells = collections.Counter(
         (row["split"], row["family"], row["depth"]) for row in questions
     )
@@ -966,6 +1282,19 @@ def _audit_dataset(
     )
     if failures != {mode: 6 for mode in FAILURE_MODES}:
         raise ValueError("efficacy failure-mode quota changed")
+    failure_temporal = collections.Counter(
+        (
+            gold_by_id[row["question_id"]]["failure_mode"],
+            row["temporal_policy"],
+        )
+        for row in efficacy_unanswerable
+    )
+    if failure_temporal != {
+        (mode, temporal): 3
+        for mode in FAILURE_MODES
+        for temporal in ("first", "latest")
+    }:
+        raise ValueError("efficacy failure modes are temporally confounded")
 
     efficacy_patient_counts = collections.Counter(
         row["patient_fhir_id"] for row in questions if row["split"] == "efficacy"
@@ -993,9 +1322,180 @@ def _audit_dataset(
         "efficacy_temporal": dict(sorted(efficacy_temporal.items())),
         "efficacy_unanswerable": len(efficacy_unanswerable),
         "efficacy_failure_modes": dict(sorted(failures.items())),
+        "efficacy_failure_mode_temporal": {
+            f"{mode}:{temporal}": failure_temporal[(mode, temporal)]
+            for mode in FAILURE_MODES
+            for temporal in ("first", "latest")
+        },
         "case_audits": case_audits,
         "all_checks_passed": True,
     }
+
+
+def _jsonl_values(data: bytes, *, location: str) -> list[dict[str, Any]]:
+    values = []
+    for line_number, line in enumerate(data.splitlines(), start=1):
+        if not line:
+            continue
+        value = _loads(line, f"{location}:{line_number}")
+        if not isinstance(value, dict):
+            raise ValueError(f"JSONL row is not an object: {location}:{line_number}")
+        values.append(value)
+    return values
+
+
+def _governed_preflight(artifacts: dict[str, bytes]) -> bytes:
+    """Exercise every row through producer, adapter, and governed T/E bytes."""
+
+    sources = _jsonl_values(
+        artifacts["source_corpus.jsonl"], location="source_corpus.jsonl"
+    )
+    questions = _jsonl_values(
+        artifacts["questions.jsonl"], location="questions.jsonl"
+    )
+    policies = _jsonl_values(
+        artifacts["policy_contexts.jsonl"], location="policy_contexts.jsonl"
+    )
+    gold = _jsonl_values(artifacts["gold.jsonl"], location="gold.jsonl")
+    if not (len(sources) == len(questions) == len(policies) == len(gold) == 144):
+        raise ValueError("governed preflight artifact counts changed")
+
+    client = _DatasetFhirClient(sources)
+    features = a6.resolve_evidence_recipe(
+        a6.A11_DEPTH_AWARE_EVIDENCE_RECIPE,
+        explicit_features=frozenset(),
+        planner="question-only",
+    )
+    records = []
+    for question in questions:
+        safe = {field: question.get(field) for field in a6.QUESTION_ONLY_FIELDS}
+        intent = a6.qo_infer_intent(
+            safe,
+            planner_version=a6.A11_QO_PLANNER_VERSION,
+        )
+        plan = a6.build_search_plan(safe, intent, count=100, features=features)
+        resources_by_query = a6.fetch_resources(
+            plan,
+            per_query_cap=4 * a6.A6A_MAX_TOTAL_RESOURCES,
+            client=client,
+        )
+        records.append(
+            a6.build_packet_record(
+                safe,
+                plan_only=False,
+                resources_by_query=resources_by_query,
+                count=100,
+                planner="question-only",
+                max_total_resources=a6.A6A_MAX_TOTAL_RESOURCES,
+                max_packet_chars=a6.A6A_MAX_PACKET_CHARS,
+                plan=plan,
+                features=features,
+                evidence_recipe=a6.A11_DEPTH_AWARE_EVIDENCE_RECIPE,
+            )
+        )
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        questions_path = root / "questions.csv"
+        packets_path = root / "v_packets.jsonl"
+        manifest_path = root / "v_manifest.json"
+        questions_path.write_bytes(artifacts["questions.csv"])
+        a6.write_jsonl(packets_path, records)
+        manifest_args = argparse.Namespace(
+            limit=None,
+            count=100,
+            plan_only=False,
+            split="all",
+            question_spec=None,
+            planner="question-only",
+            features="",
+            evidence_recipe=a6.A11_DEPTH_AWARE_EVIDENCE_RECIPE,
+            max_total_resources=a6.A6A_MAX_TOTAL_RESOURCES,
+            max_packet_chars=a6.A6A_MAX_PACKET_CHARS,
+        )
+        a6.write_manifest(
+            manifest_path,
+            input_path=questions_path,
+            output_path=packets_path,
+            args=manifest_args,
+            records=records,
+        )
+        manifest_sha256 = sha256(manifest_path.read_bytes())
+        promoted = load_promoted_bundle(
+            packets_path,
+            manifest_path,
+            expected_manifest_sha256=manifest_sha256,
+            expected_evidence_recipe=a6.A11_DEPTH_AWARE_EVIDENCE_RECIPE,
+        )
+
+        rows = []
+        for source, question, policy, answer in zip(
+            sources, questions, policies, gold, strict=True
+        ):
+            question_id = question["question_id"]
+            verified_v = promoted.load(question_id)
+            if verified_v["question_plan"] != question["question_plan"]:
+                raise ValueError("producer/adapter question plan differs from dataset")
+            if verified_v["root_refs"] != source["seed_refs"]:
+                raise ValueError("producer/adapter V roots differ from dataset roots")
+
+            policy_bytes = canonical_bytes(policy)
+            if sha256(policy_bytes) != question["policy_context_sha256"]:
+                raise ValueError("question policy hash changed before governed preflight")
+            snapshot_bytes = canonical_bytes(_source_snapshot(source, policy))
+            if sha256(snapshot_bytes) != question["source_snapshot_sha256"]:
+                raise ValueError("question source snapshot hash changed before preflight")
+            governed = build_governed_retrieval_bundle(
+                promoted,
+                question_id,
+                source_snapshot_bytes=snapshot_bytes,
+                expected_snapshot_sha256=question["source_snapshot_sha256"],
+                policy_context_bytes=policy_bytes,
+                expected_policy_sha256=question["policy_context_sha256"],
+                expected_evidence_recipe=a6.A11_DEPTH_AWARE_EVIDENCE_RECIPE,
+            )
+            t_payload = governed.load_flat_model_payload(
+                question_id=question_id,
+                question=question["question"],
+                question_plan=question["question_plan"],
+            )
+            e_payload = governed.load_event_group_model_payload(
+                question_id=question_id,
+                question=question["question"],
+                question_plan=question["question_plan"],
+            )
+            receipt = governed.load_receipt()
+            event_packet = _loads(e_payload, f"event packet {question_id}")
+            expected_state = "sufficient" if answer["answerable"] else "insufficient"
+            if event_packet["answerability_receipt"]["state"] != expected_state:
+                raise ValueError("governed E answerability differs from gold audit")
+            rows.append(
+                {
+                    "question_id": question_id,
+                    "v_model_payload_sha256": verified_v["integrity"][
+                        "model_payload_sha256"
+                    ],
+                    "shared_retrieval_source_sha256": receipt[
+                        "shared_retrieval_source_sha256"
+                    ],
+                    "t_model_payload_sha256": sha256(t_payload),
+                    "e_model_payload_sha256": sha256(e_payload),
+                    "governed_receipt_sha256": governed.receipt_sha256,
+                    "answerability_state": expected_state,
+                }
+            )
+
+    return _pretty(
+        {
+            "schema_version": "a11-governed-preflight-v1",
+            "model_calls": 0,
+            "questions": len(rows),
+            "evidence_recipe": a6.A11_DEPTH_AWARE_EVIDENCE_RECIPE,
+            "v_manifest_sha256": manifest_sha256,
+            "rows": rows,
+            "all_checks_passed": True,
+        }
+    )
 
 
 def _construct(
@@ -1013,8 +1513,13 @@ def _construct(
         sources, questions, gold, development_patients, efficacy_patients
     )
     policy_contexts = [_policy_context(source) for source in sources]
-    for question, policy in zip(questions, policy_contexts, strict=True):
+    for source, question, policy in zip(
+        sources, questions, policy_contexts, strict=True
+    ):
         question["policy_context_sha256"] = sha256(canonical_bytes(policy))
+        question["source_snapshot_sha256"] = sha256(
+            canonical_bytes(_source_snapshot(source, policy))
+        )
     order = {
         "schema_version": "a11-question-order-v1",
         "evidence_recipe": a6.A11_DEPTH_AWARE_EVIDENCE_RECIPE,
@@ -1034,7 +1539,7 @@ def _construct(
             sha256(patient["id"].encode()) for patient in efficacy_patients
         ],
     }
-    return {
+    artifacts = {
         "source_snapshot.json": _pretty(snapshot),
         "source_corpus.jsonl": _jsonl(sources),
         "questions.jsonl": _jsonl(questions),
@@ -1044,16 +1549,31 @@ def _construct(
         "question_order.json": _pretty(order),
         "zero_model_audit.json": _pretty(audit),
     }
+    artifacts["governed_preflight.json"] = _governed_preflight(artifacts)
+    return artifacts
+
+
+def _dependency_snapshot(repo: Path) -> dict[str, bytes]:
+    return {filename: (repo / filename).read_bytes() for filename in DEPENDENCY_FILES}
+
+
+def _dependency_receipts(snapshot: dict[str, bytes]) -> dict[str, dict[str, Any]]:
+    return {
+        filename: {"sha256": sha256(data), "bytes": len(data)}
+        for filename, data in snapshot.items()
+    }
 
 
 def build_dataset(input_path: Path, provenance_path: Path, output_dir: Path) -> dict[str, Any]:
-    source_receipt, payloads = inspect_source(input_path)
+    repo = Path(__file__).resolve().parent
+    dependency_bytes = _dependency_snapshot(repo)
+    source_receipt, patient_resources = inspect_source(input_path)
     provenance_bytes = provenance_path.read_bytes()
     provenance = _loads(provenance_bytes, provenance_path.name)
     if not isinstance(provenance, dict):
         raise ValueError("source provenance must be an object")
     _validate_provenance(provenance, source_receipt)
-    patients = _load_patients(payloads)
+    patients = _load_patients(patient_resources)
     if provenance["source_kind"] == "release_generation" and provenance["population"] != len(patients):
         raise ValueError("source population does not match unique Patient count")
 
@@ -1062,18 +1582,16 @@ def build_dataset(input_path: Path, provenance_path: Path, output_dir: Path) -> 
     if first != second:
         raise ValueError("nondeterministic dataset rebuild")
 
-    repo = Path(__file__).resolve().parent
-    dependencies = {
-        filename: {"sha256": sha256((repo / filename).read_bytes()), "bytes": (repo / filename).stat().st_size}
-        for filename in DEPENDENCY_FILES
-    }
+    if _dependency_snapshot(repo) != dependency_bytes:
+        raise ValueError("compiler dependencies changed during dataset build")
+    dependencies = _dependency_receipts(dependency_bytes)
     manifest = {
         "schema_version": DATASET_VERSION,
         "source_epoch": SOURCE_EPOCH,
         "model_calls": 0,
         "source_input": source_receipt,
         "provenance_input": {
-            "logical_path": provenance_path.name,
+            "logical_path": "source-provenance.json",
             "sha256": sha256(provenance_bytes),
             "bytes": len(provenance_bytes),
         },
@@ -1088,20 +1606,25 @@ def build_dataset(input_path: Path, provenance_path: Path, output_dir: Path) -> 
     }
     manifest_bytes = _pretty(manifest)
     manifest_sha = sha256(manifest_bytes)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    expected_names = set(first) | {"manifest.json", "manifest.sha256"}
-    extras = {path.name for path in output_dir.iterdir()} - expected_names
-    if extras:
-        raise ValueError(f"output directory contains unexpected files: {sorted(extras)}")
+    output_dir.parent.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(exist_ok=False)
     for name, data in first.items():
-        (output_dir / name).write_bytes(data)
-    (output_dir / "manifest.json").write_bytes(manifest_bytes)
-    (output_dir / "manifest.sha256").write_text(manifest_sha + "\n", encoding="ascii")
+        with (output_dir / name).open("xb") as handle:
+            handle.write(data)
+    with (output_dir / "manifest.json").open("xb") as handle:
+        handle.write(manifest_bytes)
+    with (output_dir / "manifest.sha256").open("x", encoding="ascii") as handle:
+        handle.write(manifest_sha + "\n")
     verify_dataset(output_dir, expected_manifest_sha256=manifest_sha)
     return manifest
 
 
 def verify_dataset(output_dir: Path, *, expected_manifest_sha256: str) -> dict[str, Any]:
+    if output_dir.is_symlink() or not output_dir.is_dir():
+        raise ValueError("dataset output directory is unsafe")
+    paths = list(output_dir.iterdir())
+    if any(path.is_symlink() or not path.is_file() for path in paths):
+        raise ValueError("dataset artifact set contains an unsafe entry")
     manifest_path = output_dir / "manifest.json"
     manifest_bytes = manifest_path.read_bytes()
     manifest_sha = sha256(manifest_bytes)
@@ -1120,11 +1643,9 @@ def verify_dataset(output_dir: Path, *, expected_manifest_sha256: str) -> dict[s
     if manifest.get("model_calls") != 0 or manifest.get("deterministic_rebuild") is not True:
         raise ValueError("dataset is not sealed as a deterministic zero-model build")
     expected_names = set(manifest.get("artifacts", {})) | {"manifest.json", "manifest.sha256"}
-    actual_names = {path.name for path in output_dir.iterdir()}
+    actual_names = {path.name for path in paths}
     if actual_names != expected_names:
         raise ValueError("dataset artifact set changed")
-    if not all((output_dir / name).is_file() for name in actual_names):
-        raise ValueError("dataset artifact set contains a non-file")
     for name, receipt in manifest["artifacts"].items():
         data = (output_dir / name).read_bytes()
         if receipt != {"sha256": sha256(data), "bytes": len(data)}:
@@ -1163,7 +1684,8 @@ def main() -> None:
         receipt, _ = inspect_source(args.input)
         provenance = official_sample_provenance(receipt)
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_bytes(_pretty(provenance))
+        with args.output.open("xb") as handle:
+            handle.write(_pretty(provenance))
         print(sha256(_pretty(provenance)))
     elif args.command == "build":
         manifest = build_dataset(args.input, args.provenance, args.output_dir)

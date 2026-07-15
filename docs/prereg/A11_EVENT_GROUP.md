@@ -1,6 +1,6 @@
 # A11 pre-registration — path-required event-group compilation
 
-Status: **pre-answer; zero model calls**
+Status: **pre-answer gates sealed; zero answer or judge calls**
 
 Protocol and fixture version: `a11-event-group-v1`
 
@@ -138,6 +138,28 @@ exact shortest-path match to the registered family-depth cell, no direct or
 alternate shorter route, no duplicate terminal route, no terminal ID/display/
 code alias in V, and byte-identical rebuilds from the sealed inputs.
 
+## Dated pre-answer temporal-identifiability correction — 2026-07-15
+
+An independent read-only review before any answer or judge call found that the
+first candidate builder left the nonselected temporal root incomplete. That
+would let T answer from the only complete fact without resolving first versus
+latest, so the candidate seal was superseded and never licensed for answers.
+
+The corrected frozen generator gives both temporal roots distinct terminal
+facts through the same registered family-depth path. In answerable rows both
+paths are complete, so flat T contains two competing facts and E must bind the
+question's temporal operator to the selected group. In every unanswerable row
+the nonselected event remains complete while the selected event fails through
+exactly one independently audited registered mechanism. Each failure mode is
+balanced across temporal policy: three first and three latest rows per mode.
+In particular, every latest-unanswerable row contains a complete older event.
+A label-only failure-mode change must fail the audit.
+
+The same pre-answer review required a one-pass immutable source snapshot,
+pre/post compiler-dependency equality, path-stable logical input names, and
+exclusive seal outputs. Those integrity repairs change only construction and
+receipts, not the registered V/T/E treatments or analysis order.
+
 ## Efficacy arms and synthetic mechanism proxies
 
 All efficacy arms start from `a11-four-family-depth-aware-v1`. It reuses the
@@ -188,11 +210,14 @@ Use the exact T retrieval result. Replace the flat evidence list with:
 - a deterministic answerability receipt over registered path shapes.
 
 Before gold or audit fields are consulted, the recipe-bound adapter calls
-`plan_question(question, version="a11-question-plan-v2-four-family")` and
+`plan_question(question, version="a11-question-plan-v3-depth-aware")` for the
+efficacy recipe and
 deterministically seals the family, temporal policy, path signatures, and
 question hash. Calling `plan_question(question)` without the version remains
 the historical mechanism-fixture behavior and is ineligible for A11 efficacy.
-E may consume only the v2 question plan plus T's exact retrieval result.
+E may consume only the v3 question plan plus T's exact retrieval result. The
+v2 plan remains frozen only for the historical `a11-four-family-v1` producer
+gate.
 Counterfactual changes to reference answers, expected roots, expected
 evidence, answerability labels, or audit-only path metadata must not change
 the model packet.
@@ -262,7 +287,8 @@ reading answer outputs. Requirements:
 - exactly 20% unanswerable efficacy cases, including missing, stale-version,
   out-of-scope, and bound-exhaustion conditions;
 - patient-disjoint development and efficacy partitions;
-- deterministic hash-order selection within family;
+- global deterministic Patient hash ordering followed by the frozen
+  family/depth assignment schedule;
 - mechanically derived reference answers and terminal resource IDs;
 - duplicate, label-leakage, and star-answerability audits; and
 - one sealed manifest binding input snapshot, question order, packet hashes,
@@ -287,7 +313,7 @@ cross-patient roots, and returns the exact
 rendering ambiguity. Strict metadata schemas do not prove that arbitrary FHIR
 clinical fields contain no answer aliases, so the efficacy seal must also bind
 the source corpus and deterministic extractor. The adapter does not synthesize
-authorization: the efficacy seal must still provide a governed
+authorization; the subsequent efficacy seal therefore provides a governed
 principal/practice/purpose/patient/source-version receipt and one immutable
 version-preserving traversal result shared by T and E. See
 [`A11_PRODUCT_PACKET_ADAPTER.md`](../results/A11_PRODUCT_PACKET_ADAPTER.md).
@@ -300,8 +326,9 @@ an independently pinned canonical benchmark policy artifact; derives roots only 
 and seals one immutable retrieval-source hash consumed unchanged by T and E.
 Principal, practice, patient and source identifiers are hashed in the outer
 receipt and never enter model-visible packets. This is benchmark governance,
-not proof of Bonfire's production ABAC. The remaining blocker is the sealed
-multi-family dataset and its deterministic producer/eligibility audit. See
+not proof of Bonfire's production ABAC. The multi-family dataset and its
+deterministic producer/eligibility audit subsequently passed as described in
+[`A11_DATASET_GATE.md`](../results/A11_DATASET_GATE.md). See
 [`A11_GOVERNED_RETRIEVAL_GATE.md`](../results/A11_GOVERNED_RETRIEVAL_GATE.md).
 
 The 2026-07-14 sealed QT-4 inventory does not satisfy these requirements: only
@@ -327,8 +354,13 @@ the corresponding planner, manifest, query plan, packet bytes, and root type
 on synthetic non-PHI integration records. No model was called. The 2026-07-15
 amendment now implements the deterministic multi-family substrate builder; the
 governed authorization/source-version receipt is also implemented and tested.
-The efficacy run remains blocked until the parent-side double-build seal and
-complete producer/adapter/governed-retrieval preflight pass without model calls.
+The parent-side double-build seal and complete
+producer/adapter/governed-retrieval preflight passed without model calls on
+2026-07-15. Both builds produced manifest SHA-256
+`442ca8d204fbd81f06e0abaf2ea5022b375deabb71a93d5ebaeccef98e99fe3c`.
+The answer runner remains blocked until a separate controller manifest binds
+that dataset hash to the model, Codex version, prompts, answer schema, retry
+policy, panel, grading configuration, and fixed analysis order required above.
 
 ## Outcomes and fixed analysis order
 
