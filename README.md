@@ -204,10 +204,20 @@ future A6/A7 arms should report accuracy beside the same token/cost ledger, not 
 
 ## Future work / issues
 
-The repo is ready for GitHub issues. The issue-ready backlog lives in [ROADMAP.md](docs/ROADMAP.md):
+The evidence-driven execution plan is
+[NEXT_EXPERIMENT_PLAN.md](docs/NEXT_EXPERIMENT_PLAN.md); the full issue-ready
+backlog remains in [ROADMAP.md](docs/ROADMAP.md):
 
-- Run a harder untouched A11 follow-up that separates flat traversal,
-  deterministic answerability, and event-group structure.
+- Before another answer run, externally anchor the complete controller/native-
+  binary digest, use append-only attempt receipts, retain panel event streams,
+  and build a patient-disjoint harder A11b holdout.
+- Run A11b as flat traversal versus flat traversal plus selection/completeness
+  aids versus event groups with the identical aids and clinical evidence.
+- In parallel, benchmark query-time traversal against a materialized Postgres
+  edge projection for byte equivalence, policy behavior, correction/rebuild
+  semantics, and latency. Do not select a native graph store from accuracy data.
+- After A11b, prioritize error fidelity (A12), then principal-varying
+  authorization (A14).
 - Publish a minimized reproducibility artifact package with checksums.
 - Rerun A0, A0', and A5 on one substrate.
 - Add cross-family or human adjudication for A0' non-numeric labels.
