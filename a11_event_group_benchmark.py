@@ -13,6 +13,7 @@ import argparse
 import datetime as dt
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,21 @@ ARMS = (ARM_VOCABULARY_STAR, ARM_FLAT_TRAVERSAL, ARM_EVENT_GROUP)
 EVENT_GROUP_COMPILER_VERSION = "a11-event-group-v1"
 ANSWERABILITY_VERSION = "a11-answerability-v1"
 QUESTION_PLANNER_VERSION = "a11-question-plan-v1"
+A11_FOUR_FAMILY_QUESTION_PLANNER_VERSION = "a11-question-plan-v2-four-family"
+QUESTION_PLANNER_VERSIONS = (
+    QUESTION_PLANNER_VERSION,
+    A11_FOUR_FAMILY_QUESTION_PLANNER_VERSION,
+)
+A11_FOUR_FAMILY_MICRO_TERMS = (
+    "microbiolog",
+    "microbial",
+    "culture",
+    "specimen",
+    "organism",
+    "smear",
+    "gram stain",
+    "screen",
+)
 
 _SUMMARY_FIELDS = (
     "status",
@@ -51,21 +67,38 @@ _SUMMARY_FIELDS = (
 )
 
 
-def plan_question(question: str) -> dict[str, Any]:
+def plan_question(
+    question: str, *, version: str = QUESTION_PLANNER_VERSION
+) -> dict[str, Any]:
     """Derive the event policy and path shape from question text only."""
 
+    if version not in QUESTION_PLANNER_VERSIONS:
+        raise ValueError(f"unsupported A11 question planner version: {version}")
     normalized = " ".join(question.lower().split())
+    if (
+        version == A11_FOUR_FAMILY_QUESTION_PLANNER_VERSION
+        and not any(term in normalized for term in A11_FOUR_FAMILY_MICRO_TERMS)
+    ):
+        raise ValueError("question has no registered microbiology dispatcher term")
     policies = [policy for policy in ("first", "latest") if policy in normalized]
     if len(policies) != 1:
         raise ValueError("question must select exactly one temporal policy")
+    root_relation = "Observation.hasMember"
+    if (
+        version == A11_FOUR_FAMILY_QUESTION_PLANNER_VERSION
+        and re.search(
+            r"(?<![a-z0-9])diagnostic\s*report(?![a-z0-9])", normalized
+        )
+    ):
+        root_relation = "DiagnosticReport.result"
     if "specimen" in normalized:
-        path_signatures = [["Observation.hasMember", "Observation.specimen"]]
+        path_signatures = [[root_relation, "Observation.specimen"]]
     elif any(token in normalized for token in ("organism", "finding", "gram stain")):
-        path_signatures = [["Observation.hasMember", "Observation.hasMember"]]
+        path_signatures = [[root_relation, "Observation.hasMember"]]
     else:
         raise ValueError("question has no registered microbiology path plan")
     return {
-        "version": QUESTION_PLANNER_VERSION,
+        "version": version,
         "question_sha256": hashlib.sha256(question.encode("utf-8")).hexdigest(),
         "question_family": "microbiology",
         "temporal_policy": policies[0],

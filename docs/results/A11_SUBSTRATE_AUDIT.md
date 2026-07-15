@@ -4,17 +4,22 @@ Status: **complete read-only local audit; no answer or judge model calls**
 
 Completed: 2026-07-14
 
+Update: the separately versioned `a11-four-family-v1` producer amendment now
+resolves the DiagnosticReport reachability blocker described by this audit,
+without changing historical `qo-v2.1`. The topology and patient-cluster gaps
+below remain unchanged, so the efficacy run is still blocked. See
+[`A11_FOUR_FAMILY_PRODUCER_GATE.md`](A11_FOUR_FAMILY_PRODUCER_GATE.md).
+
 ## Decision
 
 No currently available local corpus is eligible for the frozen A11 efficacy
 protocol. One tracked synthetic export is large and graph-rich enough to
 exercise a generic path extractor, but it has zero depth-two paths under
-A11's registered microbiology relations. Moreover, the frozen `qo-v2.1`
-product planner never queries `DiagnosticReport` for microbiology questions,
-so the exact promoted V path cannot currently surface roots for two registered
-families even if those resources are generated. The preregistered answer run
-remains blocked until both dataset topology and producer semantics are resolved
-in a published pre-answer amendment.
+A11's registered microbiology relations. At audit time, the frozen `qo-v2.1`
+product planner also never queried `DiagnosticReport`; that separate producer
+blocker is now resolved by the dated versioned amendment. The preregistered
+answer run remains blocked on dataset topology and the governed authorization/
+source-version receipt.
 
 ## Strongest immediate seed: HolyFHIR synthetic bulk export
 

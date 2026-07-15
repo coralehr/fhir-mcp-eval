@@ -267,11 +267,14 @@ replay-validated inventory of the sealed QT-4 packets found only ten rows with f
 one usable two-hop family. A later local audit found a 7,883-resource synthetic export with many generic
 paths, but zero depth-two paths under A11's frozen microbiology registry and only 11 patient clusters. The
 registered 120-question, four-family efficacy run must therefore wait for a pinned, deterministically
-augmented non-PHI substrate and a published pre-answer producer amendment: the current `qo-v2.1`
-microbiology plan queries `Observation` but never `DiagnosticReport`, so it cannot produce the two
-DiagnosticReport-root families while preserving exact promoted V semantics. See
+augmented non-PHI substrate. The separately versioned pre-answer
+`a11-four-family-v1` amendment now resolves the former producer blocker: it preserves historical
+`qo-v2.1` while binding `qo-v2.2-a11-four-family` only for the A11 recipe, and the actual entrypoint/adapter
+gate reaches all four registered root/path families without model calls. The governed authorization/
+source-version receipt remains open. See
 `docs/results/A11_PRODUCT_PACKET_ADAPTER.md`, `docs/results/A11_CANDIDATE_INVENTORY.md`, and
-`docs/results/A11_SUBSTRATE_AUDIT.md`; do not convert the mechanism fixture into an answer benchmark.
+`docs/results/A11_SUBSTRATE_AUDIT.md`, plus
+`docs/results/A11_FOUR_FAMILY_PRODUCER_GATE.md`; do not convert the mechanism fixture into an answer benchmark.
 
 **Question:** Do explicit temporal/reference graphs improve long-horizon, multi-call clinical tasks beyond flat packets?
 

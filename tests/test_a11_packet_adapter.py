@@ -383,6 +383,19 @@ class A11PacketAdapterTests(unittest.TestCase):
                 second_adapted["integrity"]["packet_file_sha256"],
             )
 
+    def test_promoted_bundle_is_rejected_when_a11_recipe_is_expected(self) -> None:
+        record = self.promoted_record()
+        with tempfile.TemporaryDirectory() as tmp:
+            packet_path, manifest_path, _ = self.write_sealed(Path(tmp), [record])
+
+            with self.assertRaisesRegex(ValueError, "expected evidence recipe"):
+                load_promoted_bundle(
+                    packet_path,
+                    manifest_path,
+                    expected_manifest_sha256=self.manifest_sha256(manifest_path),
+                    expected_evidence_recipe=a6.A11_EVIDENCE_RECIPE,
+                )
+
     def test_bundle_constructor_cannot_bypass_verification(self) -> None:
         with self.assertRaisesRegex(TypeError, "use load_promoted_bundle"):
             PromotedBundle(
@@ -390,6 +403,7 @@ class A11PacketAdapterTests(unittest.TestCase):
                 manifest_sha256="0" * 64,
                 packet_file_sha256="0" * 64,
                 dependency_hashes={},
+                evidence_recipe=a6.PROMOTED_EVIDENCE_RECIPE,
             )
 
     def test_loaded_payload_mutation_cannot_change_the_verified_bundle(self) -> None:
@@ -822,6 +836,30 @@ class A11PacketAdapterTests(unittest.TestCase):
                 "cross-patient reference",
             ),
             (
+                "ambiguous multi-patient subject",
+                lambda resource: resource.update(
+                    subject={
+                        "reference": (
+                            "https://example.invalid/fhir/Patient/other/"
+                            "Patient/synthetic-patient-1"
+                        )
+                    }
+                ),
+                "explicitly patient-consistent",
+            ),
+            (
+                "ambiguous multi-patient nested reference",
+                lambda resource: resource.update(
+                    focus={
+                        "reference": (
+                            "https://example.invalid/fhir/Patient/other/"
+                            "Patient/synthetic-patient-1"
+                        )
+                    }
+                ),
+                "ambiguous patient reference",
+            ),
+            (
                 "contained patient",
                 lambda resource: resource.update(
                     contained=[
@@ -838,7 +876,9 @@ class A11PacketAdapterTests(unittest.TestCase):
                 self.reseal_packet(record)
                 packet_path, manifest_path, _ = self.write_sealed(Path(tmp), [record])
                 with self.assertRaisesRegex(ValueError, message):
-                    self.load_record(packet_path, manifest_path, record["question_id"])
+                    self.load_record(
+                        packet_path, manifest_path, record["question_id"]
+                    )
 
         record = self.promoted_record()
         record["packet"]["resources"][0]["subject"] = {
@@ -851,6 +891,27 @@ class A11PacketAdapterTests(unittest.TestCase):
             packet_path, manifest_path, _ = self.write_sealed(Path(tmp), [record])
             adapted = self.load_record(packet_path, manifest_path, record["question_id"])
         self.assertEqual(adapted["patient_ref"], "Patient/synthetic-patient-1")
+
+    def test_benchmark_fields_inside_clinical_resources_are_rejected(self) -> None:
+        for forbidden_key, value in (
+            ("expected_event_root", "Observation/leaked-root"),
+            ("answerable", True),
+        ):
+            with self.subTest(forbidden_key=forbidden_key):
+                record = self.promoted_record()
+                record["packet"]["resources"][0][forbidden_key] = value
+                self.reseal_packet(record)
+                with tempfile.TemporaryDirectory() as tmp:
+                    packet_path, manifest_path, _ = self.write_sealed(
+                        Path(tmp), [record]
+                    )
+
+                    with self.assertRaisesRegex(
+                        ValueError, "forbidden benchmark field"
+                    ):
+                        self.load_record(
+                            packet_path, manifest_path, record["question_id"]
+                        )
 
 
 if __name__ == "__main__":
