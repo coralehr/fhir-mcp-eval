@@ -259,10 +259,10 @@ question-only plan isolation, path replay, patient/practice/purpose/version scop
 selected-event answerability, convergence/cycle behavior, and common byte bounds with zero model calls.
 The path-bound `a11_packet_adapter.py` now validates a strict promoted JSONL/manifest envelope against an
 independently supplied manifest hash and returns the literal model-visible V bytes without passing through the
-synthetic star proxy. Arbitrary clinical FHIR content still requires pinned source/extractor provenance, and
-product packets still lack the governed principal/practice/purpose/source-version receipt required to
-authorize roots and bind one
-version-preserving T/E retrieval result, so efficacy remains blocked and no accuracy claim is licensed. A
+synthetic star proxy. Arbitrary clinical FHIR content still requires pinned source/extractor provenance. The
+2026-07-15 governed-retrieval gate now binds adapter-verified V roots to a pinned
+principal/practice/purpose/patient/source-version context and one immutable version-preserving T/E retrieval
+result. Efficacy remains blocked on the deterministic multi-family dataset, so no accuracy claim is licensed. A
 replay-validated inventory of the sealed QT-4 packets found only ten rows with fetched depth-two targets and
 one usable two-hop family. A later local audit found a 7,883-resource synthetic export with many generic
 paths, but zero depth-two paths under A11's frozen microbiology registry and only 11 patient clusters. The
@@ -271,7 +271,7 @@ augmented non-PHI substrate. The separately versioned pre-answer
 `a11-four-family-v1` amendment now resolves the former producer blocker: it preserves historical
 `qo-v2.1` while binding `qo-v2.2-a11-four-family` only for the A11 recipe, and the actual entrypoint/adapter
 gate reaches all four registered root/path families without model calls. The governed authorization/
-source-version receipt remains open. See
+source-version result is recorded in `docs/results/A11_GOVERNED_RETRIEVAL_GATE.md`. See
 `docs/results/A11_PRODUCT_PACKET_ADAPTER.md`, `docs/results/A11_CANDIDATE_INVENTORY.md`, and
 `docs/results/A11_SUBSTRATE_AUDIT.md`, plus
 `docs/results/A11_FOUR_FAMILY_PRODUCER_GATE.md`; do not convert the mechanism fixture into an answer benchmark.

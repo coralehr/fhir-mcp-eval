@@ -48,14 +48,11 @@ new recipe is selected.
 This gate proves producer reachability, version isolation and packet
 integrity. It does not prove that any arm answers correctly, that traversal or
 event grouping helps, or that a graph database is superior. Before V/T/E may
-run, the program still needs:
-
-- a governed principal/practice/purpose/patient/source-version receipt that
-  derives authorized roots from the sealed V packet;
-- one immutable version-preserving retrieval result shared by T and E; and
-- a deterministically generated, sealed non-PHI corpus with at least 120
+run, the program still needs a deterministically generated, sealed non-PHI corpus with at least 120
   questions, four families, patient-disjoint partitions and the registered
-  unanswerable conditions.
+  unanswerable conditions. The later
+  [`A11_GOVERNED_RETRIEVAL_GATE.md`](A11_GOVERNED_RETRIEVAL_GATE.md) now binds
+  authorized V roots to a source version and one immutable T/E retrieval.
 
 ## Reproduction
 
