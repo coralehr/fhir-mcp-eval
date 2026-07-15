@@ -58,8 +58,10 @@
 > review also forced two competing temporal facts per case, balanced every failure mode 3 first/3 latest,
 > and added mechanism-level audits. The sealed V/T/E controller, grading, panel-replay and finalization
 > implementation subsequently passed 185 no-model tests plus an end-to-end local seal rehearsal and
-> independent adversarial review. The official Mac mini controller seal and live answer run remain pending;
-> no accuracy result exists yet. See
+> independent adversarial review. The official Mac mini controller is now sealed at manifest SHA-256
+> `3f1209ebc750c7f9eeb67d0a7e5ed3a455aa91dbda2be2ffd4c1905fe192fdce` from merged commit
+> `0123ca2bf4e1aecfdf5092b0a2b333c5afbe75dc`, using Codex CLI `0.144.1`. The fixed
+> 120-question/360-answer run has launched; no accuracy or promotion result exists yet. See
 > [A11_EVENT_GROUP_MECHANISM.md](docs/results/A11_EVENT_GROUP_MECHANISM.md) and the frozen
 > [A11_EVENT_GROUP.md](docs/prereg/A11_EVENT_GROUP.md) protocol, plus the
 > [adapter gate](docs/results/A11_PRODUCT_PACKET_ADAPTER.md),
@@ -122,7 +124,8 @@ apparent win is a context-overflow artifact (a null at matched budget), not a re
   and an answerability receipt (E). `T−V` measures whether path-required topology makes traversal useful;
   `E−T` measures whether structure fixes the temporal-binding failure seen in QT-4. The committed synthetic
   gate proves compiler mechanics only. The adapter, governed receipt, and byte-identical 120-question
-  efficacy dataset seals are now complete; the preregistered answer run is the next evidence-bearing step.
+  efficacy dataset seals are complete; the preregistered answer run is now executing and its result remains
+  pending.
 - ⚠️ **Reproducibility is split.** For the trustworthy re-grade, the committed artifacts are the aggregate
   summary (`medplum-eval/full409_summary.json`) and a durable per-question answer backup
   (`medplum-eval/full409_answers.json`); the per-question panel/deterministic labels live under gitignored
@@ -186,8 +189,8 @@ future A6/A7 arms should report accuracy beside the same token/cost ledger, not 
 
 The repo is ready for GitHub issues. The issue-ready backlog lives in [ROADMAP.md](docs/ROADMAP.md):
 
-- Run the sealed 120-question A11 V/T/E efficacy experiment without inspecting
-  answers mid-run, then grade and analyze in the preregistered order.
+- Finish the sealed 120-question A11 V/T/E efficacy experiment without
+  inspecting answers mid-run, then grade and analyze in the preregistered order.
 - Publish a minimized reproducibility artifact package with checksums.
 - Rerun A0, A0', and A5 on one substrate.
 - Add cross-family or human adjudication for A0' non-numeric labels.
