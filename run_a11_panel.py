@@ -209,8 +209,9 @@ def load_controller_codex_identity(
         raise ValueError("controller manifest must be an object")
     if controller.get("kind") != "a11_interleaved_controller_manifest":
         raise ValueError("controller manifest kind is not registered for A11")
-    if controller.get("schema_version") != "a11-controller-v1":
-        raise ValueError("controller manifest schema is not A11 v1")
+    controller_version = controller.get("schema_version")
+    if controller_version not in {"a11-controller-v1", "a11-controller-v2"}:
+        raise ValueError("controller manifest schema is not supported A11")
     execution = controller.get("execution")
     if not isinstance(execution, dict):
         raise ValueError("controller manifest has no execution identity")
@@ -220,26 +221,22 @@ def load_controller_codex_identity(
         raise ValueError("controller answer model is not the registered A11 model")
 
     raw_codex = execution.get("codex")
-    if not isinstance(raw_codex, dict) or set(raw_codex) != {
-        "path",
-        "version",
-        "sha256",
-    }:
+    if not isinstance(raw_codex, dict):
         raise ValueError("controller has no exact Codex identity")
-    raw_path = raw_codex.get("path")
-    version = raw_codex.get("version")
-    binary_sha256 = raw_codex.get("sha256")
-    if not isinstance(raw_path, str) or not raw_path:
-        raise ValueError("controller has no absolute Codex path")
-    path = Path(raw_path)
-    if not path.is_absolute() or path.resolve() != path:
-        raise ValueError("controller Codex path must be absolute and resolved")
-    if not isinstance(version, str) or not version:
-        raise ValueError("controller has no Codex version")
-    if not _is_sha256(binary_sha256):
-        raise ValueError("controller has no Codex binary SHA-256")
-    if not path.is_file() or sha256_file(path) != binary_sha256:
-        raise ValueError("controller Codex binary is missing or changed")
+    if controller_version == "a11-controller-v1":
+        if set(raw_codex) != {"path", "version", "sha256"}:
+            raise ValueError("legacy controller has no exact Codex identity")
+    elif controller_version == "a11-controller-v2":
+        if set(raw_codex) != {"path", "version", "sha256", "bytes", "native"}:
+            raise ValueError("controller has no exact Codex identity")
+        if not isinstance(raw_codex.get("native"), dict) or set(
+            raw_codex["native"]
+        ) != {"path", "sha256", "bytes"}:
+            raise ValueError("controller has no exact native Codex identity")
+    runtime = codex_harness.verify_codex_runtime_identity(raw_codex)
+    path = Path(runtime["path"])
+    native_sha256 = runtime["sha256"]
+    version = runtime["version"]
 
     observed_version = codex_version(path)
     if observed_version != version:
@@ -256,7 +253,7 @@ def load_controller_codex_identity(
         "timeout_seconds": REGISTERED_TIMEOUT_SECONDS,
         "codex_bin": str(path),
         "codex_version": version,
-        "codex_binary_sha256": binary_sha256,
+        "codex_binary_sha256": native_sha256,
     }
     if any(panel_config.get(key) != value for key, value in expected_panel_config.items()):
         raise ValueError("controller panel pins differ from the registered A11 panel")
@@ -296,7 +293,7 @@ def load_controller_codex_identity(
     return actual_controller_sha256, CodexIdentity(
         path=path,
         version=version,
-        sha256=binary_sha256,
+        sha256=native_sha256,
     ), panel_output
 
 
@@ -775,7 +772,11 @@ def _artifact_receipt(path: Path) -> dict[str, Any]:
 
 
 def _validate_binary(codex: CodexIdentity) -> None:
-    if not codex.path.is_file() or sha256_file(codex.path) != codex.sha256:
+    try:
+        receipt = codex_harness.executable_receipt(codex.path)
+    except (OSError, ValueError) as exc:
+        raise PanelProtocolError("Codex binary changed before panel call") from exc
+    if receipt["sha256"] != codex.sha256:
         raise PanelProtocolError("Codex binary changed before panel call")
 
 
@@ -848,6 +849,10 @@ def execute_attempt(
         error = "timeout"
     except Exception as exc:  # Persist transport failures without leaking details.
         error = f"transport_{type(exc).__name__}"
+    try:
+        _validate_binary(codex)
+    except PanelProtocolError:
+        error = "codex_binary_changed_after_call"
 
     event_integrity = _validate_event_stream(event_path)
     stderr_receipt = _artifact_receipt(stderr_path)

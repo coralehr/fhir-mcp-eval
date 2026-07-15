@@ -17,6 +17,7 @@ import json
 import os
 import platform
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -113,6 +114,240 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+_CODEX_TARGETS = {
+    ("darwin", "arm64"): (
+        "aarch64-apple-darwin",
+        "@openai/codex-darwin-arm64",
+        "codex",
+    ),
+    ("darwin", "x86_64"): (
+        "x86_64-apple-darwin",
+        "@openai/codex-darwin-x64",
+        "codex",
+    ),
+    ("linux", "x86_64"): (
+        "x86_64-unknown-linux-musl",
+        "@openai/codex-linux-x64",
+        "codex",
+    ),
+    ("linux", "aarch64"): (
+        "aarch64-unknown-linux-musl",
+        "@openai/codex-linux-arm64",
+        "codex",
+    ),
+    ("win32", "amd64"): (
+        "x86_64-pc-windows-msvc",
+        "@openai/codex-win32-x64",
+        "codex.exe",
+    ),
+    ("win32", "arm64"): (
+        "aarch64-pc-windows-msvc",
+        "@openai/codex-win32-arm64",
+        "codex.exe",
+    ),
+}
+_CODEX_FILE_RECEIPT_CACHE: dict[
+    Path, tuple[tuple[int, int, int, int, int, int], dict[str, Any]]
+] = {}
+_MACH_O_MAGICS = {
+    b"\xca\xfe\xba\xbe",
+    b"\xbe\xba\xfe\xca",
+    b"\xca\xfe\xba\xbf",
+    b"\xbf\xba\xfe\xca",
+    b"\xce\xfa\xed\xfe",
+    b"\xfe\xed\xfa\xce",
+    b"\xcf\xfa\xed\xfe",
+    b"\xfe\xed\xfa\xcf",
+}
+
+
+def resolve_executable(command: str) -> Path:
+    candidate = shutil.which(command)
+    if candidate is None:
+        candidate = str(Path(command).expanduser())
+    path = Path(candidate).resolve()
+    if not path.is_file() or not os.access(path, os.X_OK):
+        raise ValueError(f"executable is unavailable: {path}")
+    return path
+
+
+def is_native_executable(path: Path) -> bool:
+    with path.open("rb") as handle:
+        magic = handle.read(4)
+    return magic == b"\x7fELF" or magic[:2] == b"MZ" or magic in _MACH_O_MAGICS
+
+
+def resolve_codex_native_executable(launcher: Path) -> Path:
+    try:
+        with launcher.open("rb") as handle:
+            first_line = handle.readline(256).decode("utf-8")
+    except UnicodeDecodeError:
+        first_line = ""
+    if launcher.suffix not in {".js", ".mjs"} and not (
+        first_line.startswith("#!") and "node" in first_line
+    ):
+        if is_native_executable(launcher):
+            return launcher
+        raise ValueError(
+            "Codex executable is not a recognized native executable; "
+            f"wrapper indirection is not sealable: {launcher}"
+        )
+
+    target = _CODEX_TARGETS.get((sys.platform, platform.machine().lower()))
+    if target is None:
+        raise ValueError(
+            "Codex native executable cannot be resolved on "
+            f"{sys.platform}/{platform.machine()}"
+        )
+    target_triple, platform_package, executable_name = target
+    package_root = launcher.parent.parent
+    relative_native = (
+        Path(platform_package)
+        / "vendor"
+        / target_triple
+        / "bin"
+        / executable_name
+    )
+    candidates = [package_root / "node_modules" / relative_native]
+    candidates.extend(
+        parent / "node_modules" / relative_native for parent in package_root.parents
+    )
+    candidates.append(
+        package_root / "vendor" / target_triple / "bin" / executable_name
+    )
+    for candidate in candidates:
+        path = candidate.resolve()
+        if path.is_file() and os.access(path, os.X_OK):
+            if not is_native_executable(path):
+                raise ValueError(
+                    "Codex package target is not a recognized native executable: "
+                    f"{path}"
+                )
+            return path
+    raise ValueError(
+        "Codex JavaScript launcher has no resolvable native executable: "
+        f"{launcher}"
+    )
+
+
+def executable_receipt(path: Path) -> dict[str, Any]:
+    path = path.resolve()
+    if not path.is_file() or not os.access(path, os.X_OK):
+        raise ValueError(f"executable is unavailable: {path}")
+    stat_result = path.stat()
+    identity = (
+        stat_result.st_dev,
+        stat_result.st_ino,
+        stat_result.st_mode,
+        stat_result.st_size,
+        stat_result.st_mtime_ns,
+        stat_result.st_ctime_ns,
+    )
+    cached = _CODEX_FILE_RECEIPT_CACHE.get(path)
+    if cached is not None and cached[0] == identity:
+        return dict(cached[1])
+    sha256 = sha256_file(path)
+    verified_stat = path.stat()
+    verified_identity = (
+        verified_stat.st_dev,
+        verified_stat.st_ino,
+        verified_stat.st_mode,
+        verified_stat.st_size,
+        verified_stat.st_mtime_ns,
+        verified_stat.st_ctime_ns,
+    )
+    if verified_identity != identity:
+        raise ValueError(f"Codex executable changed while hashing: {path}")
+    receipt = {
+        "path": str(path),
+        "sha256": sha256,
+        "bytes": verified_stat.st_size,
+    }
+    _CODEX_FILE_RECEIPT_CACHE[path] = (verified_identity, receipt)
+    return dict(receipt)
+
+
+def strict_codex_version(codex_bin: Path) -> str:
+    try:
+        proc = subprocess.run(
+            [str(codex_bin), "--version"],
+            check=False,
+            text=True,
+            capture_output=True,
+            timeout=20,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError(f"Codex version probe failed: {exc}") from exc
+    version = (proc.stdout or proc.stderr).strip()
+    if proc.returncode != 0:
+        raise ValueError(
+            "Codex version probe failed with exit code "
+            f"{proc.returncode}: {version or 'no output'}"
+        )
+    if not version:
+        raise ValueError("Codex version probe failed: no output")
+    return version
+
+
+def codex_runtime_identity(codex_bin: str) -> dict[str, Any]:
+    launcher = resolve_executable(codex_bin)
+    native = resolve_codex_native_executable(launcher)
+    launcher_before = executable_receipt(launcher)
+    native_before = executable_receipt(native)
+    version = strict_codex_version(native)
+    launcher_after = executable_receipt(launcher)
+    native_after = executable_receipt(native)
+    if launcher_after != launcher_before or native_after != native_before:
+        raise ValueError("Codex executable changed during version probe")
+    return {
+        **launcher_before,
+        "version": version,
+        "native": native_before,
+    }
+
+
+def normalized_codex_runtime(identity: dict[str, Any]) -> dict[str, Any]:
+    raw_runtime = identity.get("native", identity)
+    if not isinstance(raw_runtime, dict):
+        raise ValueError("Codex runtime identity is malformed")
+    runtime = {
+        "path": raw_runtime.get("path"),
+        "sha256": raw_runtime.get("sha256"),
+        "bytes": raw_runtime.get("bytes"),
+        "version": identity.get("version"),
+    }
+    required = ("path", "sha256", "version")
+    if not all(
+        isinstance(runtime[key], str) and runtime[key] for key in required
+    ):
+        raise ValueError("Codex runtime identity is incomplete")
+    return runtime
+
+
+def verify_codex_runtime_identity(identity: dict[str, Any]) -> dict[str, Any]:
+    launcher = resolve_executable(str(identity.get("path") or ""))
+    if "native" not in identity:
+        receipt = executable_receipt(launcher)
+        if receipt["path"] != identity.get("path") or receipt[
+            "sha256"
+        ] != identity.get("sha256"):
+            raise ValueError("Codex executable identity changed after controller seal")
+        return normalized_codex_runtime(identity)
+
+    raw_native = identity.get("native")
+    if not isinstance(raw_native, dict):
+        raise ValueError("Codex native executable identity is malformed")
+    native = resolve_executable(str(raw_native.get("path") or ""))
+    actual = {
+        **executable_receipt(launcher),
+        "native": executable_receipt(native),
+    }
+    sealed = {key: identity.get(key) for key in actual}
+    if actual != sealed:
+        raise ValueError("Codex executable identity changed after controller seal")
+    return normalized_codex_runtime(identity)
 
 
 def slugify(value: Any) -> str:

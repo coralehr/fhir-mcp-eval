@@ -77,7 +77,8 @@ def _early_controller() -> tuple[Path, dict[str, Any], str]:
     if (
         not isinstance(manifest, dict)
         or manifest.get("kind") != "a11_interleaved_controller_manifest"
-        or manifest.get("schema_version") != "a11-controller-v1"
+        or manifest.get("schema_version")
+        not in {"a11-controller-v1", "a11-controller-v2"}
     ):
         raise SystemExit("A11 controller manifest contract changed")
     return path, manifest, manifest_sha256
@@ -231,7 +232,11 @@ import codex_harness  # noqa: E402 - immutable bootstrap runs first
 import run_qt4_experiment as transport  # noqa: E402
 
 
-CONTROLLER_VERSION = "a11-controller-v1"
+CONTROLLER_VERSION = "a11-controller-v2"
+LEGACY_CONTROLLER_VERSION = "a11-controller-v1"
+SUPPORTED_CONTROLLER_VERSIONS = frozenset(
+    {LEGACY_CONTROLLER_VERSION, CONTROLLER_VERSION}
+)
 EXPERIMENT_PROFILE = "a11-vte-efficacy-120-v1"
 REGISTERED_MODEL = "gpt-5.6-sol"
 REGISTERED_REASONING_EFFORT = "high"
@@ -395,32 +400,16 @@ def strict_event_usage(event_path: Path) -> dict[str, Any]:
     }
 
 
-def _resolved_executable(codex_bin: str) -> Path:
-    candidate = shutil.which(codex_bin)
-    if candidate is None:
-        candidate = str(Path(codex_bin).expanduser())
-    path = Path(candidate).resolve()
-    if not path.is_file() or not os.access(path, os.X_OK):
-        raise ValueError(f"Codex executable is unavailable: {path}")
-    return path
+def _codex_identity(codex_bin: str) -> dict[str, Any]:
+    return codex_harness.codex_runtime_identity(codex_bin)
 
 
-def _codex_identity(codex_bin: str) -> dict[str, str]:
-    path = _resolved_executable(codex_bin)
-    version = codex_harness.run_version(str(path))
-    if not version:
-        raise ValueError("Codex version is empty")
-    return {
-        "path": str(path),
-        "version": version,
-        "sha256": _sha256_file(path),
-    }
+def _codex_runtime(identity: Mapping[str, Any]) -> dict[str, Any]:
+    return codex_harness.normalized_codex_runtime(dict(identity))
 
 
 def verify_codex_identity(expected: Mapping[str, Any]) -> None:
-    actual = _codex_identity(str(expected.get("path") or ""))
-    if actual != dict(expected):
-        raise ValueError("Codex executable identity changed after controller seal")
+    codex_harness.verify_codex_runtime_identity(dict(expected))
 
 
 def _safe_snapshot_name(name: str, source: Path) -> str:
@@ -700,6 +689,28 @@ def _required_code_sources(repo: Path) -> dict[str, Path]:
     return {Path(name).stem: repo / name for name in names}
 
 
+def _registered_codex_analysis(
+    *,
+    codex_bin: str,
+    schema_path: Path,
+    code_sources: Mapping[str, Path],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    codex = _codex_identity(codex_bin)
+    codex_runtime = _codex_runtime(codex)
+
+    from a11_grading import registered_analysis_config
+
+    analysis = registered_analysis_config(
+        codex_bin=codex_runtime["path"],
+        codex_version=codex_runtime["version"],
+        codex_binary_sha256=codex_runtime["sha256"],
+        answer_schema_sha256=_sha256_file(schema_path),
+        panel_source_sha256=_sha256_file(code_sources["run_a11_panel"]),
+        grading_source_sha256=_sha256_file(code_sources["a11_grading"]),
+    )
+    return codex, analysis
+
+
 def seal_controller(
     *,
     dataset_dir: Path,
@@ -786,17 +797,10 @@ def seal_controller(
         "insufficiency_reason",
     }:
         raise ValueError("A11 answer schema is not strict")
-    codex = _codex_identity(codex_bin)
-
-    from a11_grading import registered_analysis_config  # imported only after file gate
-
-    analysis = registered_analysis_config(
-        codex_bin=codex["path"],
-        codex_version=codex["version"],
-        codex_binary_sha256=codex["sha256"],
-        answer_schema_sha256=_sha256_file(schema_path),
-        panel_source_sha256=_sha256_file(code_sources["run_a11_panel"]),
-        grading_source_sha256=_sha256_file(code_sources["a11_grading"]),
+    codex, analysis = _registered_codex_analysis(
+        codex_bin=codex_bin,
+        schema_path=schema_path,
+        code_sources=code_sources,
     )
     if tuple(analysis.get("analysis_order", [])) != REGISTERED_ANALYSIS_ORDER:
         raise ValueError("registered A11 analysis order changed")
@@ -1097,7 +1101,7 @@ def load_controller(manifest_path: Path) -> A11ControllerBundle:
     manifest = _read_json(manifest_path)
     if (
         manifest.get("kind") != "a11_interleaved_controller_manifest"
-        or manifest.get("schema_version") != CONTROLLER_VERSION
+        or manifest.get("schema_version") not in SUPPORTED_CONTROLLER_VERSIONS
         or manifest.get("experiment_profile") != EXPERIMENT_PROFILE
     ):
         raise ValueError("A11 controller manifest contract changed")
@@ -1195,15 +1199,52 @@ def _a11_receipt_fields(
     *, bundle: A11ControllerBundle, arm: transport.Arm, question_id: str
 ) -> dict[str, Any]:
     prompt = bundle.prompt_by_host[(question_id, arm.name)]
+    codex_runtime = _codex_runtime(bundle.manifest["execution"]["codex"])
     return {
-        "a11_controller_version": CONTROLLER_VERSION,
-        "codex_binary_sha256": bundle.manifest["execution"]["codex"]["sha256"],
+        "a11_controller_version": bundle.manifest["schema_version"],
+        "codex_binary_sha256": codex_runtime["sha256"],
         "codex_version": bundle.manifest["execution"]["codex"]["version"],
         "payload_sha256": prompt["model_payload_sha256"],
         "payload_utf8_bytes": prompt["model_payload_utf8_bytes"],
         "expected_prompt_sha256": prompt["prompt_sha256"],
         "expected_prompt_utf8_bytes": prompt["prompt_utf8_bytes"],
     }
+
+
+def _build_a11_harness_command(
+    *, bundle: A11ControllerBundle, arm: transport.Arm, question_id: str
+) -> list[str]:
+    codex_runtime = _codex_runtime(bundle.manifest["execution"]["codex"])
+    return transport.build_harness_command(
+        arm=arm,
+        question_id=question_id,
+        input_path=bundle.input_path,
+        schema_path=bundle.schema_path,
+        timeout=REGISTERED_TIMEOUT_SECONDS,
+        model=REGISTERED_MODEL,
+        reasoning_effort=REGISTERED_REASONING_EFFORT,
+        codex_bin=codex_runtime["path"],
+        python_bin=bundle.manifest["execution"]["python_path"],
+        harness_path=bundle.harness_path,
+    )
+
+
+def _execute_a11_harness_command(
+    *,
+    bundle: A11ControllerBundle,
+    command: list[str],
+    run_process: Any | None = None,
+) -> tuple[Any, bool]:
+    expected_codex = bundle.manifest["execution"]["codex"]
+    verify_codex_identity(expected_codex)
+    if run_process is None:
+        run_process = subprocess.run
+    result = run_process(command, check=False)
+    try:
+        verify_codex_identity(expected_codex)
+    except (OSError, ValueError):
+        return result, False
+    return result, True
 
 
 def _augment_attempt_receipt(
@@ -2211,25 +2252,27 @@ def run_live(bundle: A11ControllerBundle, *, lock_path: Path, max_attempts: int 
                 attempt_number = len(transport._attempt_receipts(arm, question_id)) + 1
                 if attempt_number > REGISTERED_MAX_ATTEMPTS:
                     return 1
-                verify_codex_identity(bundle.manifest["execution"]["codex"])
-                command = transport.build_harness_command(
+                command = _build_a11_harness_command(
+                    bundle=bundle,
                     arm=arm,
                     question_id=question_id,
-                    input_path=bundle.input_path,
-                    schema_path=bundle.schema_path,
-                    timeout=REGISTERED_TIMEOUT_SECONDS,
-                    model=REGISTERED_MODEL,
-                    reasoning_effort=REGISTERED_REASONING_EFFORT,
-                    codex_bin=bundle.manifest["execution"]["codex"]["path"],
-                    python_bin=bundle.manifest["execution"]["python_path"],
-                    harness_path=bundle.harness_path,
                 )
                 print(
                     f"RUN question={question_id} arm={arm.name} attempt={attempt_number}",
                     flush=True,
                 )
-                result = subprocess.run(command, check=False)
+                result, runtime_unchanged = _execute_a11_harness_command(
+                    bundle=bundle,
+                    command=command,
+                )
                 attempts_this_invocation += 1
+                if not runtime_unchanged:
+                    print(
+                        "BLOCKED_CODEX_POSTCALL_INTEGRITY "
+                        f"question={question_id} arm={arm.name}",
+                        flush=True,
+                    )
+                    return 1
                 receipt = transport._write_attempt_receipt(
                     arm=arm,
                     question_id=question_id,
