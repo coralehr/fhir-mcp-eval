@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 import run_a11_panel as panel
+import run_a11_experiment as controller
 import codex_harness
 import panel_grade
 import run_lock
@@ -22,8 +23,13 @@ def write_json(path: Path, value: object) -> None:
 
 class A11PanelTests(unittest.TestCase):
     def make_inputs(self, root: Path) -> dict[str, object]:
+        launcher = (root / "codex-launcher.js").resolve()
+        launcher.write_bytes(b"sealed-test-launcher")
+        launcher.chmod(0o755)
+        launcher_sha = hashlib.sha256(launcher.read_bytes()).hexdigest()
         codex = (root / "codex-bin").resolve()
-        codex.write_bytes(b"sealed-test-codex")
+        codex.write_bytes(b"\x7fELFsealed-test-codex")
+        codex.chmod(0o755)
         codex_sha = hashlib.sha256(codex.read_bytes()).hexdigest()
         grading = (root / "grading-output").resolve()
         grading.mkdir()
@@ -45,14 +51,20 @@ class A11PanelTests(unittest.TestCase):
             controller,
             {
                 "kind": "a11_interleaved_controller_manifest",
-                "schema_version": "a11-controller-v1",
+                "schema_version": "a11-controller-v2",
                 "execution": {
                     "model": panel.REGISTERED_MODEL,
                     "reasoning_effort": panel.REGISTERED_REASONING_EFFORT,
                     "codex": {
-                        "path": str(codex),
+                        "path": str(launcher),
                         "version": "codex-test 1.0",
-                        "sha256": codex_sha,
+                        "sha256": launcher_sha,
+                        "bytes": launcher.stat().st_size,
+                        "native": {
+                            "path": str(codex),
+                            "sha256": codex_sha,
+                            "bytes": codex.stat().st_size,
+                        },
                     },
                 },
                 "grading": {"panel": panel_config},
@@ -123,6 +135,7 @@ class A11PanelTests(unittest.TestCase):
         )
         return {
             "codex": codex,
+            "launcher": launcher,
             "controller": controller,
             "controller_sha": controller_sha,
             "queue": queue,
@@ -439,7 +452,7 @@ class A11PanelTests(unittest.TestCase):
                         out_dir=paths["out"],
                     )
 
-    def test_binary_sha_is_rechecked_before_each_call(self):
+    def test_binary_sha_is_rechecked_before_and_after_each_call(self):
         with tempfile.TemporaryDirectory() as tmp:
             paths = self.make_inputs(Path(tmp))
             calls = 0
@@ -452,9 +465,14 @@ class A11PanelTests(unittest.TestCase):
                     paths["codex"].write_bytes(b"mutated-binary")
                 return result
 
-            with self.assertRaisesRegex(panel.PanelProtocolError, "binary changed"):
+            with self.assertRaisesRegex(panel.PanelProtocolError, "hard stop"):
                 self.run_live(paths, mutate_after_first)
             self.assertEqual(calls, 1)
+            receipts = sorted(paths["out"].glob("attempts/**/receipt.json"))
+            self.assertEqual(len(receipts), 1)
+            receipt = json.loads(receipts[0].read_text())
+            self.assertEqual(receipt["status"], "failed")
+            self.assertEqual(receipt["error"], "codex_binary_changed_after_call")
 
     def test_singleton_lock_prevents_duplicate_panel_runner(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -487,7 +505,9 @@ class A11PanelTests(unittest.TestCase):
     def test_controller_identity_rejects_model_and_binary_drift(self):
         with tempfile.TemporaryDirectory() as tmp:
             paths = self.make_inputs(Path(tmp))
-            with mock.patch.object(panel, "codex_version", return_value="codex-test 1.0"):
+            with mock.patch.object(
+                panel, "codex_version", return_value="codex-test 1.0"
+            ) as version:
                 controller_sha, codex, panel_output = panel.load_controller_codex_identity(
                     paths["controller"],
                     expected_controller_sha256=paths["controller_sha"],
@@ -495,14 +515,156 @@ class A11PanelTests(unittest.TestCase):
             self.assertEqual(controller_sha, paths["controller_sha"])
             self.assertEqual(codex.path, paths["codex"])
             self.assertEqual(panel_output, paths["out"])
+            version.assert_called_once_with(paths["codex"])
 
             paths["codex"].write_bytes(b"changed")
             with mock.patch.object(panel, "codex_version", return_value="codex-test 1.0"):
-                with self.assertRaisesRegex(ValueError, "missing or changed"):
+                with self.assertRaisesRegex(ValueError, "identity changed"):
                     panel.load_controller_codex_identity(
                         paths["controller"],
                         expected_controller_sha256=paths["controller_sha"],
                     )
+
+    def test_controller_identity_keeps_strict_legacy_v1_reader(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = self.make_inputs(Path(tmp))
+            manifest = json.loads(paths["controller"].read_text())
+            manifest["schema_version"] = "a11-controller-v1"
+            launcher = manifest["execution"]["codex"]
+            manifest["execution"]["codex"] = {
+                "path": launcher["path"],
+                "version": "codex-test 1.0",
+                "sha256": launcher["sha256"],
+            }
+            manifest["grading"]["panel"]["codex_bin"] = launcher["path"]
+            manifest["grading"]["panel"]["codex_binary_sha256"] = launcher[
+                "sha256"
+            ]
+            write_json(paths["controller"], manifest)
+            controller_sha = hashlib.sha256(
+                paths["controller"].read_bytes()
+            ).hexdigest()
+            paths["controller"].with_suffix(".sha256").write_text(
+                controller_sha + "\n", encoding="ascii"
+            )
+
+            with mock.patch.object(
+                panel, "codex_version", return_value="codex-test 1.0"
+            ):
+                loaded_sha, codex, _ = panel.load_controller_codex_identity(
+                    paths["controller"],
+                    expected_controller_sha256=controller_sha,
+                )
+            self.assertEqual(loaded_sha, controller_sha)
+            self.assertEqual(codex.path, paths["launcher"])
+
+            bundle = SimpleNamespace(
+                manifest={
+                    "schema_version": "a11-controller-v1",
+                    "execution": {
+                        "codex": manifest["execution"]["codex"],
+                        "python_path": "/synthetic/python",
+                    },
+                },
+                input_path=Path("/synthetic/input.csv"),
+                schema_path=Path("/synthetic/schema.json"),
+                harness_path=Path("/synthetic/a11_answer_harness.py"),
+                prompt_by_host={
+                    ("q1", "v"): {
+                        "model_payload_sha256": "1" * 64,
+                        "model_payload_utf8_bytes": 10,
+                        "prompt_sha256": "2" * 64,
+                        "prompt_utf8_bytes": 20,
+                    }
+                },
+            )
+            arm = SimpleNamespace(
+                name="v",
+                packet_path=Path("/synthetic/v.jsonl"),
+                out_dir=Path("/synthetic/out-v"),
+            )
+            receipt = controller._a11_receipt_fields(
+                bundle=bundle,
+                arm=arm,
+                question_id="q1",
+            )
+            command = controller._build_a11_harness_command(
+                bundle=bundle,
+                arm=arm,
+                question_id="q1",
+            )
+            self.assertEqual(receipt["codex_binary_sha256"], launcher["sha256"])
+            self.assertEqual(
+                command[command.index("--codex-bin") + 1], launcher["path"]
+            )
+
+    def test_seal_runtime_binding_is_accepted_by_answer_and_panel_consumers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = self.make_inputs(Path(tmp))
+            manifest = json.loads(paths["controller"].read_text())
+            sealed_identity = manifest["execution"]["codex"]
+            schema = Path(tmp) / "answer-schema.json"
+            schema.write_text("{}\n", encoding="utf-8")
+            code_sources = {
+                "run_a11_panel": Path(panel.__file__).resolve(),
+                "a11_grading": Path(controller.__file__).with_name(
+                    "a11_grading.py"
+                ),
+            }
+            with mock.patch.object(
+                controller,
+                "_codex_identity",
+                return_value=sealed_identity,
+            ):
+                produced_identity, analysis = controller._registered_codex_analysis(
+                    codex_bin=str(paths["launcher"]),
+                    schema_path=schema,
+                    code_sources=code_sources,
+                )
+
+            manifest["execution"]["codex"] = produced_identity
+            manifest["grading"] = analysis
+            write_json(paths["controller"], manifest)
+            controller_sha = hashlib.sha256(
+                paths["controller"].read_bytes()
+            ).hexdigest()
+            paths["controller"].with_suffix(".sha256").write_text(
+                controller_sha + "\n", encoding="ascii"
+            )
+
+            runtime = controller._codex_runtime(produced_identity)
+            self.assertEqual(analysis["panel"]["codex_bin"], runtime["path"])
+            self.assertEqual(
+                analysis["panel"]["codex_binary_sha256"], runtime["sha256"]
+            )
+            with mock.patch.object(
+                panel, "codex_version", return_value=runtime["version"]
+            ):
+                _, panel_codex, _ = panel.load_controller_codex_identity(
+                    paths["controller"],
+                    expected_controller_sha256=controller_sha,
+                )
+            self.assertEqual(str(panel_codex.path), runtime["path"])
+            self.assertEqual(panel_codex.sha256, runtime["sha256"])
+
+    def test_controller_identity_rejects_launcher_drift_before_version_call(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = self.make_inputs(Path(tmp))
+            paths["launcher"].write_bytes(b"drifted-test-launcher")
+            with (
+                mock.patch.object(
+                    panel,
+                    "codex_version",
+                    side_effect=AssertionError(
+                        "drifted launcher must fail before executing Codex"
+                    ),
+                ),
+                self.assertRaisesRegex(ValueError, "identity changed"),
+            ):
+                panel.load_controller_codex_identity(
+                    paths["controller"],
+                    expected_controller_sha256=paths["controller_sha"],
+                )
 
     def test_controller_identity_rejects_loaded_helper_drift(self):
         with tempfile.TemporaryDirectory() as tmp:

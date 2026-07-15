@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import csv
 import json
+import platform
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -19,7 +21,283 @@ def _write_jsonl(path: Path, rows: list[dict]) -> None:
 
 
 class A11ControllerTests(unittest.TestCase):
+    def test_codex_identity_rejects_executable_wrapper_indirection(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            wrapper = Path(directory) / "codex"
+            wrapper.write_text(
+                "#!/bin/sh\nexec codex-real \"$@\"\n",
+                encoding="utf-8",
+            )
+            wrapper.chmod(0o755)
+
+            with (
+                mock.patch.object(
+                    controller.codex_harness.subprocess,
+                    "run",
+                    return_value=SimpleNamespace(
+                        returncode=0,
+                        stdout="codex-cli 1.2.3\n",
+                        stderr="",
+                    ),
+                ),
+                self.assertRaisesRegex(ValueError, "native executable"),
+            ):
+                controller._codex_identity(str(wrapper))
+
+    def test_codex_identity_rejects_binary_changed_during_version_probe(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / "codex"
+            binary.write_bytes(b"\x7fELFsealed native codex v1")
+            binary.chmod(0o755)
+
+            def mutate_binary(*_args, **_kwargs):
+                binary.write_bytes(b"\x7fELFsealed native codex v2")
+                return SimpleNamespace(
+                    returncode=0,
+                    stdout="codex-cli 1.2.3\n",
+                    stderr="",
+                )
+
+            with (
+                mock.patch.object(
+                    controller.codex_harness.subprocess,
+                    "run",
+                    side_effect=mutate_binary,
+                ),
+                self.assertRaisesRegex(ValueError, "changed during version probe"),
+            ):
+                controller._codex_identity(str(binary))
+
+    def test_codex_identity_rejects_nonzero_version_probe(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / "codex"
+            binary.write_bytes(b"\x7fELFsealed native codex")
+            binary.chmod(0o755)
+
+            with (
+                mock.patch.object(
+                    controller.codex_harness.subprocess,
+                    "run",
+                    return_value=SimpleNamespace(
+                        returncode=1,
+                        stdout="",
+                        stderr="probe failed\n",
+                    ),
+                ),
+                self.assertRaisesRegex(ValueError, "version probe failed"),
+            ):
+                controller._codex_identity(str(binary))
+
+    def test_direct_native_codex_identity_hashes_the_binary_once(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / "codex"
+            binary.write_bytes(b"\x7fELFnative codex")
+            binary.chmod(0o755)
+            with (
+                mock.patch.object(
+                    controller.codex_harness,
+                    "strict_codex_version",
+                    return_value="codex-cli 1.2.3",
+                ),
+                mock.patch.object(
+                    controller.codex_harness,
+                    "sha256_file",
+                    wraps=controller.codex_harness.sha256_file,
+                ) as sha256_file,
+            ):
+                identity = controller._codex_identity(str(binary))
+
+            self.assertEqual(identity["path"], identity["native"]["path"])
+            self.assertEqual(identity["sha256"], identity["native"]["sha256"])
+            self.assertEqual(sha256_file.call_count, 1)
+
+    def test_codex_identity_binds_native_executable_behind_js_launcher(self) -> None:
+        target = {
+            ("darwin", "arm64"): (
+                "aarch64-apple-darwin",
+                "@openai/codex-darwin-arm64",
+                "codex",
+            ),
+            ("darwin", "x86_64"): (
+                "x86_64-apple-darwin",
+                "@openai/codex-darwin-x64",
+                "codex",
+            ),
+            ("linux", "x86_64"): (
+                "x86_64-unknown-linux-musl",
+                "@openai/codex-linux-x64",
+                "codex",
+            ),
+            ("linux", "aarch64"): (
+                "aarch64-unknown-linux-musl",
+                "@openai/codex-linux-arm64",
+                "codex",
+            ),
+        }.get((sys.platform, platform.machine().lower()))
+        if target is None:
+            self.skipTest("Codex test fixture has no platform package mapping")
+        target_triple, platform_package, executable_name = target
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package_root = root / "node_modules/@openai/codex"
+            launcher = package_root / "bin/codex.js"
+            native = (
+                package_root
+                / "node_modules"
+                / platform_package
+                / "vendor"
+                / target_triple
+                / "bin"
+                / executable_name
+            )
+            launcher.parent.mkdir(parents=True)
+            native.parent.mkdir(parents=True)
+            launcher.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+            native.write_bytes(b"\x7fELFsealed native codex v1")
+            launcher.chmod(0o755)
+            native.chmod(0o755)
+
+            with mock.patch.object(
+                controller.codex_harness,
+                "strict_codex_version",
+                return_value="codex-cli 1.2.3",
+            ):
+                identity = controller._codex_identity(str(launcher))
+
+            self.assertEqual(identity["path"], str(launcher.resolve()))
+            self.assertEqual(identity["bytes"], launcher.stat().st_size)
+            self.assertEqual(
+                identity["native"],
+                {
+                    "path": str(native.resolve()),
+                    "bytes": native.stat().st_size,
+                    "sha256": controller._sha256_file(native),
+                },
+            )
+
+            native.write_bytes(b"\x7fELFsealed native codex v2")
+            with (
+                mock.patch.object(
+                    controller.codex_harness,
+                    "strict_codex_version",
+                    side_effect=AssertionError(
+                        "drifted executable must not run during verification"
+                    ),
+                ),
+                self.assertRaisesRegex(ValueError, "identity changed"),
+            ):
+                controller.verify_codex_identity(identity)
+
+    def test_js_launcher_without_native_binary_fails_before_version_call(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            launcher = Path(directory) / "node_modules/@openai/codex/bin/codex.js"
+            launcher.parent.mkdir(parents=True)
+            launcher.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+            launcher.chmod(0o755)
+
+            with (
+                mock.patch.object(
+                    controller.codex_harness,
+                    "strict_codex_version",
+                    side_effect=AssertionError(
+                        "missing native executable must fail before version call"
+                    ),
+                ),
+                self.assertRaisesRegex(ValueError, "native executable"),
+            ):
+                controller._codex_identity(str(launcher))
+
+    def test_answer_receipt_uses_normalized_native_runtime(self) -> None:
+        identity = {
+            "path": "/synthetic/codex.js",
+            "version": "codex-cli 1.2.3",
+            "sha256": "1" * 64,
+            "bytes": 10,
+            "native": {
+                "path": "/synthetic/native/codex",
+                "sha256": "2" * 64,
+                "bytes": 20,
+            },
+        }
+        bundle = SimpleNamespace(
+            manifest={
+                "schema_version": "a11-controller-v2",
+                "execution": {
+                    "codex": identity,
+                    "python_path": "/synthetic/python",
+                },
+            },
+            input_path=Path("/synthetic/input.csv"),
+            schema_path=Path("/synthetic/schema.json"),
+            harness_path=Path("/synthetic/a11_answer_harness.py"),
+            prompt_by_host={
+                ("q1", "v"): {
+                    "model_payload_sha256": "3" * 64,
+                    "model_payload_utf8_bytes": 30,
+                    "prompt_sha256": "4" * 64,
+                    "prompt_utf8_bytes": 40,
+                }
+            },
+        )
+        arm = SimpleNamespace(
+            name="v",
+            packet_path=Path("/synthetic/v.jsonl"),
+            out_dir=Path("/synthetic/out-v"),
+        )
+        receipt = controller._a11_receipt_fields(
+            bundle=bundle,
+            arm=arm,
+            question_id="q1",
+        )
+        self.assertEqual(receipt["codex_binary_sha256"], "2" * 64)
+        self.assertEqual(
+            controller._codex_runtime(identity)["path"],
+            "/synthetic/native/codex",
+        )
+        command = controller._build_a11_harness_command(
+            bundle=bundle,
+            arm=arm,
+            question_id="q1",
+        )
+        self.assertEqual(
+            command[command.index("--codex-bin") + 1],
+            "/synthetic/native/codex",
+        )
+
+    def test_answer_command_rejects_post_call_native_binary_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / "codex"
+            binary.write_bytes(b"\x7fELFsealed answer binary v1")
+            binary.chmod(0o755)
+            receipt = controller.codex_harness.executable_receipt(binary)
+            bundle = SimpleNamespace(
+                manifest={
+                    "execution": {
+                        "codex": {
+                            **receipt,
+                            "version": "codex-cli 1.2.3",
+                            "native": receipt,
+                        }
+                    }
+                }
+            )
+
+            def mutate_binary(_command, **_kwargs):
+                binary.write_bytes(b"\x7fELFsealed answer binary v2")
+                return SimpleNamespace(returncode=0)
+
+            result, runtime_unchanged = controller._execute_a11_harness_command(
+                bundle=bundle,
+                command=[str(binary)],
+                run_process=mutate_binary,
+            )
+
+            self.assertEqual(result.returncode, 0)
+            self.assertFalse(runtime_unchanged)
+
     def test_registered_execution_and_analysis_are_frozen(self) -> None:
+        self.assertEqual(controller.CONTROLLER_VERSION, "a11-controller-v2")
         self.assertEqual(controller.REGISTERED_MODEL, "gpt-5.6-sol")
         self.assertEqual(controller.REGISTERED_REASONING_EFFORT, "high")
         self.assertEqual(controller.REGISTERED_TIMEOUT_SECONDS, 600)
