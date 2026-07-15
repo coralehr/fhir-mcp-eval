@@ -1,10 +1,30 @@
 # A11 sealed controller gate
 
-Status: **implementation approved; local zero-model seal rehearsal passed; Mac mini seal pending**
+Status: **official Mac mini controller sealed; live answer run launched; final result pending**
 
 Date: 2026-07-15
 
-Answer and judge calls during this gate: **0**
+Answer and judge calls during implementation review and the official seal: **0**
+
+## Official execution-host seal and launch
+
+On 2026-07-15, the official Mac mini controller was sealed from merged commit
+`0123ca2bf4e1aecfdf5092b0a2b333c5afbe75dc` against dataset manifest
+`442ca8d204fbd81f06e0abaf2ea5022b375deabb71a93d5ebaeccef98e99fe3c`.
+The resulting controller manifest has SHA-256
+`3f1209ebc750c7f9eeb67d0a7e5ed3a455aa91dbda2be2ffd4c1905fe192fdce`.
+It binds Python `3.14.5`, Codex CLI `0.144.1`, Codex binary SHA-256
+`134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477`,
+model `gpt-5.6-sol` at high reasoning effort, and 120 efficacy questions across
+three arms for exactly 360 scheduled answer calls.
+
+The sealed runner passed a zero-call `--live --max-attempts 0` smoke and the
+single live controller was then launched as PID `64151`. That PID is a
+historical launch receipt, not controller identity or proof of continued
+liveness; immutable, content-free `--status` receipts are authoritative for
+progress. No answer content has been inspected. Correctness, uncertainty,
+economics, and promotion status remain unknown until the registered grading,
+panel, audit, and finalization sequence completes.
 
 ## What is now sealed
 
@@ -62,19 +82,16 @@ Python compilation, `git diff --check`, an end-to-end zero-model seal, immutable
 lock rejection. Independent adversarial review returned **APPROVE FOR SEAL**
 with no remaining P0/P1/P2 protocol or correctness findings.
 
-The local rehearsal manifest is intentionally not the official experiment
-seal: the official controller must be created on the Mac mini so its absolute
-Codex path, version and binary hash match the execution host. No accuracy claim
-exists until that controller completes and the registered finalizer runs.
+The earlier local rehearsal manifest remains non-authoritative. The official
+execution-host seal above now binds the Mac mini Codex path, version and binary
+hash. No accuracy claim exists until that controller completes and the
+registered finalizer runs.
 
-## Execution order
+## Remaining execution order
 
-1. Materialize answer inputs and timing on the Mac mini from the pinned dataset.
-2. Seal the controller once with the exact Mac mini Codex binary.
-3. Run only `--live` against that immutable manifest; inspect content-free
+1. Let the single sealed `--live` controller finish; inspect only content-free
    `--status` receipts while answers are in flight.
-4. Run `--prepare-grading` only after 360 clean completions.
-5. Execute the snapshotted `run_a11_panel.py --live` until all registered votes
+2. Run `--prepare-grading` only after 360 clean completions.
+3. Execute the snapshotted `run_a11_panel.py --live` until all registered votes
    complete, then use its read-only `--audit` replay.
-6. Run controller `--finalize` and publish the immutable result artifacts.
-
+4. Run controller `--finalize` and publish the immutable result artifacts.
