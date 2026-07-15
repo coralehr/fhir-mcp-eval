@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import platform
 import sys
@@ -21,6 +22,267 @@ def _write_jsonl(path: Path, rows: list[dict]) -> None:
 
 
 class A11ControllerTests(unittest.TestCase):
+    def test_early_controller_hashes_and_parses_one_byte_buffer(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "manifest.json"
+            first = {
+                "kind": "a11_interleaved_controller_manifest",
+                "schema_version": "a11-controller-v2",
+                "marker": "first",
+            }
+            second = {**first, "marker": "swapped"}
+            first_bytes = (json.dumps(first, sort_keys=True) + "\n").encode()
+            path.write_bytes(first_bytes)
+            path.with_suffix(".sha256").write_text(
+                hashlib.sha256(first_bytes).hexdigest() + "\n", encoding="ascii"
+            )
+            real_hash = controller._early_sha256
+
+            def swap_after_hash(target: Path) -> str:
+                digest = real_hash(target)
+                target.write_text(json.dumps(second) + "\n", encoding="utf-8")
+                return digest
+
+            with (
+                mock.patch.object(sys, "argv", ["runner", "--controller-manifest", str(path)]),
+                mock.patch.object(
+                    controller, "_early_sha256", side_effect=swap_after_hash
+                ),
+            ):
+                _path, manifest, digest = controller._early_controller()
+            self.assertEqual(manifest["marker"], "first")
+            self.assertEqual(digest, hashlib.sha256(first_bytes).hexdigest())
+
+    def test_controller_reader_hashes_and_parses_one_byte_buffer(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "manifest.json"
+            first = {"marker": "first"}
+            second = {"marker": "swapped"}
+            first_bytes = (json.dumps(first, sort_keys=True) + "\n").encode()
+            path.write_bytes(first_bytes)
+            path.with_suffix(".sha256").write_text(
+                hashlib.sha256(first_bytes).hexdigest() + "\n", encoding="ascii"
+            )
+            real_hash = controller._sha256_file
+
+            def swap_after_hash(target: Path) -> str:
+                digest = real_hash(target)
+                target.write_text(json.dumps(second) + "\n", encoding="utf-8")
+                return digest
+
+            with mock.patch.object(
+                controller, "_sha256_file", side_effect=swap_after_hash
+            ):
+                digest, manifest = controller._read_controller_manifest_once(path)
+            self.assertEqual(manifest["marker"], "first")
+            self.assertEqual(digest, hashlib.sha256(first_bytes).hexdigest())
+
+    def _bootstrap_manifest(
+        self, root: Path, version: str, *, include_anchor: bool
+    ) -> dict:
+        names = controller._BOOTSTRAP_SNAPSHOTS
+        snapshots = {}
+        for name in names:
+            if name == "experiment_anchor" and not include_anchor:
+                continue
+            source = root / f"source-{name}.py"
+            payload = f"# sealed {name}\n".encode()
+            source.write_bytes(payload)
+            source.chmod(0o444)
+            snapshots[name] = {
+                "snapshot_path": str(source.resolve()),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "bytes": len(payload),
+            }
+        return {"schema_version": version, "snapshots": snapshots}
+
+    def test_legacy_v2_bootstrap_stages_and_verifies_without_anchor_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            controller_path = root / "manifest.json"
+            manifest = self._bootstrap_manifest(
+                root, "a11-controller-v2", include_anchor=False
+            )
+
+            runner = controller._stage_bootstrap(
+                controller_path, manifest, "a" * 64
+            )
+
+            self.assertEqual(runner, root / "bootstrap" / "run_a11_experiment.py")
+            self.assertFalse((root / "bootstrap" / "experiment_anchor.py").exists())
+            self.assertEqual(
+                controller._verify_bootstrap(
+                    root / "bootstrap",
+                    controller_sha256="a" * 64,
+                    bootstrap_snapshots=controller._LEGACY_BOOTSTRAP_SNAPSHOTS,
+                ),
+                runner,
+            )
+
+    def test_v3_bootstrap_fails_closed_without_anchor_helper_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self._bootstrap_manifest(
+                root, "a11-controller-v3", include_anchor=False
+            )
+            with self.assertRaisesRegex(SystemExit, "experiment_anchor"):
+                controller._stage_bootstrap(
+                    root / "manifest.json", manifest, "b" * 64
+                )
+
+    def test_publish_controller_seal_rolls_back_after_anchor_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest_path = root / "manifest.json"
+            artifact_dir = root / "artifacts"
+            artifact_dir.mkdir()
+            snapshot = artifact_dir / "snapshot.bin"
+            snapshot.write_bytes(b"sealed")
+            snapshot.chmod(0o444)
+            artifact_dir.chmod(0o555)
+
+            with (
+                mock.patch.object(
+                    controller.experiment_anchor,
+                    "write_anchor_request",
+                    side_effect=OSError("synthetic anchor write failure"),
+                ),
+                self.assertRaisesRegex(OSError, "synthetic anchor"),
+            ):
+                controller._publish_controller_seal(
+                    controller_manifest=manifest_path,
+                    manifest={"schema_version": "a11-controller-v3"},
+                    artifact_dir=artifact_dir,
+                )
+
+            self.assertFalse(manifest_path.exists())
+            self.assertFalse(manifest_path.with_suffix(".sha256").exists())
+            self.assertFalse(artifact_dir.exists())
+
+    def test_publish_controller_seal_rolls_back_after_controller_fsync_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest_path = root / "manifest.json"
+            artifact_dir = root / "artifacts"
+            artifact_dir.mkdir()
+            (artifact_dir / "snapshot.bin").write_bytes(b"sealed")
+            artifact_dir.chmod(0o555)
+            with (
+                mock.patch.object(
+                    controller.os,
+                    "fsync",
+                    side_effect=OSError("synthetic controller fsync failure"),
+                ),
+                self.assertRaisesRegex(OSError, "controller fsync"),
+            ):
+                controller._publish_controller_seal(
+                    controller_manifest=manifest_path,
+                    manifest={"schema_version": "a11-controller-v3"},
+                    artifact_dir=artifact_dir,
+                )
+            self.assertFalse(manifest_path.exists())
+            self.assertFalse(artifact_dir.exists())
+
+    def test_controller_seal_preflights_anchor_pair(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            manifest_path = Path(directory) / "manifest.json"
+            manifest_path.with_name("anchor-request.json").write_text(
+                "stale\n", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(FileExistsError, "anchor request"):
+                controller._preflight_controller_seal(manifest_path)
+
+    def test_legacy_bootstrap_remains_readable_but_live_is_audit_only(self) -> None:
+        legacy = controller._bootstrap_snapshots(
+            {"schema_version": "a11-controller-v2"}
+        )
+        current = controller._bootstrap_snapshots(
+            {"schema_version": "a11-controller-v3"}
+        )
+        self.assertNotIn("experiment_anchor", legacy)
+        self.assertIn("experiment_anchor", current)
+
+        bundle = SimpleNamespace(
+            manifest={"schema_version": "a11-controller-v2"},
+        )
+        with (
+            mock.patch.object(
+                controller,
+                "_verify_loaded_code",
+                side_effect=AssertionError("legacy rejection must happen first"),
+            ),
+            self.assertRaisesRegex(ValueError, "audit-only"),
+        ):
+            controller.run_live(
+                bundle,
+                lock_path=Path("/synthetic/legacy.lock"),
+                max_attempts=None,
+                anchor_url="https://example.invalid/anchor",
+            )
+
+    def test_live_requires_external_anchor_locator(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            controller_path = Path(directory) / "manifest.json"
+            controller_path.write_text("{}\n", encoding="utf-8")
+            with (
+                mock.patch.object(controller, "load_controller") as load_controller,
+                mock.patch.object(controller, "run_live") as run_live,
+                self.assertRaisesRegex(SystemExit, "--anchor-url"),
+            ):
+                controller.main(
+                    [
+                        "--controller-manifest",
+                        str(controller_path),
+                        "--live",
+                    ]
+                )
+            load_controller.assert_not_called()
+            run_live.assert_not_called()
+
+    def test_live_verifies_external_anchor_before_lock_or_model_call(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest_path = root / "manifest.json"
+            lock_path = root / "a11.lock"
+            bundle = SimpleNamespace(
+                manifest_path=manifest_path,
+                manifest_sha256="a" * 64,
+                manifest={
+                    "schema_version": "a11-controller-v3",
+                    "integrity": {"singleton_lock": str(lock_path.resolve())},
+                    "execution": {
+                        "model": controller.REGISTERED_MODEL,
+                        "reasoning_effort": controller.REGISTERED_REASONING_EFFORT,
+                    },
+                },
+            )
+            with (
+                mock.patch.object(controller, "_verify_loaded_code"),
+                mock.patch.object(
+                    controller.experiment_anchor,
+                    "verify_and_record_external_anchor",
+                    side_effect=ValueError("external anchor missing"),
+                ) as verify_anchor,
+                mock.patch.object(
+                    controller.transport,
+                    "_acquire_live_instance_lock",
+                    side_effect=AssertionError("lock must follow external anchor"),
+                ),
+                self.assertRaisesRegex(ValueError, "external anchor missing"),
+            ):
+                controller.run_live(
+                    bundle,
+                    lock_path=lock_path,
+                    max_attempts=None,
+                    anchor_url="https://example.invalid/anchor",
+                )
+            verify_anchor.assert_called_once_with(
+                manifest_path,
+                "https://example.invalid/anchor",
+                manifest_path.with_name("external-anchor-verification.json"),
+                expected_controller_sha256=bundle.manifest_sha256,
+            )
+
     def test_codex_identity_rejects_executable_wrapper_indirection(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             wrapper = Path(directory) / "codex"
@@ -297,7 +559,7 @@ class A11ControllerTests(unittest.TestCase):
             self.assertFalse(runtime_unchanged)
 
     def test_registered_execution_and_analysis_are_frozen(self) -> None:
-        self.assertEqual(controller.CONTROLLER_VERSION, "a11-controller-v2")
+        self.assertEqual(controller.CONTROLLER_VERSION, "a11-controller-v3")
         self.assertEqual(controller.REGISTERED_MODEL, "gpt-5.6-sol")
         self.assertEqual(controller.REGISTERED_REASONING_EFFORT, "high")
         self.assertEqual(controller.REGISTERED_TIMEOUT_SECONDS, 600)

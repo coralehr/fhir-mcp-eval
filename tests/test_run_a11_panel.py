@@ -10,6 +10,7 @@ from unittest import mock
 import run_a11_panel as panel
 import run_a11_experiment as controller
 import codex_harness
+import experiment_anchor
 import panel_grade
 import run_lock
 from run_lock import AlreadyRunning, acquire_single_instance
@@ -22,6 +23,194 @@ def write_json(path: Path, value: object) -> None:
 
 
 class A11PanelTests(unittest.TestCase):
+    def test_live_panel_requires_external_anchor_before_binary_probe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = self.make_inputs(Path(tmp))
+            with (
+                mock.patch.object(
+                    panel,
+                    "load_controller_codex_identity",
+                    side_effect=AssertionError(
+                        "binary identity probe must follow the external anchor"
+                    ),
+                ),
+                self.assertRaisesRegex(panel.PanelProtocolError, "external anchor"),
+            ):
+                panel.run_panel(
+                    queue_path=paths["queue"],
+                    controller_manifest=paths["controller"],
+                    expected_controller_sha256=paths["controller_sha"],
+                    out_dir=paths["out"],
+                    live=True,
+                    anchor_url=None,
+                )
+
+    def test_live_panel_verifies_runtime_then_anchor_before_model_call(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = self.make_inputs(Path(tmp))
+            anchor_url = (
+                "https://api.github.com/repos/coralehr/fhir-mcp-eval/contents/"
+                "anchors/test.json?ref=" + "a" * 40
+            )
+            with (
+                mock.patch.object(
+                    panel.experiment_anchor,
+                    "verify_and_record_external_anchor",
+                    side_effect=ValueError("external anchor mismatch"),
+                ) as verify_anchor,
+                mock.patch.object(
+                    panel, "codex_version", return_value="codex-test 1.0"
+                ),
+                mock.patch.object(
+                    panel,
+                    "execute_attempt",
+                    side_effect=AssertionError("model call must follow the anchor"),
+                ),
+                self.assertRaisesRegex(ValueError, "external anchor mismatch"),
+            ):
+                panel.run_panel(
+                    queue_path=paths["queue"],
+                    controller_manifest=paths["controller"],
+                    expected_controller_sha256=paths["controller_sha"],
+                    out_dir=paths["out"],
+                    live=True,
+                    anchor_url=anchor_url,
+                )
+            verify_anchor.assert_called_once_with(
+                paths["controller"].resolve(),
+                anchor_url,
+                paths["controller"].resolve().with_name(
+                    "external-anchor-verification.json"
+                ),
+                expected_controller_sha256=paths["controller_sha"],
+            )
+
+    def test_live_panel_rejects_controller_swap_after_anchor(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = self.make_inputs(root)
+            attacker_grading = (root / "attacker-grading").resolve()
+            attacker_grading.mkdir()
+            attacker_queue = attacker_grading / "panel_queue.jsonl"
+            attacker_queue.write_bytes(paths["queue"].read_bytes())
+            original = json.loads(paths["controller"].read_text())
+            swapped = json.loads(paths["controller"].read_text())
+            swapped["outputs"]["grading"] = str(attacker_grading)
+            write_json(
+                attacker_grading / "manifest.json",
+                {
+                    "schema_version": "a11-grading-preparation-v1",
+                    "controller_manifest_sha256": paths["controller_sha"],
+                    "model_calls": 0,
+                    "panel_config": original["grading"]["panel"],
+                    "all_checks_passed": True,
+                    "artifacts": {
+                        "panel_queue.jsonl": {
+                            "sha256": hashlib.sha256(
+                                attacker_queue.read_bytes()
+                            ).hexdigest(),
+                            "bytes": attacker_queue.stat().st_size,
+                        }
+                    },
+                },
+            )
+
+            def swap_controller(*_args, **_kwargs):
+                write_json(paths["controller"], swapped)
+                return {"github_signature_verified": True}
+
+            with (
+                mock.patch.object(
+                    panel.experiment_anchor,
+                    "verify_and_record_external_anchor",
+                    side_effect=swap_controller,
+                ),
+                mock.patch.object(panel, "codex_version", return_value="codex-test 1.0"),
+                self.assertRaisesRegex(ValueError, "changed after external anchor"),
+            ):
+                panel.run_panel(
+                    queue_path=attacker_queue,
+                    controller_manifest=paths["controller"],
+                    expected_controller_sha256=paths["controller_sha"],
+                    out_dir=paths["out"],
+                    live=True,
+                    anchor_url=(
+                        "https://api.github.com/repos/coralehr/fhir-mcp-eval/"
+                        "contents/anchors/test.json?ref=" + "a" * 40
+                    ),
+                    run_process=self.accepted_process,
+                )
+
+    def test_live_panel_rejects_hash_then_parse_controller_swap(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = self.make_inputs(root)
+            original_bytes = paths["controller"].read_bytes()
+            original = json.loads(original_bytes)
+            attacker_grading = (root / "preparse-attacker-grading").resolve()
+            attacker_grading.mkdir()
+            attacker_queue = attacker_grading / "panel_queue.jsonl"
+            attacker_queue.write_bytes(paths["queue"].read_bytes())
+            swapped = json.loads(original_bytes)
+            swapped["outputs"]["grading"] = str(attacker_grading)
+            write_json(
+                attacker_grading / "manifest.json",
+                {
+                    "schema_version": "a11-grading-preparation-v1",
+                    "controller_manifest_sha256": paths["controller_sha"],
+                    "model_calls": 0,
+                    "panel_config": original["grading"]["panel"],
+                    "all_checks_passed": True,
+                    "artifacts": {
+                        "panel_queue.jsonl": {
+                            "sha256": hashlib.sha256(
+                                attacker_queue.read_bytes()
+                            ).hexdigest(),
+                            "bytes": attacker_queue.stat().st_size,
+                        }
+                    },
+                },
+            )
+            real_sha256_file = panel.sha256_file
+            swapped_once = False
+
+            def swap_after_initial_hash(path: Path) -> str:
+                nonlocal swapped_once
+                digest = real_sha256_file(path)
+                if path.resolve() == paths["controller"].resolve() and not swapped_once:
+                    swapped_once = True
+                    write_json(paths["controller"], swapped)
+                return digest
+
+            def restore_for_anchor(*_args, **_kwargs):
+                paths["controller"].write_bytes(original_bytes)
+                return {"github_signature_verified": True}
+
+            with (
+                mock.patch.object(
+                    panel, "sha256_file", side_effect=swap_after_initial_hash
+                ),
+                mock.patch.object(
+                    panel.experiment_anchor,
+                    "verify_and_record_external_anchor",
+                    side_effect=restore_for_anchor,
+                ),
+                mock.patch.object(panel, "codex_version", return_value="codex-test 1.0"),
+                self.assertRaisesRegex(ValueError, "registered A11 grading panel queue"),
+            ):
+                panel.run_panel(
+                    queue_path=attacker_queue,
+                    controller_manifest=paths["controller"],
+                    expected_controller_sha256=paths["controller_sha"],
+                    out_dir=paths["out"],
+                    live=True,
+                    anchor_url=(
+                        "https://api.github.com/repos/coralehr/fhir-mcp-eval/"
+                        "contents/anchors/test.json?ref=" + "a" * 40
+                    ),
+                    run_process=self.accepted_process,
+                )
+
     def make_inputs(self, root: Path) -> dict[str, object]:
         launcher = (root / "codex-launcher.js").resolve()
         launcher.write_bytes(b"sealed-test-launcher")
@@ -51,7 +240,7 @@ class A11PanelTests(unittest.TestCase):
             controller,
             {
                 "kind": "a11_interleaved_controller_manifest",
-                "schema_version": "a11-controller-v2",
+                "schema_version": "a11-controller-v3",
                 "execution": {
                     "model": panel.REGISTERED_MODEL,
                     "reasoning_effort": panel.REGISTERED_REASONING_EFFORT,
@@ -80,6 +269,9 @@ class A11PanelTests(unittest.TestCase):
                         "panel_grade": Path(panel_grade.__file__).resolve(),
                         "codex_harness": Path(codex_harness.__file__).resolve(),
                         "run_lock": Path(run_lock.__file__).resolve(),
+                        "experiment_anchor": Path(
+                            experiment_anchor.__file__
+                        ).resolve(),
                     }.items()
                 },
             },
@@ -141,6 +333,31 @@ class A11PanelTests(unittest.TestCase):
             "queue": queue,
             "out": panel_out,
         }
+
+    def rewrite_controller_version(self, paths, version: str) -> None:
+        manifest = json.loads(paths["controller"].read_text())
+        manifest["schema_version"] = version
+        if version == "a11-controller-v1":
+            launcher = manifest["execution"]["codex"]
+            manifest["execution"]["codex"] = {
+                "path": launcher["path"],
+                "version": launcher["version"],
+                "sha256": launcher["sha256"],
+            }
+            panel_config = manifest["grading"]["panel"]
+            panel_config["codex_bin"] = launcher["path"]
+            panel_config["codex_binary_sha256"] = launcher["sha256"]
+        write_json(paths["controller"], manifest)
+        controller_sha = hashlib.sha256(paths["controller"].read_bytes()).hexdigest()
+        paths["controller"].with_suffix(".sha256").write_text(
+            controller_sha + "\n", encoding="ascii"
+        )
+        paths["controller_sha"] = controller_sha
+        grading_manifest_path = paths["queue"].parent / "manifest.json"
+        grading_manifest = json.loads(grading_manifest_path.read_text())
+        grading_manifest["controller_manifest_sha256"] = controller_sha
+        grading_manifest["panel_config"] = manifest["grading"]["panel"]
+        write_json(grading_manifest_path, grading_manifest)
 
     @staticmethod
     def accepted_process(command, **kwargs):
@@ -215,13 +432,24 @@ class A11PanelTests(unittest.TestCase):
         return SimpleNamespace(returncode=1)
 
     def run_live(self, paths, process):
-        with mock.patch.object(panel, "codex_version", return_value="codex-test 1.0"):
+        with (
+            mock.patch.object(
+                panel.experiment_anchor,
+                "verify_and_record_external_anchor",
+                return_value={"github_signature_verified": True},
+            ),
+            mock.patch.object(panel, "codex_version", return_value="codex-test 1.0"),
+        ):
             return panel.run_panel(
                 queue_path=paths["queue"],
                 controller_manifest=paths["controller"],
                 expected_controller_sha256=paths["controller_sha"],
                 out_dir=paths["out"],
                 live=True,
+                anchor_url=(
+                    "https://api.github.com/repos/coralehr/fhir-mcp-eval/"
+                    "contents/anchors/test.json?ref=" + "a" * 40
+                ),
                 run_process=process,
             )
 
@@ -431,6 +659,23 @@ class A11PanelTests(unittest.TestCase):
                 audit["verdicts"], {"e|secret-q2": 1, "v|secret-q1": 1}
             )
 
+    def test_audit_replays_completed_legacy_v1_and_v2_panels(self):
+        for version in ("a11-controller-v1", "a11-controller-v2"):
+            with self.subTest(version=version), tempfile.TemporaryDirectory() as tmp:
+                paths = self.make_inputs(Path(tmp))
+                self.rewrite_controller_version(paths, version)
+                self.run_live(paths, self.accepted_process)
+                with mock.patch.object(
+                    panel, "codex_version", return_value="codex-test 1.0"
+                ):
+                    audit = panel.audit_completed_panel(
+                        queue_path=paths["queue"],
+                        controller_manifest=paths["controller"],
+                        expected_controller_sha256=paths["controller_sha"],
+                        out_dir=paths["out"],
+                    )
+                self.assertTrue(audit["all_checks_passed"])
+
     def test_audit_rejects_unregistered_attempt_receipt(self):
         with tempfile.TemporaryDirectory() as tmp:
             paths = self.make_inputs(Path(tmp))
@@ -484,7 +729,16 @@ class A11PanelTests(unittest.TestCase):
     def test_registered_output_and_grading_queue_cannot_be_substituted(self):
         with tempfile.TemporaryDirectory() as tmp:
             paths = self.make_inputs(Path(tmp))
-            with mock.patch.object(panel, "codex_version", return_value="codex-test 1.0"):
+            with (
+                mock.patch.object(
+                    panel.experiment_anchor,
+                    "verify_and_record_external_anchor",
+                    return_value={"github_signature_verified": True},
+                ),
+                mock.patch.object(
+                    panel, "codex_version", return_value="codex-test 1.0"
+                ),
+            ):
                 with self.assertRaisesRegex(ValueError, "registered panel output"):
                     panel.run_panel(
                         queue_path=paths["queue"],
@@ -492,6 +746,10 @@ class A11PanelTests(unittest.TestCase):
                         expected_controller_sha256=paths["controller_sha"],
                         out_dir=Path(tmp) / "substitute-output",
                         live=True,
+                        anchor_url=(
+                            "https://api.github.com/repos/coralehr/fhir-mcp-eval/"
+                            "contents/anchors/test.json?ref=" + "a" * 40
+                        ),
                         run_process=self.accepted_process,
                     )
 
@@ -524,6 +782,25 @@ class A11PanelTests(unittest.TestCase):
                         paths["controller"],
                         expected_controller_sha256=paths["controller_sha"],
                     )
+
+    def test_v3_controller_identity_rejects_unsealed_anchor_helper(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = self.make_inputs(Path(tmp))
+            manifest = json.loads(paths["controller"].read_text())
+            manifest["snapshots"].pop("experiment_anchor")
+            write_json(paths["controller"], manifest)
+            controller_sha = hashlib.sha256(paths["controller"].read_bytes()).hexdigest()
+            paths["controller"].with_suffix(".sha256").write_text(
+                controller_sha + "\n", encoding="ascii"
+            )
+            with (
+                mock.patch.object(panel, "codex_version", return_value="codex-test 1.0"),
+                self.assertRaisesRegex(ValueError, "experiment_anchor"),
+            ):
+                panel.load_controller_codex_identity(
+                    paths["controller"],
+                    expected_controller_sha256=controller_sha,
+                )
 
     def test_controller_identity_keeps_strict_legacy_v1_reader(self):
         with tempfile.TemporaryDirectory() as tmp:

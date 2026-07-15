@@ -55,6 +55,21 @@ until every P0 gate is green.
 
 ## P0: harden the protocol before another answer run
 
+Implementation status as of 2026-07-15:
+
+- [x] A11 v2 binds and rechecks the actual native Codex executable.
+- [x] A11 v3 emits a canonical public digest request and refuses answer or
+  panel calls without byte-identical publication in a GitHub-verified,
+  commit-pinned external anchor merged to `main` after exact-head approval by
+  an independent allowlisted repository member. The verifier also proves the
+  reviewed PR changed the exact anchor path, re-fetches its bytes at the
+  approved head SHA, and pins approvers by stable GitHub account ID.
+- [ ] Publish the actual A11b request from a separate host after its controller
+  is sealed; the protocol exists, but no A11b anchor exists before the corpus
+  and controller do.
+- [ ] Complete the remaining receipt, panel-stream, stderr, nonce, grading,
+  dry-run, and double-build gates below.
+
 ### Execution receipts
 
 - Hash the actual native Codex executable in addition to the JavaScript launcher.

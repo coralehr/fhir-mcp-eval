@@ -224,6 +224,52 @@ backlog remains in [ROADMAP.md](docs/ROADMAP.md):
 - Run a projection cap sweep.
 - Add a tracked failure-decomposition script.
 
+### External pre-answer anchor for A11 v3
+
+An A11 v3 seal writes `anchor-request.json` beside the controller manifest. The
+request contains only SHA-256 digests, byte counts, the experiment profile, and
+the registered model configuration. It does not contain FHIR content, prompts,
+answers, local paths, or credentials.
+
+The experiment host is not allowed to approve its own request. Before any
+answer or panel call:
+
+1. Copy the exact `anchor-request.json` bytes to a separate trusted laptop.
+2. Commit them under `anchors/<experiment>/anchor-request.json` through a PR in
+   this repository. A repository member other than the PR author and merger
+   must approve the exact PR head commit before it is squash-merged to `main`.
+   The v1 protocol allowlists `AJ112103` and `Arhaan2104` as those independent
+   approvers by their stable GitHub numeric account IDs; renaming or adding a
+   collaborator does not silently widen the gate.
+3. Record the full 40-character merge commit SHA. GitHub documents that a
+   commit-SHA link is a permanent file version, unlike a moving branch link:
+   [permanent links to files](https://docs.github.com/en/repositories/working-with-files/using-files/getting-permanent-links-to-files).
+4. Pass a pinned GitHub Contents API URL to both live runners:
+
+   ```text
+   https://api.github.com/repos/coralehr/fhir-mcp-eval/contents/anchors/<experiment>/anchor-request.json?ref=<40-character-merge-sha>
+   ```
+
+   The Contents API accepts a commit SHA as `ref` and supports raw file media:
+   [repository contents API](https://docs.github.com/en/rest/repos/contents?apiVersion=2022-11-28).
+
+5. Run answers and the panel with `--anchor-url <url>`. The runners fetch the
+   exact published bytes, require GitHub's commit verification to report a
+   valid signature, prove the commit came from one uniquely merged `main` PR,
+   require that PR to add or modify the exact anchor path, re-fetch the exact
+   bytes from its reviewed head commit, and require an independent
+   member/owner/collaborator approval on that same head. They then write one
+   read-only `external-anchor-verification.json` receipt before any model call.
+   Every new runner process revalidates GitHub and requires the remote evidence
+   to match that exact local receipt, so a run host cannot forge its own cache.
+
+Moving branch names, abbreviated SHAs, other repositories, non-`anchors/`
+paths, unsigned commits, changed bytes, missing local request files, or altered
+verification receipts all fail closed. Self-approval, approval of an older PR
+head, dismissed approval, bot approval, and unmerged or non-`main` PRs also
+fail closed. Completed A11 v1/v2 bundles remain
+readable for audit and finalization, but cannot make new live calls.
+
 ## What we're actually trying to do
 
 "Add an MCP server with N purpose-built tools and the agent gets smarter" is the kind of claim that's
