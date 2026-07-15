@@ -1,6 +1,6 @@
 # A11 sealed controller gate
 
-Status: **official Mac mini controller sealed; live answer run launched; final result pending**
+Status: **complete - official controller finalized and result published**
 
 Date: 2026-07-15
 
@@ -22,9 +22,23 @@ The sealed runner passed a zero-call `--live --max-attempts 0` smoke and the
 single live controller was then launched as PID `64151`. That PID is a
 historical launch receipt, not controller identity or proof of continued
 liveness; immutable, content-free `--status` receipts are authoritative for
-progress. No answer content has been inspected. Correctness, uncertainty,
-economics, and promotion status remain unknown until the registered grading,
-panel, audit, and finalization sequence completes.
+progress. No answer content was inspected while the run was active. The
+registered grading, panel, audit, and finalization sequence subsequently
+completed before the post-result forensic review opened answer content.
+
+## Final execution outcome
+
+All 360 scheduled answers completed cleanly on attempt one. The pinned panel
+completed 192 substantive items with three votes each, all unanimous, across 30
+batches. Accepted and all-attempt economics reconciled exactly; there were zero
+retries, failed attempts, tool events, or contaminated streams.
+
+V/T/E accuracy was 24/120, 119/120, and 120/120. The registered primary E minus
+T estimate was +0.833 percentage points with patient-cluster 95% interval
+[0, +2.564], so E was not promoted. The exact finalized result is
+[`A11_RESULT.json`](A11_RESULT.json), with the human-readable result in
+[`A11_RESULT.md`](A11_RESULT.md) and post-result audit in
+[`A11_FORENSIC_AUDIT.md`](A11_FORENSIC_AUDIT.md).
 
 ## What is now sealed
 
@@ -56,7 +70,7 @@ tree read-only. Finalization replays every expected vote/batch/attempt artifact,
 rejects unknown receipts, derives each three-vote majority again, and never
 trusts a self-hashed verdict map.
 
-## Registered result
+## Registered reporting plan
 
 The finalizer reports:
 
@@ -83,15 +97,15 @@ lock rejection. Independent adversarial review returned **APPROVE FOR SEAL**
 with no remaining P0/P1/P2 protocol or correctness findings.
 
 The earlier local rehearsal manifest remains non-authoritative. The official
-execution-host seal above now binds the Mac mini Codex path, version and binary
-hash. No accuracy claim exists until that controller completes and the
-registered finalizer runs.
+execution-host seal above binds the Mac mini Codex path, version and binary
+hash. The finalizer completed with result SHA-256
+`95e0dfddbba5aeddd9822f9a9c0d6e3a20c7333fe82b0386d0e26467b6c3b27d`.
 
-## Remaining execution order
+## Completed execution order
 
-1. Let the single sealed `--live` controller finish; inspect only content-free
-   `--status` receipts while answers are in flight.
-2. Run `--prepare-grading` only after 360 clean completions.
-3. Execute the snapshotted `run_a11_panel.py --live` until all registered votes
-   complete, then use its read-only `--audit` replay.
-4. Run controller `--finalize` and publish the immutable result artifacts.
+1. The single sealed `--live` controller finished with 360 clean completions.
+2. `--prepare-grading` ran only after complete paired coverage.
+3. The snapshotted `run_a11_panel.py --live` completed all registered votes and
+   its read-only `--audit` replay passed.
+4. Controller `--finalize` completed with zero model calls, and the immutable
+   aggregate result artifacts were published.

@@ -1,0 +1,28 @@
+{
+  "controller_manifest_sha256": "3f1209ebc750c7f9eeb67d0a7e5ed3a455aa91dbda2be2ffd4c1905fe192fdce",
+  "input_hashes": {
+    "answer_inputs_manifest_sha256": "b98f7e3ae0d3478b001acebb4ac2f29a211e38058eb4d0f0f0b58a5197a167cc",
+    "controller_manifest_sha256": "3f1209ebc750c7f9eeb67d0a7e5ed3a455aa91dbda2be2ffd4c1905fe192fdce",
+    "dataset_manifest_sha256": "442ca8d204fbd81f06e0abaf2ea5022b375deabb71a93d5ebaeccef98e99fe3c",
+    "grading_manifest_sha256": "f259cc57e1fc55ae238a8b3aa2cf643c678bd9f39c532a36152ce42f0f19f968",
+    "panel_disposition": "completed_replayed_panel",
+    "panel_verdict_manifest_sha256": "c4e77a5aea16a0d650c35b2f49b8ef125485baf3fde4f8f1f48e257ab3f7d3d9"
+  },
+  "model_calls_during_finalization": 0,
+  "promotion": {
+    "critical_safety_failures": [],
+    "decision": "do_not_promote_e",
+    "gates": {
+      "cluster_ci_excludes_zero_positive": false,
+      "positive_estimate": true,
+      "zero_critical_safety_failures": true
+    },
+    "mcnemar_is_report_only": true,
+    "promoted": false,
+    "secondary_t_minus_v_is_not_a_gate": true
+  },
+  "result_bytes": 13236,
+  "result_sha256": "95e0dfddbba5aeddd9822f9a9c0d6e3a20c7333fe82b0386d0e26467b6c3b27d",
+  "schema_version": "a11-final-result-manifest-v1",
+  "status": "completed_registered_analysis"
+}
