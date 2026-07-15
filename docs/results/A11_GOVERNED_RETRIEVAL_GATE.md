@@ -1,6 +1,6 @@
 # A11 governed retrieval and source-version gate
 
-Status: **passed before answer calls; dataset seal still blocked**
+Status: **passed before answer calls; dataset seal also passed**
 
 Completed: 2026-07-15
 
@@ -52,12 +52,17 @@ is limited to 16 MiB, 4,096 resources and 256 V roots. The traversal reuses the
 validated read-only source list instead of deep-copying the full snapshot;
 target, edge, path and final packet caps remain independently enforced.
 
-## What remains
+## Downstream closure
 
-No answer run is licensed until the deterministic multi-family corpus and its
-question/packet manifest are built twice with byte-identical output and pass
-the exact family, depth, split, shortest-path, leakage and quota audits in the
-pre-registration.
+The deterministic multi-family corpus was subsequently built twice with
+byte-identical output and passed the exact family, depth, split, shortest-path,
+leakage, quota, producer, adapter, and governed-retrieval preflight checks. Its
+manifest SHA-256 is
+`442ca8d204fbd81f06e0abaf2ea5022b375deabb71a93d5ebaeccef98e99fe3c`.
+See [`A11_DATASET_GATE.md`](A11_DATASET_GATE.md). Answer calls remain blocked
+until the separate registered controller manifest is sealed; this remains
+benchmark governance over synthetic data, not a claim about production
+Bonfire ABAC.
 
 ## Reproduction
 

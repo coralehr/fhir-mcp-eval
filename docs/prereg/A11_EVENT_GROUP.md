@@ -1,6 +1,6 @@
 # A11 pre-registration — path-required event-group compilation
 
-Status: **pre-answer; zero model calls**
+Status: **pre-answer gates sealed; zero answer or judge calls**
 
 Protocol and fixture version: `a11-event-group-v1`
 
@@ -68,18 +68,104 @@ to exactly these registered shapes:
 
 The historical `qt4-vocabulary-promoted-v1`, `qo-v2.1`, and
 `a11-question-plan-v1` paths remain unchanged and are covered by regression
-tests. For A11 efficacy, V/T/E must all start from the explicit
-`a11-four-family-v1` packet for each question. V is still the no-traversal
+tests. The 2026-07-15 amendment below supersedes the recipe binding for the
+depth-balanced efficacy corpus; the v2 recipe remains the frozen two-edge
+producer gate. V is still the no-traversal
 packet; T and E may only add the registered governed retrieval. This amendment
 is a reachability and protocol result, not evidence that DiagnosticReport
 selection, traversal, event grouping, or a graph database improves accuracy.
 
+## Dated pre-answer depth/source amendment — 2026-07-15
+
+The four-family amendment made all registered two-edge families reachable but
+did not make the preregistered depth-three stratum executable: its question
+planner emitted only two-edge signatures. Before any A11 answer or judge call,
+this amendment adds the isolated `a11-four-family-depth-aware-v1` recipe. It
+reuses the exact `qo-v2.2-a11-four-family` root producer and fixed
+`micro-vocab`; it changes only the bound question-plan version to
+`a11-question-plan-v3-depth-aware`.
+
+Depth two uses the existing four signatures. Depth three must contain the
+literal question-only phrase `through an intermediate observation` and inserts
+one registered `Observation.hasMember` edge before the terminal relation:
+
+| Family | Depth 2 | Depth 3 |
+|---|---|---|
+| Observation finding | `hasMember/hasMember` | `hasMember/hasMember/hasMember` |
+| Observation specimen | `hasMember/specimen` | `hasMember/hasMember/specimen` |
+| DiagnosticReport finding | `result/hasMember` | `result/hasMember/hasMember` |
+| DiagnosticReport specimen | `result/specimen` | `result/hasMember/specimen` |
+
+Other depth wording containing `intermediate`, `three hop`, `three-hop`, or
+`3-hop` fails closed. The historical v1 and four-family v2 question planners,
+and both earlier evidence recipes, are not reinterpreted.
+
+Clinical root order is separately bound as
+`a11-event-rank-v2-normalized-utc`: parse the registered `effective[x]` instant,
+normalize it to a UTC instant, then tie-break by `ResourceType` and `id`.
+Publication/store timestamps remain forbidden.
+
+The efficacy source is the official
+`synthetichealth/synthea-sample-data` archive at commit
+`0d9dc0b56534cacb36db31c84e390ae936d03653`, generated from Synthea commit
+`2b0a55bab0ab9ae22204320c80f5880ceb8925aa`. The pinned artifact is
+`downloads/latest/synthea_sample_data_fhir_latest.zip`, Git blob
+`e0d5f1f46a08bc0b373f7bc211b87dc2319572c9`, 44,578,263 bytes, SHA-256
+`d32f10f98ec36bc6784bfe5f4e112d4850a6d0cb5dda6b9d8ca18fff5fb4a1d1`.
+Its upstream generation seed is unknown, so the raw archive bytes, ordered ZIP
+entry names, every entry hash/byte count, and selected JSON-content hash are
+the reproducibility boundary. No upstream-seed claim is licensed.
+
+The archive contains 115 unique Patients. Hash-order them before augmentation,
+then freeze 15 development and 100 efficacy patients with no overlap. Generate
+exactly 24 development questions (three in each of eight family-depth cells)
+and 120 efficacy questions (15 per cell). In efficacy, exactly 80 patients have
+one row and 20 have two; no patient crosses partitions. Efficacy contains 60
+first and 60 latest questions and exactly 24 unanswerable questions, three per
+cell and six each for missing target, stale version, out-of-scope target, and
+target-bound exhaustion. Development remains non-confirmatory.
+
+Generated identifiers, labels, and event times are opaque and may not encode
+family, depth, split, answerability, failure mode, temporal policy, root, or
+terminal role. Every augmented resource has `meta.versionId`, every registered
+edge carries a replayable version-specific relative reference, and source,
+question, gold, audit, policy, and eventual model-packet envelopes remain
+separate. Each question binds the SHA-256 of a canonical policy context carrying
+principal, practice, purpose, patient, allowed purposes, and logical source
+epoch; every augmented resource has an explicit subject binding to that patient.
+Eligibility requires exactly one route from selected root to terminal, an
+exact shortest-path match to the registered family-depth cell, no direct or
+alternate shorter route, no duplicate terminal route, no terminal ID/display/
+code alias in V, and byte-identical rebuilds from the sealed inputs.
+
+## Dated pre-answer temporal-identifiability correction — 2026-07-15
+
+An independent read-only review before any answer or judge call found that the
+first candidate builder left the nonselected temporal root incomplete. That
+would let T answer from the only complete fact without resolving first versus
+latest, so the candidate seal was superseded and never licensed for answers.
+
+The corrected frozen generator gives both temporal roots distinct terminal
+facts through the same registered family-depth path. In answerable rows both
+paths are complete, so flat T contains two competing facts and E must bind the
+question's temporal operator to the selected group. In every unanswerable row
+the nonselected event remains complete while the selected event fails through
+exactly one independently audited registered mechanism. Each failure mode is
+balanced across temporal policy: three first and three latest rows per mode.
+In particular, every latest-unanswerable row contains a complete older event.
+A label-only failure-mode change must fail the audit.
+
+The same pre-answer review required a one-pass immutable source snapshot,
+pre/post compiler-dependency equality, path-stable logical input names, and
+exclusive seal outputs. Those integrity repairs change only construction and
+receipts, not the registered V/T/E treatments or analysis order.
+
 ## Efficacy arms and synthetic mechanism proxies
 
-All arms start from `a11-four-family-v1`, the dated versioned extension of the
-QT-4 holdout-promoted fixed vocabulary recipe. It preserves the promoted
-Observation behavior and adds only the explicit DiagnosticReport root route
-needed to make the registered protocol executable.
+All efficacy arms start from `a11-four-family-depth-aware-v1`. It reuses the
+same `a11-four-family-v1` root producer and QT-4-promoted fixed vocabulary,
+while binding the depth-aware question plan required for the eight registered
+family-depth cells.
 
 The committed zero-model fixture does not run `compile_evidence.py`; it uses
 hand-sealed synthetic resources and seed roots to exercise the compiler state
@@ -91,7 +177,7 @@ equivalence.
 
 ### V — A11 four-family vocabulary star
 
-Patient-scoped root selection using `a11-four-family-v1`. Do not follow
+Patient-scoped root selection using `a11-four-family-depth-aware-v1`. Do not follow
 outbound references. For Observation-root questions this is the promoted
 product behavior; for explicitly worded DiagnosticReport questions it is the
 pre-answer versioned extension above. It is not the retired query-blind
@@ -124,11 +210,14 @@ Use the exact T retrieval result. Replace the flat evidence list with:
 - a deterministic answerability receipt over registered path shapes.
 
 Before gold or audit fields are consulted, the recipe-bound adapter calls
-`plan_question(question, version="a11-question-plan-v2-four-family")` and
+`plan_question(question, version="a11-question-plan-v3-depth-aware")` for the
+efficacy recipe and
 deterministically seals the family, temporal policy, path signatures, and
 question hash. Calling `plan_question(question)` without the version remains
 the historical mechanism-fixture behavior and is ineligible for A11 efficacy.
-E may consume only the v2 question plan plus T's exact retrieval result.
+E may consume only the v3 question plan plus T's exact retrieval result. The
+v2 plan remains frozen only for the historical `a11-four-family-v1` producer
+gate.
 Counterfactual changes to reference answers, expected roots, expected
 evidence, answerability labels, or audit-only path metadata must not change
 the model packet.
@@ -188,17 +277,18 @@ mechanics.
 
 ## Efficacy dataset to seal before answers
 
-Build at least 120 non-PHI questions by a committed deterministic extractor,
+Build exactly 120 efficacy and 24 development non-PHI questions by a committed deterministic extractor,
 not hand-picking favorable rows. Freeze the extraction algorithm before
 reading answer outputs. Requirements:
 
-- at least four registered path families;
-- depths two and three;
-- at least 60 first/latest questions;
-- at least 20% unanswerable cases, including missing, stale-version,
+- exactly four registered path families and eight family-depth cells;
+- depths two and three with the exact cell quotas above;
+- exactly 60 first and 60 latest efficacy questions;
+- exactly 20% unanswerable efficacy cases, including missing, stale-version,
   out-of-scope, and bound-exhaustion conditions;
 - patient-disjoint development and efficacy partitions;
-- deterministic hash-order selection within family;
+- global deterministic Patient hash ordering followed by the frozen
+  family/depth assignment schedule;
 - mechanically derived reference answers and terminal resource IDs;
 - duplicate, label-leakage, and star-answerability audits; and
 - one sealed manifest binding input snapshot, question order, packet hashes,
@@ -223,7 +313,7 @@ cross-patient roots, and returns the exact
 rendering ambiguity. Strict metadata schemas do not prove that arbitrary FHIR
 clinical fields contain no answer aliases, so the efficacy seal must also bind
 the source corpus and deterministic extractor. The adapter does not synthesize
-authorization: the efficacy seal must still provide a governed
+authorization; the subsequent efficacy seal therefore provides a governed
 principal/practice/purpose/patient/source-version receipt and one immutable
 version-preserving traversal result shared by T and E. See
 [`A11_PRODUCT_PACKET_ADAPTER.md`](../results/A11_PRODUCT_PACKET_ADAPTER.md).
@@ -236,8 +326,9 @@ an independently pinned canonical benchmark policy artifact; derives roots only 
 and seals one immutable retrieval-source hash consumed unchanged by T and E.
 Principal, practice, patient and source identifiers are hashed in the outer
 receipt and never enter model-visible packets. This is benchmark governance,
-not proof of Bonfire's production ABAC. The remaining blocker is the sealed
-multi-family dataset and its deterministic producer/eligibility audit. See
+not proof of Bonfire's production ABAC. The multi-family dataset and its
+deterministic producer/eligibility audit subsequently passed as described in
+[`A11_DATASET_GATE.md`](../results/A11_DATASET_GATE.md). See
 [`A11_GOVERNED_RETRIEVAL_GATE.md`](../results/A11_GOVERNED_RETRIEVAL_GATE.md).
 
 The 2026-07-14 sealed QT-4 inventory does not satisfy these requirements: only
@@ -260,10 +351,16 @@ amendment above resolves that reachability blocker without changing the
 historical recipe. The actual `compile_evidence.py` entrypoint now emits both
 root types under `a11-four-family-v1`, and adapter v2 re-derives and validates
 the corresponding planner, manifest, query plan, packet bytes, and root type
-on synthetic non-PHI integration records. No model was called. The efficacy
-run remains blocked on a sealed multi-family non-PHI substrate; the governed
-authorization/source-version receipt is now implemented and tested without
-model calls.
+on synthetic non-PHI integration records. No model was called. The 2026-07-15
+amendment now implements the deterministic multi-family substrate builder; the
+governed authorization/source-version receipt is also implemented and tested.
+The parent-side double-build seal and complete
+producer/adapter/governed-retrieval preflight passed without model calls on
+2026-07-15. Both builds produced manifest SHA-256
+`442ca8d204fbd81f06e0abaf2ea5022b375deabb71a93d5ebaeccef98e99fe3c`.
+The answer runner remains blocked until a separate controller manifest binds
+that dataset hash to the model, Codex version, prompts, answer schema, retry
+policy, panel, grading configuration, and fixed analysis order required above.
 
 ## Outcomes and fixed analysis order
 

@@ -20,6 +20,7 @@ from typing import Any
 import a6_packet_builder as a6
 import codex_harness
 from a11_event_group_benchmark import (
+    A11_DEPTH_AWARE_QUESTION_PLANNER_VERSION,
     A11_FOUR_FAMILY_QUESTION_PLANNER_VERSION,
     QUESTION_PLANNER_VERSION,
     plan_question,
@@ -183,6 +184,18 @@ def _recipe_contract(recipe: str) -> dict[str, Any]:
             ),
             "receipt": {
                 "id": a6.A11_EVIDENCE_RECIPE,
+                "status": "preregistered_pre_answer_a11",
+                "features": ["micro-vocab"],
+                "protocol": "docs/prereg/A11_EVENT_GROUP.md",
+            },
+        }
+    if recipe == a6.A11_DEPTH_AWARE_EVIDENCE_RECIPE:
+        return {
+            "features": ["micro-vocab"],
+            "planner_version": a6.A11_QO_PLANNER_VERSION,
+            "question_planner_version": A11_DEPTH_AWARE_QUESTION_PLANNER_VERSION,
+            "receipt": {
+                "id": a6.A11_DEPTH_AWARE_EVIDENCE_RECIPE,
                 "status": "preregistered_pre_answer_a11",
                 "features": ["micro-vocab"],
                 "protocol": "docs/prereg/A11_EVENT_GROUP.md",

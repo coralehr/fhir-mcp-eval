@@ -105,6 +105,8 @@ REGISTERED_QT_ARMS = (
 # recipe by default for new packet builds.
 PROMOTED_EVIDENCE_RECIPE = "qt4-vocabulary-promoted-v1"
 A11_EVIDENCE_RECIPE = "a11-four-family-v1"
+A11_DEPTH_AWARE_EVIDENCE_RECIPE = "a11-four-family-depth-aware-v1"
+A11_DEPTH_AWARE_SOURCE_EPOCH = "2026-07-15-pre-answer"
 
 
 @dataclass(frozen=True)
@@ -136,6 +138,14 @@ EVIDENCE_RECIPE_CONTRACTS = {
     ),
     A11_EVIDENCE_RECIPE: EvidenceRecipeContract(
         recipe_id=A11_EVIDENCE_RECIPE,
+        features=frozenset({"micro-vocab"}),
+        planner_version=A11_QO_PLANNER_VERSION,
+        status="preregistered_pre_answer_a11",
+        evidence_key="protocol",
+        evidence_path="docs/prereg/A11_EVENT_GROUP.md",
+    ),
+    A11_DEPTH_AWARE_EVIDENCE_RECIPE: EvidenceRecipeContract(
+        recipe_id=A11_DEPTH_AWARE_EVIDENCE_RECIPE,
         features=frozenset({"micro-vocab"}),
         planner_version=A11_QO_PLANNER_VERSION,
         status="preregistered_pre_answer_a11",
@@ -1450,7 +1460,10 @@ def build_packet_record(
             endpoint_reserve="endpoint-reserve" in features,
             clinical_date=(
                 a11_canonical_clinical_date
-                if evidence_recipe == A11_EVIDENCE_RECIPE
+                if evidence_recipe in {
+                    A11_EVIDENCE_RECIPE,
+                    A11_DEPTH_AWARE_EVIDENCE_RECIPE,
+                }
                 else _resource_clinical_date
             ),
         )
@@ -1576,11 +1589,25 @@ def write_manifest(path: Path, *, input_path: Path, output_path: Path, args: arg
         max_total_resources=getattr(args, "max_total_resources", None),
         max_packet_chars=getattr(args, "max_packet_chars", None),
     )
+    deterministic_a11 = (
+        getattr(args, "evidence_recipe", None)
+        == A11_DEPTH_AWARE_EVIDENCE_RECIPE
+    )
     manifest = {
-        "created_at": dt.datetime.now(dt.UTC).isoformat(),
+        "created_at": (
+            A11_DEPTH_AWARE_SOURCE_EPOCH
+            if deterministic_a11
+            else dt.datetime.now(dt.UTC).isoformat()
+        ),
         "kind": "a6_query_aware_packet_manifest",
-        "input": {"path": str(input_path), "sha256": sha256_file(input_path)},
-        "output": {"path": str(output_path), "sha256": sha256_file(output_path)},
+        "input": {
+            "path": input_path.name if deterministic_a11 else str(input_path),
+            "sha256": sha256_file(input_path),
+        },
+        "output": {
+            "path": output_path.name if deterministic_a11 else str(output_path),
+            "sha256": sha256_file(output_path),
+        },
         "config": {
             "limit": args.limit,
             "count": args.count,
@@ -1588,7 +1615,11 @@ def write_manifest(path: Path, *, input_path: Path, output_path: Path, args: arg
             "split": args.split,
             "question_spec": (
                 {
-                    "path": str(args.question_spec),
+                    "path": (
+                        args.question_spec.name
+                        if deterministic_a11
+                        else str(args.question_spec)
+                    ),
                     "sha256": sha256_file(args.question_spec),
                 }
                 if getattr(args, "question_spec", None)
