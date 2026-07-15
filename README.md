@@ -27,6 +27,20 @@
 > token ledger, receipts, and forensic audit: [QT4_VALID374_RESULT.md](docs/results/QT4_VALID374_RESULT.md)
 > and [QT4_VALID374_FORENSIC_AUDIT.md](docs/results/QT4_VALID374_FORENSIC_AUDIT.md).
 
+> **New (2026-07-15): A11 completed. Traversal solved the deliberately
+> path-required evidence problem; event grouping did not earn promotion.** On
+> 120 paired non-PHI synthetic questions, vocabulary-star V scored 24/120,
+> flat-traversal T scored 119/120, and event-group E scored 120/120. The
+> registered primary E-minus-T estimate was +0.833 points with patient-cluster
+> 95% CI [0, +2.564], so E is **not promoted**. The registered secondary T-minus-V
+> contrast was +100 points on the 96 answerable questions; it was not a
+> promotion gate. E used 9.1% fewer payload bytes and 2.0% fewer answer tokens
+> than T. The post-result audit found no hidden-gold or tool-use contamination,
+> but E bundled event structure with an answerability receipt, so its one gain
+> cannot be attributed to grouping alone. Full result, preserved aggregate
+> artifacts, and forensic review: [A11_RESULT.md](docs/results/A11_RESULT.md) and
+> [A11_FORENSIC_AUDIT.md](docs/results/A11_FORENSIC_AUDIT.md).
+
 > **New (2026-07-14): the promoted recipe and A11 event-group gate are executable.** New packet builds
 > can use `compile_evidence.py`, which defaults to the holdout-promoted vocabulary recipe while preserving
 > every historical experiment entrypoint. The zero-model A11 gate separately exercises synthetic
@@ -61,7 +75,8 @@
 > independent adversarial review. The official Mac mini controller is now sealed at manifest SHA-256
 > `3f1209ebc750c7f9eeb67d0a7e5ed3a455aa91dbda2be2ffd4c1905fe192fdce` from merged commit
 > `0123ca2bf4e1aecfdf5092b0a2b333c5afbe75dc`, using Codex CLI `0.144.1`. The fixed
-> 120-question/360-answer run has launched; no accuracy or promotion result exists yet. See
+> 120-question/360-answer run subsequently completed cleanly; see the final
+> result above. The pre-answer evidence chain remains in
 > [A11_EVENT_GROUP_MECHANISM.md](docs/results/A11_EVENT_GROUP_MECHANISM.md) and the frozen
 > [A11_EVENT_GROUP.md](docs/prereg/A11_EVENT_GROUP.md) protocol, plus the
 > [adapter gate](docs/results/A11_PRODUCT_PACKET_ADAPTER.md),
@@ -118,14 +133,14 @@ apparent win is a context-overflow artifact (a null at matched budget), not a re
   29/44 and recovered substantially more mapped gold evidence, but its incremental correctness contrast
   did not pass the registered significance and interval gates. The failure audit points next to typed
   event grouping, temporal rank, and deterministic answerability—not simply deeper traversal.
-- **A11 is split at the mechanism boundary before spend.** The next answer-bearing experiment has three
-  arms: promoted vocabulary star (V), the same recipe plus flat bounded traversal (T), and the identical
-  fetched evidence compiled into typed event groups with canonical time, first/latest rank, path citations,
-  and an answerability receipt (E). `T−V` measures whether path-required topology makes traversal useful;
-  `E−T` measures whether structure fixes the temporal-binding failure seen in QT-4. The committed synthetic
-  gate proves compiler mechanics only. The adapter, governed receipt, and byte-identical 120-question
-  efficacy dataset seals are complete; the preregistered answer run is now executing and its result remains
-  pending.
+- **A11 result: traversal passed its path-required mechanism test; event groups
+  did not earn an incremental accuracy claim.** V/T/E scored 24/120, 119/120,
+  and 120/120. E minus T was +0.833 points with 95% CI [0, +2.564], so E was not
+  promoted. T minus V was +100 points on the 96 answerable cases, where V had
+  zero terminal-evidence recall and T/E had complete recall. The only T error
+  substituted a later complete event for an earlier incomplete one. E prevented
+  it, but E bundled event grouping, temporal rank, and an answerability receipt,
+  so the causal feature is unresolved.
 - ⚠️ **Reproducibility is split.** For the trustworthy re-grade, the committed artifacts are the aggregate
   summary (`medplum-eval/full409_summary.json`) and a durable per-question answer backup
   (`medplum-eval/full409_answers.json`); the per-question panel/deterministic labels live under gitignored
@@ -135,9 +150,11 @@ apparent win is a context-overflow artifact (a null at matched budget), not a re
   locally recomputable when those dumps are present; [FINAL_REPORT.md](docs/FINAL_REPORT.md) records the exact scope.
   **Opus tool-ablation numbers are not** (run on torn-down EC2). See
   [Reproducibility status](#where-this-was-actually-run--reproducibility-status).
-- **Start here: [QT4_VALID374_RESULT.md](docs/results/QT4_VALID374_RESULT.md)** for the latest confirmatory
-  result and [QT4_VALID374_FORENSIC_AUDIT.md](docs/results/QT4_VALID374_FORENSIC_AUDIT.md) for the
-  no-cheating/mechanism review. Then read [FINDINGS.md](docs/FINDINGS.md) (the earlier capstone conclusion), the tool-ablation deep-dive
+- **Start here: [A11_RESULT.md](docs/results/A11_RESULT.md)** for the latest
+  mechanism result and [A11_FORENSIC_AUDIT.md](docs/results/A11_FORENSIC_AUDIT.md)
+  for the post-result no-cheating and failure analysis. Then read the
+  [QT-4 holdout result](docs/results/QT4_VALID374_RESULT.md),
+  [FINDINGS.md](docs/FINDINGS.md) (the earlier capstone conclusion), the tool-ablation deep-dive
   **[REPORT.md](docs/REPORT.md)** and the code result **[CODE_EXPERIMENT.md](docs/CODE_EXPERIMENT.md)**.
 
 ## Final result: A0 vs A0' vs A5
@@ -189,8 +206,8 @@ future A6/A7 arms should report accuracy beside the same token/cost ledger, not 
 
 The repo is ready for GitHub issues. The issue-ready backlog lives in [ROADMAP.md](docs/ROADMAP.md):
 
-- Finish the sealed 120-question A11 V/T/E efficacy experiment without
-  inspecting answers mid-run, then grade and analyze in the preregistered order.
+- Run a harder untouched A11 follow-up that separates flat traversal,
+  deterministic answerability, and event-group structure.
 - Publish a minimized reproducibility artifact package with checksums.
 - Rerun A0, A0', and A5 on one substrate.
 - Add cross-family or human adjudication for A0' non-numeric labels.
@@ -419,6 +436,10 @@ docs/                        # findings, reports, and figures
   ├── CODE_EXPERIMENT.md     # the code-interpreter result
   ├── FINAL_REPORT.md        # red-teamed A0 / A0' / A5 three-arm control
   ├── TRUSTWORTHY_REGRADE.md # judge-reliability finding + trustworthy re-grade
+  ├── results/A11_RESULT.md                   # final V/T/E result, economics, and limits
+  ├── results/A11_FORENSIC_AUDIT.md           # post-result leakage and failure analysis
+  ├── results/A11_RESULT.json                 # exact finalized aggregate result
+  ├── results/a11-artifacts/                  # preserved grading/panel/result manifests
   ├── results/QT4_VALID374_RESULT.md          # confirmatory vocabulary/traversal result + economics
   ├── results/QT4_VALID374_FORENSIC_AUDIT.md # no-cheating and answer-level mechanism audit
   ├── RELATED_WORK.md, ROADMAP.md

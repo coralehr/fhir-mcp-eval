@@ -1,0 +1,134 @@
+{
+  "all_checks_passed": true,
+  "answer_economics": {
+    "accepted_token_usage_by_arm": {
+      "e": {
+        "cached_input_tokens": 1001728,
+        "input_tokens": 1579429,
+        "output_tokens": 21972,
+        "reasoning_output_tokens": 0,
+        "total_tokens": 1601401
+      },
+      "t": {
+        "cached_input_tokens": 1012736,
+        "input_tokens": 1607865,
+        "output_tokens": 25661,
+        "reasoning_output_tokens": 1100,
+        "total_tokens": 1633526
+      },
+      "v": {
+        "cached_input_tokens": 1045760,
+        "input_tokens": 1472436,
+        "output_tokens": 21313,
+        "reasoning_output_tokens": 182,
+        "total_tokens": 1493749
+      }
+    },
+    "all_attempt_token_economics_reconciled": true,
+    "all_attempt_token_usage_by_arm": {
+      "e": {
+        "cached_input_tokens": 1001728,
+        "input_tokens": 1579429,
+        "output_tokens": 21972,
+        "reasoning_output_tokens": 0,
+        "total_tokens": 1601401
+      },
+      "t": {
+        "cached_input_tokens": 1012736,
+        "input_tokens": 1607865,
+        "output_tokens": 25661,
+        "reasoning_output_tokens": 1100,
+        "total_tokens": 1633526
+      },
+      "v": {
+        "cached_input_tokens": 1045760,
+        "input_tokens": 1472436,
+        "output_tokens": 21313,
+        "reasoning_output_tokens": 182,
+        "total_tokens": 1493749
+      }
+    },
+    "retry_yield_by_arm": {
+      "e": {
+        "questions_recovered_after_retry": 0,
+        "recovered_questions_per_retry_attempt": null,
+        "retry_attempts": 0
+      },
+      "t": {
+        "questions_recovered_after_retry": 0,
+        "recovered_questions_per_retry_attempt": null,
+        "retry_attempts": 0
+      },
+      "v": {
+        "questions_recovered_after_retry": 0,
+        "recovered_questions_per_retry_attempt": null,
+        "retry_attempts": 0
+      }
+    },
+    "token_receipt_completeness_by_arm": {
+      "e": {
+        "accepted_attempts": 120,
+        "accepted_attempts_missing_usage": 0,
+        "accepted_attempts_with_usage": 120,
+        "accepted_complete": true,
+        "all_attempt_complete": true,
+        "all_attempts": 120,
+        "all_attempts_missing_usage": 0,
+        "all_attempts_with_usage": 120
+      },
+      "t": {
+        "accepted_attempts": 120,
+        "accepted_attempts_missing_usage": 0,
+        "accepted_attempts_with_usage": 120,
+        "accepted_complete": true,
+        "all_attempt_complete": true,
+        "all_attempts": 120,
+        "all_attempts_missing_usage": 0,
+        "all_attempts_with_usage": 120
+      },
+      "v": {
+        "accepted_attempts": 120,
+        "accepted_attempts_missing_usage": 0,
+        "accepted_attempts_with_usage": 120,
+        "accepted_complete": true,
+        "all_attempt_complete": true,
+        "all_attempts": 120,
+        "all_attempts_missing_usage": 0,
+        "all_attempts_with_usage": 120
+      }
+    }
+  },
+  "artifacts": {
+    "completion_coverage.json": {
+      "bytes": 613066,
+      "sha256": "3648b394a9ec9f418376b20689d8af5b7a66f44dd1bac64a548522648f256f48"
+    },
+    "deterministic_labels.json": {
+      "bytes": 6090,
+      "sha256": "dfe8df9d63ffc990946731e750521fc0ebd7a864c4fad520de78435560a51e76"
+    },
+    "panel_queue.jsonl": {
+      "bytes": 70720,
+      "sha256": "c68c5eeed1432e655215003f2d915c9bf508923433d4dd7528aa3d70140ebe4e"
+    }
+  },
+  "completed_answers": 360,
+  "controller_manifest_sha256": "3f1209ebc750c7f9eeb67d0a7e5ed3a455aa91dbda2be2ffd4c1905fe192fdce",
+  "deterministic_labels": 168,
+  "gold_sha256": "f4e808857027eb3fb5d6e6d2bc03f3b56037190fedbe3d3123cbb0a8181d1150",
+  "model_calls": 0,
+  "panel_config": {
+    "batch_size": 20,
+    "codex_bin": "/Users/cory/.local/lib/node_modules/@openai/codex/bin/codex.js",
+    "codex_binary_sha256": "134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477",
+    "codex_version": "codex-cli 0.144.1",
+    "model": "gpt-5.6-sol",
+    "panel_source_sha256": "c9e3d85996054b96447ea6f4a70dc3e48e98a67b15aadb59557003b200eb9180",
+    "reasoning_effort": "high",
+    "timeout_seconds": 600,
+    "votes": 3
+  },
+  "panel_items": 192,
+  "questions_sha256": "673f0d7d73e490baa4daf6c7708bde4e0f78268d7c6b76a5b1763d71b03a0161",
+  "schema_version": "a11-grading-preparation-v1"
+}
