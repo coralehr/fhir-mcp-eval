@@ -228,6 +228,18 @@ principal/practice/purpose/patient/source-version receipt and one immutable
 version-preserving traversal result shared by T and E. See
 [`A11_PRODUCT_PACKET_ADAPTER.md`](../results/A11_PRODUCT_PACKET_ADAPTER.md).
 
+The 2026-07-15 pre-answer governed-retrieval gate now closes that second
+boundary for synthetic efficacy inputs. `a11-governed-retrieval-v1` consumes
+only an adapter-verified V bundle, an independently pinned source snapshot and
+an independently pinned canonical benchmark policy artifact; derives roots only from V; validates
+`meta.versionId`; preserves requested versus resolved historical references;
+and seals one immutable retrieval-source hash consumed unchanged by T and E.
+Principal, practice, patient and source identifiers are hashed in the outer
+receipt and never enter model-visible packets. This is benchmark governance,
+not proof of Bonfire's production ABAC. The remaining blocker is the sealed
+multi-family dataset and its deterministic producer/eligibility audit. See
+[`A11_GOVERNED_RETRIEVAL_GATE.md`](../results/A11_GOVERNED_RETRIEVAL_GATE.md).
+
 The 2026-07-14 sealed QT-4 inventory does not satisfy these requirements: only
 ten rows have a fetched depth-two target, and only one two-hop family is
 present. Therefore the 120-question efficacy run is blocked on a new or
@@ -249,8 +261,9 @@ historical recipe. The actual `compile_evidence.py` entrypoint now emits both
 root types under `a11-four-family-v1`, and adapter v2 re-derives and validates
 the corresponding planner, manifest, query plan, packet bytes, and root type
 on synthetic non-PHI integration records. No model was called. The efficacy
-run remains blocked on the governed authorization/source-version receipt and a
-sealed multi-family non-PHI substrate.
+run remains blocked on a sealed multi-family non-PHI substrate; the governed
+authorization/source-version receipt is now implemented and tested without
+model calls.
 
 ## Outcomes and fixed analysis order
 

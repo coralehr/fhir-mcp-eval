@@ -46,12 +46,15 @@
 > frozen `qo-v2.1` planner also never queries `DiagnosticReport` for microbiology questions. That producer
 > blocker is now resolved without rewriting history: the explicit pre-answer `a11-four-family-v1` recipe
 > binds `qo-v2.2-a11-four-family`, reaches all four registered root/path families, and passes the actual
-> entrypoint-to-adapter zero-model gate. The authorization/source-version and multi-family substrate gates
-> remain open, so no A11 answer run is licensed yet. See
+> entrypoint-to-adapter zero-model gate. The 2026-07-15 governed-retrieval gate now binds an
+> adapter-verified V packet to a pinned source version and one immutable T/E traversal receipt, without
+> claiming production Bonfire ABAC. The multi-family substrate gate remains open, so no A11 answer run is
+> licensed yet. See
 > [A11_EVENT_GROUP_MECHANISM.md](docs/results/A11_EVENT_GROUP_MECHANISM.md) and the frozen
 > [A11_EVENT_GROUP.md](docs/prereg/A11_EVENT_GROUP.md) protocol, plus the
 > [adapter gate](docs/results/A11_PRODUCT_PACKET_ADAPTER.md),
 > [four-family producer gate](docs/results/A11_FOUR_FAMILY_PRODUCER_GATE.md),
+> [governed retrieval gate](docs/results/A11_GOVERNED_RETRIEVAL_GATE.md),
 > [candidate-inventory result](docs/results/A11_CANDIDATE_INVENTORY.md), and
 > [substrate audit](docs/results/A11_SUBSTRATE_AUDIT.md).
 
@@ -171,8 +174,8 @@ future A6/A7 arms should report accuracy beside the same token/cost ledger, not 
 
 The repo is ready for GitHub issues. The issue-ready backlog lives in [ROADMAP.md](docs/ROADMAP.md):
 
-- Add the governed A11 authorization/source-version receipt, build a multi-family non-PHI efficacy dataset,
-  and seal both before running V/T/E without inspecting
+- Build the multi-family non-PHI A11 efficacy dataset against the governed source-version receipt,
+  and seal it before running V/T/E without inspecting
   answers mid-run.
 - Publish a minimized reproducibility artifact package with checksums.
 - Rerun A0, A0', and A5 on one substrate.
