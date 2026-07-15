@@ -35,11 +35,15 @@ ARMS = (ARM_VOCABULARY_STAR, ARM_FLAT_TRAVERSAL, ARM_EVENT_GROUP)
 
 EVENT_GROUP_COMPILER_VERSION = "a11-event-group-v1"
 ANSWERABILITY_VERSION = "a11-answerability-v1"
+HISTORICAL_EVENT_RANK_VERSION = "a11-event-rank-v1"
+A11_NORMALIZED_EVENT_RANK_VERSION = "a11-event-rank-v2-normalized-utc"
 QUESTION_PLANNER_VERSION = "a11-question-plan-v1"
 A11_FOUR_FAMILY_QUESTION_PLANNER_VERSION = "a11-question-plan-v2-four-family"
+A11_DEPTH_AWARE_QUESTION_PLANNER_VERSION = "a11-question-plan-v3-depth-aware"
 QUESTION_PLANNER_VERSIONS = (
     QUESTION_PLANNER_VERSION,
     A11_FOUR_FAMILY_QUESTION_PLANNER_VERSION,
+    A11_DEPTH_AWARE_QUESTION_PLANNER_VERSION,
 )
 A11_FOUR_FAMILY_MICRO_TERMS = (
     "microbiolog",
@@ -76,34 +80,52 @@ def plan_question(
         raise ValueError(f"unsupported A11 question planner version: {version}")
     normalized = " ".join(question.lower().split())
     if (
-        version == A11_FOUR_FAMILY_QUESTION_PLANNER_VERSION
+        version in {
+            A11_FOUR_FAMILY_QUESTION_PLANNER_VERSION,
+            A11_DEPTH_AWARE_QUESTION_PLANNER_VERSION,
+        }
         and not any(term in normalized for term in A11_FOUR_FAMILY_MICRO_TERMS)
     ):
         raise ValueError("question has no registered microbiology dispatcher term")
     policies = [policy for policy in ("first", "latest") if policy in normalized]
     if len(policies) != 1:
         raise ValueError("question must select exactly one temporal policy")
+    depth_phrase = "through an intermediate observation"
+    if version == A11_DEPTH_AWARE_QUESTION_PLANNER_VERSION:
+        ambiguous_depth_tokens = ("three-hop", "three hop", "3-hop", "intermediate")
+        if any(token in normalized for token in ambiguous_depth_tokens) and normalized.count(depth_phrase) != 1:
+            raise ValueError("question has ambiguous A11 path-depth wording")
     root_relation = "Observation.hasMember"
     if (
-        version == A11_FOUR_FAMILY_QUESTION_PLANNER_VERSION
+        version in {
+            A11_FOUR_FAMILY_QUESTION_PLANNER_VERSION,
+            A11_DEPTH_AWARE_QUESTION_PLANNER_VERSION,
+        }
         and re.search(
             r"(?<![a-z0-9])diagnostic\s*report(?![a-z0-9])", normalized
         )
     ):
         root_relation = "DiagnosticReport.result"
     if "specimen" in normalized:
-        path_signatures = [[root_relation, "Observation.specimen"]]
+        signature = [root_relation, "Observation.specimen"]
     elif any(token in normalized for token in ("organism", "finding", "gram stain")):
-        path_signatures = [[root_relation, "Observation.hasMember"]]
+        signature = [root_relation, "Observation.hasMember"]
     else:
         raise ValueError("question has no registered microbiology path plan")
-    return {
+    if version == A11_DEPTH_AWARE_QUESTION_PLANNER_VERSION and depth_phrase in normalized:
+        signature.insert(-1, "Observation.hasMember")
+    path_signatures = [signature]
+    plan = {
         "version": version,
         "question_sha256": hashlib.sha256(question.encode("utf-8")).hexdigest(),
         "question_family": "microbiology",
         "temporal_policy": policies[0],
         "path_signatures": path_signatures,
     }
+    if version == A11_DEPTH_AWARE_QUESTION_PLANNER_VERSION:
+        plan["path_depth"] = len(signature)
+        plan["event_rank_version"] = A11_NORMALIZED_EVENT_RANK_VERSION
+    return plan
 
 
 def load_fixture(path: Path) -> dict[str, Any]:
@@ -188,6 +210,44 @@ def canonical_event_time(resource: dict[str, Any]) -> tuple[str, str]:
     raise ValueError(f"event root has no canonical clinical time: {resource_ref(resource)}")
 
 
+def rank_event_roots(
+    packet_resources: dict[str, dict[str, Any]],
+    root_refs: list[str],
+    *,
+    version: str = HISTORICAL_EVENT_RANK_VERSION,
+) -> tuple[list[tuple[float, str, str, str, str, str]], bool]:
+    """Rank roots by normalized UTC instant then ResourceType/id."""
+
+    if version not in {
+        HISTORICAL_EVENT_RANK_VERSION,
+        A11_NORMALIZED_EVENT_RANK_VERSION,
+    }:
+        raise ValueError(f"unsupported A11 event-rank version: {version}")
+    roots: list[tuple[float, str, str, str, str, str]] = []
+    missing_clinical_time = False
+    for seed_ref in root_refs:
+        root = packet_resources.get(seed_ref)
+        if root is None:
+            continue
+        try:
+            event_time, time_source = canonical_event_time(root)
+        except ValueError:
+            missing_clinical_time = True
+            continue
+        roots.append(
+            (
+                _parse_instant(event_time),
+                root["resourceType"],
+                root["id"],
+                seed_ref,
+                event_time,
+                time_source,
+            )
+        )
+    roots.sort(key=lambda item: (item[0], item[1], item[2]))
+    return roots, missing_clinical_time
+
+
 def _summary(resource: dict[str, Any]) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "reference": resource_ref(resource),
@@ -224,19 +284,12 @@ def compile_event_groups(
     packet_resources = {
         resource_ref(resource): resource for resource in source_packet["resources"]
     }
-    roots: list[tuple[float, str, str, str]] = []
-    missing_clinical_time = False
-    for seed_ref in source_packet["root_refs"]:
-        root = packet_resources.get(seed_ref)
-        if root is None:
-            continue
-        try:
-            event_time, time_source = canonical_event_time(root)
-        except ValueError:
-            missing_clinical_time = True
-            continue
-        roots.append((_parse_instant(event_time), seed_ref, event_time, time_source))
-    roots.sort(key=lambda item: (item[0], item[1]))
+    rank_version = plan.get("event_rank_version", HISTORICAL_EVENT_RANK_VERSION)
+    roots, missing_clinical_time = rank_event_roots(
+        packet_resources,
+        source_packet["root_refs"],
+        version=rank_version,
+    )
 
     groups: list[dict[str, Any]] = []
     total = len(roots)
@@ -247,7 +300,7 @@ def compile_event_groups(
         else _selected_ordinal(plan["temporal_policy"], total)
     )
     selected_requirement_states: list[bool] = []
-    for ordinal, (_, seed_ref, event_time, time_source) in enumerate(roots, start=1):
+    for ordinal, (_, _, _, seed_ref, event_time, time_source) in enumerate(roots, start=1):
         citations = [
             citation
             for citation in source_packet["path_citations"]

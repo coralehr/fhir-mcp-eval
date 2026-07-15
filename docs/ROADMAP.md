@@ -250,7 +250,7 @@ step-up model) is identity-first. This is the eval's most defensible unclaimed t
 
 ## 10. A11: graph and timeline retrieval
 
-**Implementation state (2026-07-14):** the original generic path/safety gate remains in
+**Implementation state (2026-07-15):** the original generic path/safety gate remains in
 `a11_path_required_benchmark.py`. The successor `a11-event-group-v1` gate is now implemented separately in
 `a11_event_group_benchmark.py` so the published v1 fixture is not silently reinterpreted. It freezes three
 synthetic mechanism proxies shaped like the planned V/T/E arms: a promoted-recipe-shaped star, flat
@@ -274,7 +274,11 @@ gate reaches all four registered root/path families without model calls. The gov
 source-version result is recorded in `docs/results/A11_GOVERNED_RETRIEVAL_GATE.md`. See
 `docs/results/A11_PRODUCT_PACKET_ADAPTER.md`, `docs/results/A11_CANDIDATE_INVENTORY.md`, and
 `docs/results/A11_SUBSTRATE_AUDIT.md`, plus
-`docs/results/A11_FOUR_FAMILY_PRODUCER_GATE.md`; do not convert the mechanism fixture into an answer benchmark.
+`docs/results/A11_FOUR_FAMILY_PRODUCER_GATE.md`. The 2026-07-15 pre-answer source/depth amendment adds
+`a11-four-family-depth-aware-v1` plus a deterministic builder over the pinned official 115-patient Synthea
+sample archive. It freezes 24 development and 120 efficacy rows across all eight family-depth cells, but the
+parent-side double-build seal and governed authorization/source-version receipt must pass before answers.
+See `docs/results/A11_DATASET_GATE.md`; do not convert the mechanism fixture into an answer benchmark.
 
 **Question:** Do explicit temporal/reference graphs improve long-horizon, multi-call clinical tasks beyond flat packets?
 

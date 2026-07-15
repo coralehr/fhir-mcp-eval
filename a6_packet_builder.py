@@ -105,6 +105,7 @@ REGISTERED_QT_ARMS = (
 # recipe by default for new packet builds.
 PROMOTED_EVIDENCE_RECIPE = "qt4-vocabulary-promoted-v1"
 A11_EVIDENCE_RECIPE = "a11-four-family-v1"
+A11_DEPTH_AWARE_EVIDENCE_RECIPE = "a11-four-family-depth-aware-v1"
 
 
 @dataclass(frozen=True)
@@ -136,6 +137,14 @@ EVIDENCE_RECIPE_CONTRACTS = {
     ),
     A11_EVIDENCE_RECIPE: EvidenceRecipeContract(
         recipe_id=A11_EVIDENCE_RECIPE,
+        features=frozenset({"micro-vocab"}),
+        planner_version=A11_QO_PLANNER_VERSION,
+        status="preregistered_pre_answer_a11",
+        evidence_key="protocol",
+        evidence_path="docs/prereg/A11_EVENT_GROUP.md",
+    ),
+    A11_DEPTH_AWARE_EVIDENCE_RECIPE: EvidenceRecipeContract(
+        recipe_id=A11_DEPTH_AWARE_EVIDENCE_RECIPE,
         features=frozenset({"micro-vocab"}),
         planner_version=A11_QO_PLANNER_VERSION,
         status="preregistered_pre_answer_a11",
@@ -1450,7 +1459,10 @@ def build_packet_record(
             endpoint_reserve="endpoint-reserve" in features,
             clinical_date=(
                 a11_canonical_clinical_date
-                if evidence_recipe == A11_EVIDENCE_RECIPE
+                if evidence_recipe in {
+                    A11_EVIDENCE_RECIPE,
+                    A11_DEPTH_AWARE_EVIDENCE_RECIPE,
+                }
                 else _resource_clinical_date
             ),
         )

@@ -92,6 +92,15 @@ confirmatory efficacy claim.
 
 ## Recommended construction
 
+**2026-07-15 pre-answer update:** steps 1-5 now have an implementation path in
+`a11_dataset_builder.py` and the depth-aware recipe amendment. Rather than
+claiming an unknown upstream Synthea seed, it pins the official 115-patient
+sample-data archive as the raw reproducibility boundary, then binds every ZIP
+entry, the selected JSON content, frozen augmentation seed/profile, and
+compiler dependencies. The parent-side double-build seal is still pending,
+and the governed authorization/source-version receipt remains a separate hard
+blocker. See [`A11_DATASET_GATE.md`](A11_DATASET_GATE.md).
+
 1. Publish a pre-answer amendment that either versions a microbiology
    `DiagnosticReport` query into the product planner/recipe or changes the
    four-family requirement. Re-run the zero-model producer/adapter byte gate;
