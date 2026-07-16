@@ -323,6 +323,9 @@ remaining attribution question.
 
 **A11b acceptance:**
 
+- A pre-generation exact-head-approved Synthea release/JAR/Java/configuration
+  spec, followed by two clean 448-Patient builds whose zero-model generation
+  receipts have byte-identical raw-output and Patient-manifest hashes.
 - Patient-clustered paired correctness with an interval that excludes zero for
   any promotion claim.
 - No increase in unsupported answers, citation failures, or temporal-binding
