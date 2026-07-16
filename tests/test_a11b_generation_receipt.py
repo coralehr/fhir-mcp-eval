@@ -85,7 +85,6 @@ def _fixture(root: Path) -> dict[str, object]:
             "version_probe": probe,
             "version_probe_argv": [
                 "runtime/bin/java",
-                "-XshowSettings:properties",
                 "-version",
             ],
         },

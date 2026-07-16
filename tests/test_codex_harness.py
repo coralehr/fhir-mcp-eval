@@ -9,6 +9,45 @@ import codex_harness
 
 
 class CodexHarnessTests(unittest.TestCase):
+    def test_a11b_discriminated_answer_schema_rejects_invalid_branches(self):
+        schema_path = (
+            Path(codex_harness.__file__).parent / "schemas/a11b_answer.schema.json"
+        )
+        invalid_answers = (
+            {
+                "answer": "Substantive answer",
+                "source_resource_ids": [],
+                "evidence_summary": "Evidence exists.",
+                "insufficiency_reason": None,
+            },
+            {
+                "answer": "Substantive answer",
+                "source_resource_ids": ["opaque-bare-id"],
+                "evidence_summary": "Evidence exists.",
+                "insufficiency_reason": None,
+            },
+            {
+                "answer": "Insufficient evidence.",
+                "source_resource_ids": ["Observation/opaque"],
+                "evidence_summary": "No bounded evidence.",
+                "insufficiency_reason": "Missing event.",
+            },
+            {
+                "answer": "Insufficient evidence.",
+                "source_resource_ids": [],
+                "evidence_summary": "",
+                "insufficiency_reason": "",
+            },
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            answer_path = Path(directory) / "answer.json"
+            for answer in invalid_answers:
+                answer_path.write_text(json.dumps(answer), encoding="utf-8")
+                self.assertFalse(
+                    codex_harness.answer_matches_schema(answer_path, schema_path),
+                    answer,
+                )
+
     def test_public_packet_renderer_is_exact_prompt_payload(self):
         packet = {
             "kind": "bounded_fhir_packet",

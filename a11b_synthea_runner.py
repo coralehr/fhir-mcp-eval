@@ -32,7 +32,7 @@ SYNTHEA_JAR_SHA256 = "ed43c20ad40ba5c3bc724503a5af032715fe3c491620b766148e7c2361
 SYNTHEA_JAR_BYTES = 201_164_144
 JDK_RELEASE = "jdk-21.0.11+10"
 JDK_ARCHIVE_SHA256 = "6ebcf221c9b41507b14c098e93c6ead6440b8d9bd154f8ec666c4c73abbdb201"
-JAVA_VENDOR = "Eclipse Adoptium"
+JAVA_VENDOR = "Temurin"
 JAVA_VERSION = "21.0.11"
 JAVA_EXECUTABLE = "runtime/Contents/Home/bin/java"
 JAVA_PROBE = "runtime/java-version.txt"
@@ -159,7 +159,6 @@ def build_generation_spec(
             "version_probe": probe,
             "version_probe_argv": [
                 JAVA_EXECUTABLE,
-                "-XshowSettings:properties",
                 "-version",
             ],
         },
@@ -362,7 +361,6 @@ def stage_generation(
         probe = subprocess.run(
             [
                 str(staging / JAVA_EXECUTABLE),
-                "-XshowSettings:properties",
                 "-version",
             ],
             cwd=staging,

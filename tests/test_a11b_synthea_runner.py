@@ -29,7 +29,7 @@ class A11bSyntheaRunnerTests(unittest.TestCase):
                 "runtime/Contents/Home/bin/java": b"java",
                 "runtime/Contents/Home/lib/modules": b"modules",
                 "runtime/java-version.txt": (
-                    b"java.vendor = Eclipse Adoptium\njava.version = 21.0.11\n"
+                    b"Temurin-21.0.11+10\nopenjdk version \"21.0.11\"\n"
                 ),
                 "modules/example.json": b'{"name":"example"}\n',
                 "modules/example.csv": b"key,value\na,b\n",

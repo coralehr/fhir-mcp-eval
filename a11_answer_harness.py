@@ -256,6 +256,8 @@ def _prompt_prefix(row: dict[str, Any]) -> bytes:
         "only from the supplied packet.\n"
         "If the data is insufficient, set answer to an explicit insufficiency "
         "statement and explain the missing evidence.\n"
+        "For a substantive answer, source_resource_ids must contain exact "
+        "ResourceType/id references visible in the packet.\n"
         f"Prompt protocol: {PROMPT_PROTOCOL_VERSION}\n\n"
         f"Question ID: {safe['question_id']}\n\n"
         f"Question:\n{safe['question']}\n\n"

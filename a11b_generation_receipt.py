@@ -386,7 +386,6 @@ def _validate_spec(
     probe_argv = _strings(runtime.get("version_probe_argv"), "Java version probe argv")
     if probe_argv != [
         executable["path"],
-        "-XshowSettings:properties",
         "-version",
     ]:
         raise ValueError("Java version probe argv is invalid")
