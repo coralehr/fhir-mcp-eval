@@ -1,0 +1,16 @@
+{
+  "schema_version": "a11b-event-compiler-dev-gold-v1",
+  "cases": [
+    {"case_id": "unique-timezone-normalized-latest", "expected_selected_root": "Observation/root-c", "expected_state": "sufficient"},
+    {"case_id": "normalized-utc-tie", "expected_reason": "temporal_tie", "expected_state": "insufficient"},
+    {"case_id": "date-only-ambiguous", "expected_reason": "precision_ambiguous", "expected_state": "insufficient"},
+    {"case_id": "clinical-time-missing", "expected_reason": "clinical_time_missing", "expected_state": "insufficient"},
+    {"case_id": "conflicting-effective-fields", "expected_reason": "conflicting_effective_fields", "expected_state": "insufficient"},
+    {"case_id": "invalid-effective-period", "expected_reason": "invalid_effective_period", "expected_state": "insufficient"},
+    {"case_id": "timezone-missing", "expected_reason": "timezone_missing", "expected_state": "insufficient"},
+    {"case_id": "unsupported-fractional-precision", "expected_reason": "unsupported_fractional_precision", "expected_state": "insufficient"},
+    {"case_id": "overlapping-effective-periods", "expected_reason": "temporal_overlap", "expected_state": "insufficient"},
+    {"case_id": "open-effective-period", "expected_reason": "open_effective_period", "expected_state": "insufficient"},
+    {"case_id": "selected-path-incomplete", "expected_selected_root": "Observation/root-c", "expected_reason": "selected_path_incomplete", "expected_state": "insufficient"}
+  ]
+}

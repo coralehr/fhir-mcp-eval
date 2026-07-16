@@ -1,0 +1,105 @@
+{
+  "schema_version": "a11b-event-compiler-dev-fixture-v1",
+  "synthetic_non_phi": true,
+  "cases": [
+    {
+      "case_id": "unique-timezone-normalized-latest",
+      "temporal_policy": "latest",
+      "roots": [
+        {"id": "root-a", "effectiveDateTime": "2100-01-01T12:00:00Z", "issued": "2199-01-01T00:00:00Z", "path_complete": true},
+        {"id": "root-b", "effectiveDateTime": "2100-01-01T09:00:00-05:00", "path_complete": true},
+        {"id": "root-c", "effectiveDateTime": "2100-01-01T18:00:00+02:00", "issued": "2000-01-01T00:00:00Z", "path_complete": true}
+      ]
+    },
+    {
+      "case_id": "normalized-utc-tie",
+      "temporal_policy": "first",
+      "roots": [
+        {"id": "root-a", "effectiveDateTime": "2100-01-01T12:00:00Z", "path_complete": true},
+        {"id": "root-b", "effectiveDateTime": "2100-01-01T07:00:00-05:00", "path_complete": true},
+        {"id": "root-c", "effectiveDateTime": "2100-01-01T18:00:00+02:00", "path_complete": true}
+      ]
+    },
+    {
+      "case_id": "date-only-ambiguous",
+      "temporal_policy": "first",
+      "roots": [
+        {"id": "root-a", "effectiveDateTime": "2100-01-01", "path_complete": true},
+        {"id": "root-b", "effectiveDateTime": "2100-01-02T12:00:00Z", "path_complete": true},
+        {"id": "root-c", "effectiveDateTime": "2100-01-03T12:00:00Z", "path_complete": true}
+      ]
+    },
+    {
+      "case_id": "clinical-time-missing",
+      "temporal_policy": "latest",
+      "roots": [
+        {"id": "root-a", "effectiveDateTime": "2100-01-01T12:00:00Z", "path_complete": true},
+        {"id": "root-b", "path_complete": true},
+        {"id": "root-c", "effectiveDateTime": "2100-01-03T12:00:00Z", "path_complete": true}
+      ]
+    },
+    {
+      "case_id": "conflicting-effective-fields",
+      "temporal_policy": "latest",
+      "roots": [
+        {"id": "root-a", "effectiveDateTime": "2100-01-01T12:00:00Z", "path_complete": true},
+        {"id": "root-b", "effectiveDateTime": "2100-01-02T12:00:00Z", "effectivePeriod": {"start": "2100-01-02T11:00:00Z", "end": "2100-01-02T13:00:00Z"}, "path_complete": true},
+        {"id": "root-c", "effectiveDateTime": "2100-01-03T12:00:00Z", "path_complete": true}
+      ]
+    },
+    {
+      "case_id": "invalid-effective-period",
+      "temporal_policy": "latest",
+      "roots": [
+        {"id": "root-a", "effectiveDateTime": "2100-01-01T12:00:00Z", "path_complete": true},
+        {"id": "root-b", "effectivePeriod": {"start": "2100-01-02T13:00:00Z", "end": "2100-01-02T11:00:00Z"}, "path_complete": true},
+        {"id": "root-c", "effectiveDateTime": "2100-01-03T12:00:00Z", "path_complete": true}
+      ]
+    },
+    {
+      "case_id": "timezone-missing",
+      "temporal_policy": "latest",
+      "roots": [
+        {"id": "root-a", "effectiveDateTime": "2100-01-01T12:00:00Z", "path_complete": true},
+        {"id": "root-b", "effectiveDateTime": "2100-01-02T12:00:00", "path_complete": true},
+        {"id": "root-c", "effectiveDateTime": "2100-01-03T12:00:00Z", "path_complete": true}
+      ]
+    },
+    {
+      "case_id": "unsupported-fractional-precision",
+      "temporal_policy": "latest",
+      "roots": [
+        {"id": "root-a", "effectiveDateTime": "2100-01-01T12:00:00.0000001Z", "path_complete": true},
+        {"id": "root-b", "effectiveDateTime": "2100-01-02T12:00:00Z", "path_complete": true},
+        {"id": "root-c", "effectiveDateTime": "2100-01-03T12:00:00Z", "path_complete": true}
+      ]
+    },
+    {
+      "case_id": "overlapping-effective-periods",
+      "temporal_policy": "first",
+      "roots": [
+        {"id": "root-a", "effectivePeriod": {"start": "2100-01-01T00:00:00Z", "end": "2100-01-03T00:00:00Z"}, "path_complete": true},
+        {"id": "root-b", "effectivePeriod": {"start": "2100-01-01T00:00:00Z", "end": "2100-01-04T00:00:00Z"}, "path_complete": true},
+        {"id": "root-c", "effectiveDateTime": "2100-01-05T12:00:00Z", "path_complete": true}
+      ]
+    },
+    {
+      "case_id": "open-effective-period",
+      "temporal_policy": "latest",
+      "roots": [
+        {"id": "root-a", "effectiveDateTime": "2100-01-01T12:00:00Z", "path_complete": true},
+        {"id": "root-b", "effectivePeriod": {"start": "2100-01-02T00:00:00Z"}, "path_complete": true},
+        {"id": "root-c", "effectiveDateTime": "2100-01-03T12:00:00Z", "path_complete": true}
+      ]
+    },
+    {
+      "case_id": "selected-path-incomplete",
+      "temporal_policy": "latest",
+      "roots": [
+        {"id": "root-a", "effectiveDateTime": "2100-01-01T12:00:00Z", "path_complete": true},
+        {"id": "root-b", "effectiveDateTime": "2100-01-02T12:00:00Z", "path_complete": true},
+        {"id": "root-c", "effectiveDateTime": "2100-01-03T12:00:00Z", "path_complete": false}
+      ]
+    }
+  ]
+}

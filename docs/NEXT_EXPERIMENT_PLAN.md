@@ -99,6 +99,12 @@ Implementation status as of 2026-07-15:
 - [ ] Build and independently approve the actual A11b bundle/controller, install
   that localhost-only forced-command surface, and run a fresh zero-model RPC dry
   run; no deployed service owns a live credential yet.
+- [x] Implement and adversarially review the zero-model A11b T0/T1/E1
+  representation compiler on physically separated synthetic development source
+  and audit gold. It rederives the plan from the raw question, replays FHIR
+  pointers, fails closed on temporal ambiguity and unavailable-reference
+  leakage, proves evidence/path equivalence, and bounds all arms together. This
+  is not the untouched corpus or a sealed efficacy run.
 - [ ] Deploy the witness/executor under a principal the run account cannot
   mutate, bind its public key and schedule into a new externally approved
   controller, and mediate the Codex credential before any A11b live call.
@@ -167,6 +173,9 @@ Required properties:
 The builder may use deterministic non-PHI augmentation, but no gold answer,
 answerability label, selected terminal ID, or failure-mode field may enter the
 answer-input materializer.
+
+The development-only compiler contract and its remaining boundary are recorded
+in [A11B_EVENT_COMPILER.md](A11B_EVENT_COMPILER.md).
 
 ## P1: A11b causal isolation
 
