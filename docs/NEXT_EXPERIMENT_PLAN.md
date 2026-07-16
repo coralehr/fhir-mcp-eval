@@ -105,6 +105,13 @@ Implementation status as of 2026-07-15:
   pointers, fails closed on temporal ambiguity and unavailable-reference
   leakage, proves evidence/path equivalence, and bounds all arms together. This
   is not the untouched corpus or a sealed efficacy run.
+- [x] Implement and adversarially review the zero-model prospective power gate.
+  The frozen exact design derives 384 one-question-per-patient efficacy
+  clusters plus 64 development patients under an explicit 30% discordance
+  ceiling. The ceiling is evidence-bound and remains an assumption; the spec
+  and receipt still require independent exact-head approval before efficacy
+  identifiers can be created. See
+  [A11B_POWER_GATE.md](results/A11B_POWER_GATE.md).
 - [ ] Deploy the witness/executor under a principal the run account cannot
   mutate, bind its public key and schedule into a new externally approved
   controller, and mediate the Codex credential before any A11b live call.
@@ -176,6 +183,8 @@ answer-input materializer.
 
 The development-only compiler contract and its remaining boundary are recorded
 in [A11B_EVENT_COMPILER.md](A11B_EVENT_COMPILER.md).
+The prospective power assumptions, exact receipt, and non-claims are recorded
+in [A11B_POWER_GATE.md](results/A11B_POWER_GATE.md).
 
 ## P1: A11b causal isolation
 

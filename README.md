@@ -220,6 +220,12 @@ backlog remains in [ROADMAP.md](docs/ROADMAP.md):
   power calculation, materializer, preregistration, controller seal, install,
   and efficacy calls remain blocked. See
   [docs/A11B_EVENT_COMPILER.md](docs/A11B_EVENT_COMPILER.md).
+- The zero-model A11b prospective power gate is also implemented and
+  adversarially clean. It derives 384 unique efficacy patients plus 64
+  development patients under a receipt-bound 30% discordance ceiling; that
+  ceiling is an explicit assumption, and neither the spec nor receipt is an
+  external approval or corpus seal. See
+  [docs/results/A11B_POWER_GATE.md](docs/results/A11B_POWER_GATE.md).
 - In parallel, benchmark query-time traversal against a materialized Postgres
   edge projection for byte equivalence, policy behavior, correction/rebuild
   semantics, and latency. Do not select a native graph store from accuracy data.

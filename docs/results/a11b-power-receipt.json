@@ -1,0 +1,108 @@
+{
+  "achieved_minimum_power": 0.9031770575128724,
+  "algorithm_receipt": {
+    "algorithm": "exact-conditional-mcnemar-v1",
+    "dependencies": [
+      {
+        "bytes": 18079,
+        "path": "a11_evidence_core.py",
+        "sha256": "48a8c19b366ba94b570bf2d86b29c092a19a74033ae786d03fdb38720f52ef9e"
+      },
+      {
+        "bytes": 16740,
+        "path": "a11b_power_gate.py",
+        "sha256": "404ae5f76c827cce412853aa7411e23d38dad45c3e462eaf16e89d2c89850bcf"
+      }
+    ],
+    "inference": "exact_two_sided_mcnemar",
+    "simulation_replicates": 0
+  },
+  "balance_multiple": 16,
+  "discordance_ceiling": 0.3,
+  "discordance_ceiling_basis": {
+    "observed_discordant_pairs": 1,
+    "observed_pairs": 120,
+    "prior_result_document_sha256": "8f5b4e389bbe3ce530aa1028c311a799077ac4eab2cfc53cef6a771be19dcedc",
+    "prior_result_manifest_sha256": "493f7828f41dd7940f9a639313e045fcdf459c168d134e01869265dbd1d71a9b",
+    "rationale": "pre-efficacy conservative ceiling for an identical-evidence representation contrast"
+  },
+  "efficacy_artifacts_opened": false,
+  "efficacy_questions_per_patient": 1,
+  "limiting_cells": [
+    {
+      "contrast": "primary",
+      "discordance": 0.3
+    },
+    {
+      "contrast": "secondary",
+      "discordance": 0.3
+    }
+  ],
+  "minimum_effect": {
+    "primary": 0.1,
+    "secondary": 0.1
+  },
+  "model_calls": 0,
+  "multiplicity": {
+    "contrast_alpha": {
+      "primary": 0.025,
+      "secondary": 0.025
+    },
+    "familywise_alpha": 0.05,
+    "policy": "fixed-equal-alpha-split"
+  },
+  "patient_assignment": "domain-separated-sha256-order-v1",
+  "predecessor_minimum_power": 0.8888031305353956,
+  "registered_power": {
+    "primary": [
+      {
+        "discordance": 0.1,
+        "power": 0.999999999975
+      },
+      {
+        "discordance": 0.15,
+        "power": 0.998951418292
+      },
+      {
+        "discordance": 0.2,
+        "power": 0.98611133349
+      },
+      {
+        "discordance": 0.25,
+        "power": 0.952696452952
+      },
+      {
+        "discordance": 0.3,
+        "power": 0.903177057513
+      }
+    ],
+    "secondary": [
+      {
+        "discordance": 0.1,
+        "power": 0.999999999975
+      },
+      {
+        "discordance": 0.15,
+        "power": 0.998951418292
+      },
+      {
+        "discordance": 0.2,
+        "power": 0.98611133349
+      },
+      {
+        "discordance": 0.25,
+        "power": 0.952696452952
+      },
+      {
+        "discordance": 0.3,
+        "power": 0.903177057513
+      }
+    ]
+  },
+  "required_development_patients": 64,
+  "required_efficacy_patients": 384,
+  "required_source_patients": 448,
+  "schema_version": "a11b-power-receipt-v1",
+  "spec_sha256": "f2ae52acf43a6abc35c1250438ccf6d7f19401f4b2c82ca8b020632645c5e4a3",
+  "target_power": 0.9
+}
