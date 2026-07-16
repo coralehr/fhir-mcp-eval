@@ -73,6 +73,11 @@ Implementation status as of 2026-07-15:
 - [x] Implement the PHI-free signed monotonic witness core, including anchored
   schedules, attempt caps, hash-chain replay, durable sequence writes, public-
   key verification, and fail-closed crash/idempotency rules.
+- [x] Implement the no-model trusted executor core: caller-proof sealed inputs,
+  atomic journals, executor-derived runtime/schema/outcome/token validation,
+  signed terminal indeterminate closes, and at-most-one-spawn recovery.
+- [ ] Implement and review the production Codex driver and restricted service
+  transport; the current executor has fake drivers only and owns no credential.
 - [ ] Deploy the witness/executor under a principal the run account cannot
   mutate, bind its public key and schedule into a new externally approved
   controller, and mediate the Codex credential before any A11b live call.
