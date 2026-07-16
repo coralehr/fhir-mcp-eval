@@ -19,7 +19,7 @@ licensed only at the scope shown below.
 | QT-4 micro42 mechanism screen | `exploratory_advanced_to_confirmation` | 42 inspected microbiology questions | Vocabulary versus A6a +42.9pp (95% CI +20.5 to +63.6); traversal versus vocabulary +7.1pp (95% CI 0 to +15.9). | Advance vocabulary to untouched confirmation; do not promote traversal from the same-set screen. |
 | QT-4 valid374 holdout | `confirmatory_promoted` | 374 questions: 44 dispatched / 330 byte-identical controls | Vocabulary versus A6a on dispatched questions +34.1pp (95% CI +17.9 to +50.0); traversal versus vocabulary +9.1pp (95% CI 0 to +20.9). | Promote fixed microbiology vocabulary only; traversal remains unresolved. |
 | A11 V/T/E path-required | `confirmatory_supported_not_promotion_gated` | 120 constructed questions / 96 answerable path-required cases | T and E recovered terminal evidence on 96/96 answerable cases versus 0/96 for V. E versus T was +0.83pp with 95% CI 0 to +2.56. | Bounded traversal worked on the constructed multi-hop task. Do not promote event grouping: its single gain is not isolated from the bundled answerability receipt. |
-| A11b causal isolation | `sealed_pending` | 64 development Patients + 384 untouched efficacy Patients; one efficacy question per Patient; 1,152 answer slots | No efficacy result and zero model calls. The primary contrast is E1 minus T1; the secondary contrast is T1 minus T0. | Await exact-head independent approval and sealed execution. No claim can be licensed before finalization and post-result forensics. |
+| A11b causal isolation | `sealed_pending` | 64 development Patients + 384 untouched efficacy Patients; one efficacy question per Patient; 1,152 answer slots | No registered efficacy result and zero official executor calls. A separately labeled unregistered subscription preview was launched only after transport preflight exposed that the sealed oneOf/uniqueItems answer schema is rejected by the current backend. | No claim can be licensed from the preview. A registered or future API run requires a newly sealed backend-compatible transport schema with the full original contract enforced offline. |
 
 ## Claim register
 
@@ -84,7 +84,7 @@ Evidence: `qt4-valid374-v2`, `a11-vte-120`.
 | QT-4 micro42 mechanism screen | 5672506 | 5672506 | Three answer arms; zero failed attempts. Panel usage is not included in this subtotal. |
 | QT-4 valid374 holdout | 60760432 | 63737565 | Panel used 1,820,656 tokens; aborted v1 protocol overhead was 3,546,961 tokens and is reported separately. |
 | A11 V/T/E path-required | 4728676 | 4728676 | Answer arms only; panel added 445,171 tokens. Zero retries. |
-| A11b causal isolation | not retained | not retained | Pending live run. |
+| A11b causal isolation | not retained | not retained | Official run pending. Unregistered preview economics remain separate until completion. |
 
 ## Known evidence gaps
 
@@ -92,4 +92,5 @@ Evidence: `qt4-valid374-v2`, `a11-vte-120`.
 - A6a and QT-1 through QT-3 retained subscription token receipts but not provider-priced monetary cost.
 - The A11 panel used the same model family as the answerer; a cross-family sensitivity judge remains useful.
 - A11b post-result no-cheating claims require raw prompt and event inspection in addition to aggregate finalization receipts.
+- A11b r3 is not runnable as sealed against the current Codex backend: oneOf and uniqueItems are rejected in response-format schemas; an official run requires a new seal.
 - No native graph database, Postgres recursive-query, or natural clinical chart comparison has been run.

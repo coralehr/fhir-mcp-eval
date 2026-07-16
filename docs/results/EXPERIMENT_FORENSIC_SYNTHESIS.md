@@ -35,7 +35,7 @@ generated human view is
 | QT-4 micro42 | Mechanism screen only. | It justified untouched confirmation, not promotion by itself. |
 | QT-4 valid374 | Confirmatory for the 44-question dispatched stratum with 330 byte-identical controls. | Fixed microbiology vocabulary; traversal remained unresolved. |
 | A11 V/T/E | Strong constructed-task mechanism evidence, but E bundled event grouping with other aids. | Bounded path traversal, not an isolated event-grouping gain. |
-| A11b | Sealed and pending. | No claim before exact-head approval, execution, grading, and post-result forensics. |
+| A11b | r3 is sealed but its response schema is rejected by the current backend before inference. An explicitly unregistered preview uses a structural transport schema and enforces the full registered schema offline. | No claim from the preview; an official/API run requires a new compatible seal. |
 
 ## Adversarial findings
 
@@ -78,6 +78,14 @@ accepted slot, rejects tool or non-message events, validates retry histories,
 and reconciles event, executor, and final-result token totals by arm. It emits
 only hashes and counts. Hidden chain-of-thought is neither available nor needed.
 
+Live transport preflight on 2026-07-16 found that r3 cannot execute as sealed:
+the backend rejects root `oneOf` and `uniqueItems` in response-format schemas.
+All rejected probes ended before inference with zero recorded token usage. The
+unregistered preview therefore sends only the supported structural subset to
+the backend and applies the complete original `oneOf`, uniqueness, pattern,
+nonempty-field, and citation constraints offline before accepting an answer.
+This is evidence about transport compatibility, not an A11b protocol result.
+
 After the machine gate passes, a human reviewer should inspect the discordant
 question set plus a stratified sample of agreements for visible-evidence error
 classification. That review is descriptive and cannot override the registered
@@ -101,9 +109,10 @@ artifact was reused rather than rerun.
 
 ## Next decision sequence
 
-1. Keep A11b sealed until the exact-head independent approval lands.
-2. Run A11b once. Do not alter its controller, corpus, prompts, packets,
-   bootstrap, grading, or preregistration.
+1. Treat the running subscription preview as exploratory only; approval cannot
+   retroactively promote it.
+2. Build and seal a backend-compatible official/API transport schema while
+   retaining full offline validation of the registered answer contract.
 3. Export the completed trusted-executor run and execute the prepared
    `raw-audit` before opening gold or interpreting correctness.
 4. Finalize registered grading, then execute `final-report`. Promote E1, promote
