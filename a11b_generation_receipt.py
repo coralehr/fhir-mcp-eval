@@ -243,10 +243,18 @@ def _positive_int(value: object, name: str) -> int:
     return value
 
 
-def _patient_assignment_receipt(
-    patient_receipts: dict[str, dict[str, str]],
+def assign_patient_ids(
+    patient_ids: Iterable[str],
     power_receipt: dict[str, Any],
-) -> dict[str, Any]:
+) -> tuple[list[str], list[str]]:
+    """Return the registered patient-disjoint development/efficacy assignment."""
+
+    patient_ids = list(patient_ids)
+    if any(
+        not isinstance(patient_id, str) or _FHIR_ID.fullmatch(patient_id) is None
+        for patient_id in patient_ids
+    ) or len(patient_ids) != len(set(patient_ids)):
+        raise ValueError("patient assignment identifiers are invalid")
     scheme = power_receipt.get("patient_assignment")
     development_count = power_receipt.get("required_development_patients")
     efficacy_count = power_receipt.get("required_efficacy_patients")
@@ -259,12 +267,12 @@ def _patient_assignment_receipt(
         or development_count <= 0
         or efficacy_count <= 0
         or source_count != development_count + efficacy_count
-        or len(patient_receipts) != source_count
+        or len(patient_ids) != source_count
     ):
         raise ValueError("power-gated patient assignment is invalid")
 
     ordered_ids = sorted(
-        patient_receipts,
+        patient_ids,
         key=lambda patient_id: (
             sha256(_PATIENT_ASSIGNMENT_DOMAIN + patient_id.encode("utf-8")),
             sha256(patient_id.encode("utf-8")),
@@ -272,6 +280,22 @@ def _patient_assignment_receipt(
     )
     development_ids = ordered_ids[:development_count]
     efficacy_ids = ordered_ids[development_count:]
+    if set(development_ids).intersection(efficacy_ids) or set(
+        development_ids
+    ).union(efficacy_ids) != set(patient_ids):
+        raise ValueError("patient assignment is not a complete disjoint partition")
+    return development_ids, efficacy_ids
+
+
+def _patient_assignment_receipt(
+    patient_receipts: dict[str, dict[str, str]],
+    power_receipt: dict[str, Any],
+) -> dict[str, Any]:
+    scheme = power_receipt.get("patient_assignment")
+    development_ids, efficacy_ids = assign_patient_ids(
+        patient_receipts,
+        power_receipt,
+    )
     intersection = set(development_ids).intersection(efficacy_ids)
     all_assigned = set(development_ids).union(efficacy_ids) == set(patient_receipts)
 

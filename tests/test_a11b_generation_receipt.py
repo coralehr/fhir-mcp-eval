@@ -13,6 +13,7 @@ from unittest import mock
 
 from a11_evidence_core import canonical_bytes, sha256
 from a11b_generation_receipt import (
+    assign_patient_ids,
     compile_generation_receipt,
     verify_generation_receipt,
 )
@@ -139,6 +140,17 @@ def _fixture(root: Path) -> dict[str, object]:
 
 
 class A11bGenerationReceiptTests(unittest.TestCase):
+    def test_patient_assignment_is_permutation_invariant_and_disjoint(self) -> None:
+        patient_ids = [f"synthetic-{index:03d}" for index in range(448)]
+        first = assign_patient_ids(patient_ids, POWER_RECEIPT)
+        second = assign_patient_ids(list(reversed(patient_ids)), POWER_RECEIPT)
+
+        self.assertEqual(first, second)
+        self.assertEqual(len(first[0]), 64)
+        self.assertEqual(len(first[1]), 384)
+        self.assertFalse(set(first[0]).intersection(first[1]))
+        self.assertEqual(set(first[0]).union(first[1]), set(patient_ids))
+
     def test_compiles_path_stable_zero_model_receipt_for_exact_powered_population(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
