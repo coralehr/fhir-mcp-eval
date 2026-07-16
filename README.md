@@ -209,8 +209,8 @@ The evidence-driven execution plan is
 backlog remains in [ROADMAP.md](docs/ROADMAP.md):
 
 - Before another answer run, externally anchor the complete controller/native-
-  binary digest, use append-only attempt receipts, retain panel event streams,
-  and build a patient-disjoint harder A11b holdout.
+  binary digest and an independently owned signed monotonic attempt witness,
+  retain panel event streams, and build a patient-disjoint harder A11b holdout.
 - Run A11b as flat traversal versus flat traversal plus selection/completeness
   aids versus event groups with the identical aids and clinical evidence.
 - In parallel, benchmark query-time traversal against a materialized Postgres

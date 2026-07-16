@@ -53,6 +53,9 @@ P2 research              P2 product engineering
 The P0 work consumes no answer-model quota. No A11b answer call should start
 until every P0 gate is green.
 
+The witness threat model, interface, crash rules, and deployment gate are in
+[EXPERIMENT_WITNESS_PROTOCOL.md](EXPERIMENT_WITNESS_PROTOCOL.md).
+
 ## P0: harden the protocol before another answer run
 
 Implementation status as of 2026-07-15:
@@ -67,6 +70,12 @@ Implementation status as of 2026-07-15:
 - [ ] Publish the actual A11b request from a separate host after its controller
   is sealed; the protocol exists, but no A11b anchor exists before the corpus
   and controller do.
+- [x] Implement the PHI-free signed monotonic witness core, including anchored
+  schedules, attempt caps, hash-chain replay, durable sequence writes, public-
+  key verification, and fail-closed crash/idempotency rules.
+- [ ] Deploy the witness/executor under a principal the run account cannot
+  mutate, bind its public key and schedule into a new externally approved
+  controller, and mediate the Codex credential before any A11b live call.
 - [ ] Complete the remaining receipt, panel-stream, stderr, nonce, grading,
   dry-run, and double-build gates below.
 
@@ -75,8 +84,9 @@ Implementation status as of 2026-07-15:
 - Hash the actual native Codex executable in addition to the JavaScript launcher.
 - Externally anchor the controller, preregistration, packets, native executable,
   and grader digests before the first answer call.
-- Use append-only attempt receipts during execution and make completed namespaces
-  read-only immediately, not only after final grading.
+- Reserve and close every model call in an independently owned, signed monotonic
+  witness before another call can begin. Local read-only mirrors are defense in
+  depth only; they are not append-only against their filesystem owner.
 - Retain and hash raw panel event streams under the same no-tool audit as answer
   calls.
 - Freeze a benign-stderr classifier so provider warnings do not cause avoidable
@@ -102,6 +112,8 @@ The controller must fail closed before answering unless:
 - every sealed input rehashes;
 - the external pre-answer digest exists and matches;
 - the native executable and model configuration are bound;
+- the independent witness public key, run ID, exact schedule commitments, and
+  credential-mediating executor are bound and reachable;
 - a complete dry-run receipt can be replayed from a fresh temporary directory;
 - gold-only fields are absent from all model-visible payloads; and
 - two independent no-model builds produce byte-identical packets and manifests.
