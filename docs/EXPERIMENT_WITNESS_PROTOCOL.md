@@ -17,7 +17,7 @@ not call them immutable or append-only.
 
 ## The module and its interface
 
-`experiment_witness.py` is a deep module with three operations:
+`experiment_witness.py` exposes the v2 receipt protocol through three operations:
 
 - `open_call(descriptor, expected_head)` reserves exactly one scheduled call;
 - `close_call(...)` binds its terminal outcome, opaque artifact commitment, and
@@ -80,6 +80,10 @@ The live sequence is:
   incomplete usage, but every unknown component is null and the signed receipt
   identifies its source, so all-attempt economics cannot be misreported as
   complete.
+- `accepted` receipts must derive usage from exactly one `turn.completed` event;
+  `provider_failure` receipts must derive from the registered provider-error
+  class and can never be produced from a completed turn. These relations are
+  enforced again during public-key-only replay.
 - A conflicting close, stale externally retained head, skipped sequence,
   schedule substitution, signature failure, retry-cap breach, or witness outage
   blocks all new model calls.

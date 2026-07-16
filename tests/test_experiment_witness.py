@@ -263,7 +263,7 @@ class ExperimentWitnessTests(unittest.TestCase):
                     "reasoning": None,
                     "total": None,
                     "complete": False,
-                    "source": "unavailable",
+                    "source": "provider.error",
                 },
                 expected_head=witness.receipt_sha256(opened),
             )
@@ -293,10 +293,71 @@ class ExperimentWitnessTests(unittest.TestCase):
                         "reasoning": None,
                         "total": None,
                         "complete": False,
-                        "source": "unavailable",
+                        "source": "provider.error",
                     },
                     expected_head=witness.receipt_sha256(opened_retry),
                 )
+            for outcome, usage, message in (
+                (
+                    "accepted",
+                    {
+                        "input": 1,
+                        "cached": 0,
+                        "output": 1,
+                        "reasoning": 0,
+                        "total": 2,
+                        "complete": True,
+                        "source": "provider.error",
+                    },
+                    "accepted token usage must come from turn.completed",
+                ),
+                (
+                    "provider_failure",
+                    {
+                        "input": 1,
+                        "cached": 0,
+                        "output": 1,
+                        "reasoning": 0,
+                        "total": 2,
+                        "complete": True,
+                        "source": "turn.completed",
+                    },
+                    "provider failure token usage must come from provider.error",
+                ),
+                (
+                    "indeterminate",
+                    {
+                        "input": 0,
+                        "cached": 0,
+                        "output": 0,
+                        "reasoning": 0,
+                        "total": 0,
+                        "complete": False,
+                        "source": "partial.capture",
+                    },
+                    "incomplete token usage must contain an unknown value",
+                ),
+            ):
+                with self.subTest(outcome=outcome, message=message):
+                    with self.assertRaisesRegex(
+                        witness.WitnessProtocolError, message
+                    ):
+                        ledger.close_call(
+                            opened_receipt_sha256=witness.receipt_sha256(
+                                opened_retry
+                            ),
+                            outcome=outcome,
+                            artifact_root_commitment=digest(
+                                f"invalid-{outcome}-artifacts"
+                            ),
+                            token_usage=usage,
+                            expected_head=witness.receipt_sha256(opened_retry),
+                        )
+
+            self.assertEqual(witness.SCHEMA_VERSION, "experiment-witness-v2")
+            self.assertEqual(
+                witness.RUN_SCHEMA_VERSION, "experiment-witness-run-v2"
+            )
 
     def test_open_and_close_are_idempotent_after_lost_ack(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -554,7 +615,7 @@ class ExperimentWitnessTests(unittest.TestCase):
                         "reasoning": None,
                         "total": None,
                         "complete": False,
-                        "source": "unavailable",
+                        "source": "provider.error",
                     },
                     expected_head=witness.receipt_sha256(opened),
                 )

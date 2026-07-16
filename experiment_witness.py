@@ -29,10 +29,10 @@ from typing import Any, Callable, Literal, Mapping, Sequence
 
 
 GENESIS_HEAD = "0" * 64
-SCHEMA_VERSION = "experiment-witness-v1"
-RUN_SCHEMA_VERSION = "experiment-witness-run-v1"
-SIGNATURE_NAMESPACE = "coralehr-experiment-witness-v1"
-SIGNATURE_DOMAIN = b"coralehr-experiment-witness-v1\x00"
+SCHEMA_VERSION = "experiment-witness-v2"
+RUN_SCHEMA_VERSION = "experiment-witness-run-v2"
+SIGNATURE_NAMESPACE = "coralehr-experiment-witness-v2"
+SIGNATURE_DOMAIN = b"coralehr-experiment-witness-v2\x00"
 PHASES = ("answer", "panel")
 OUTCOMES = ("accepted", "provider_failure", "contaminated", "indeterminate")
 TOKEN_VALUE_KEYS = ("input", "cached", "output", "reasoning", "total")
@@ -198,6 +198,10 @@ def _validate_token_usage(value: Mapping[str, Any]) -> dict[str, Any]:
     usage["source"] = source
     if complete and any(usage[key] is None for key in TOKEN_VALUE_KEYS):
         raise WitnessProtocolError("complete token usage has missing values")
+    if not complete and all(usage[key] is not None for key in TOKEN_VALUE_KEYS):
+        raise WitnessProtocolError(
+            "incomplete token usage must contain an unknown value"
+        )
     if complete and source not in {"turn.completed", "provider.error"}:
         raise WitnessProtocolError("complete token usage source is invalid")
     if not complete and source == "turn.completed":
@@ -226,6 +230,24 @@ def _validate_token_usage(value: Mapping[str, Any]) -> dict[str, Any]:
     ):
         raise WitnessProtocolError("total token usage does not reconcile")
     return usage
+
+
+def _validate_outcome_token_usage(outcome: str, usage: Mapping[str, Any]) -> None:
+    if outcome == "accepted":
+        if usage["complete"] is not True:
+            raise WitnessProtocolError("accepted token usage must be complete")
+        if usage["source"] != "turn.completed":
+            raise WitnessProtocolError(
+                "accepted token usage must come from turn.completed"
+            )
+    elif outcome == "provider_failure" and usage["source"] != "provider.error":
+        raise WitnessProtocolError(
+            "provider failure token usage must come from provider.error"
+        )
+    elif outcome == "indeterminate" and usage["source"] == "turn.completed":
+        raise WitnessProtocolError(
+            "indeterminate token usage cannot come from turn.completed"
+        )
 
 
 class SshEd25519Verifier:
@@ -529,10 +551,12 @@ class WitnessChainVerifier:
                 usage = _validate_token_usage(body.get("token_usage"))
             except WitnessProtocolError as exc:
                 raise WitnessIntegrityError("witness close economics changed") from exc
-            if outcome == "accepted" and usage["complete"] is not True:
+            try:
+                _validate_outcome_token_usage(outcome, usage)
+            except WitnessProtocolError as exc:
                 raise WitnessIntegrityError(
-                    "accepted witness call has incomplete token usage"
-                )
+                    "witness outcome and token usage disagree"
+                ) from exc
             state.model_calls_closed += 1
             state.open_receipt = None
             item = self.schedule[state.schedule_position]
@@ -1030,8 +1054,7 @@ class WitnessLedger:
             raise WitnessProtocolError("witness call outcome is invalid")
         _require_hex64(artifact_root_commitment, "artifact root commitment")
         usage = _validate_token_usage(token_usage)
-        if outcome == "accepted" and usage["complete"] is not True:
-            raise WitnessProtocolError("accepted token usage must be complete")
+        _validate_outcome_token_usage(outcome, usage)
         _require_hex64(expected_head, "expected witness head")
         with self._locked() as lock:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
