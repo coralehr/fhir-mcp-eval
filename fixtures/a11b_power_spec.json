@@ -1,0 +1,40 @@
+{
+  "algorithm": "exact-conditional-mcnemar-v1",
+  "balance_multiple": 16,
+  "contrast_alpha": {
+    "primary": 0.025,
+    "secondary": 0.025
+  },
+  "development_patients": 64,
+  "discordance_ceiling": 0.3,
+  "discordance_ceiling_basis": {
+    "observed_discordant_pairs": 1,
+    "observed_pairs": 120,
+    "prior_result_document_sha256": "8f5b4e389bbe3ce530aa1028c311a799077ac4eab2cfc53cef6a771be19dcedc",
+    "prior_result_manifest_sha256": "493f7828f41dd7940f9a639313e045fcdf459c168d134e01869265dbd1d71a9b",
+    "rationale": "pre-efficacy conservative ceiling for an identical-evidence representation contrast"
+  },
+  "discordance_grid": [
+    0.1,
+    0.15,
+    0.2,
+    0.25,
+    0.3
+  ],
+  "familywise_alpha": 0.05,
+  "max_efficacy_patients": 1024,
+  "minimum_effect": {
+    "primary": 0.1,
+    "secondary": 0.1
+  },
+  "model_calls": 0,
+  "multiplicity_policy": "fixed-equal-alpha-split",
+  "patient_cluster_policy": {
+    "efficacy_questions_per_patient": 1,
+    "patient_assignment": "domain-separated-sha256-order-v1"
+  },
+  "primary_contrast": "e1_event_groups_with_identical_aids-minus-t1_flat_traversal_with_aids",
+  "schema_version": "a11b-power-spec-v1",
+  "secondary_contrast": "t1_flat_traversal_with_aids-minus-t0_flat_traversal",
+  "target_power": 0.9
+}
