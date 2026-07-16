@@ -1,12 +1,27 @@
 # Trusted experiment executor
 
 Status: no-model protocol core, production Codex driver, fixed-bundle loader,
-restricted one-request transport, isolated root-owned import bootstrap, and A11
-v4 service-core external-anchor schema implemented.
+restricted one-request transport, isolated root-owned import bootstrap, A11 v4
+service-core external-anchor schema, and a deterministic installation-package
+compiler implemented.
 The driver is independently adversarially reviewed. The external-approval cache
 is checker-signed with a verification key pinned in immutable service code.
-There is no installed service bundle, forced-command transport, externally
-approved A11b controller, or live answer/panel call yet.
+The package compiler emits the exact launcher, restricted key entry, sshd
+drop-in, root-owned source payloads, standalone-Python receipt, and canonical
+manifest for independent review. It does not create an account, install files,
+edit or reload sshd, provision credentials, or invoke a model. There is no
+installed service bundle, forced-command transport, externally approved A11b
+controller, or live answer/panel call yet.
+
+The standalone-Python receipt is `experiment-python-tree-v1`: entries are
+sorted relative paths with exact bytes, SHA-256, single-link status, root:wheel
+ownership, immutable `0444`/`0555` mode, file format, and sorted Mach-O
+dependencies. Its tree digest is SHA-256 over canonical newline-terminated JSON
+containing the schema, fixed production root, and entries. The executable and
+Python 3.14 patch version are exact; dependencies must resolve inside that
+closed tree or the macOS `/usr/lib` and `/System/Library` roots. The package
+compiler validates this receipt; a separate root-side scanner must generate it
+from the actual installed tree before deployment can be approved.
 
 ## Public trust boundary
 
