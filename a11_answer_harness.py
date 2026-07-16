@@ -44,6 +44,9 @@ _FORBIDDEN_PAYLOAD_FIELDS = frozenset(
         # Gold, labels, and audit-only expected values.
         "answer",
         "answerable",
+        "audit",
+        "checker",
+        "expected",
         "expected_answer",
         "expected_event_root",
         "expected_evidence",
@@ -53,6 +56,7 @@ _FORBIDDEN_PAYLOAD_FIELDS = frozenset(
         "gold",
         "gold_answer",
         "label",
+        "governed",
         "nonselected_reference_answer",
         "nonselected_terminal_resource_ref",
         "reference_answer",
@@ -60,6 +64,7 @@ _FORBIDDEN_PAYLOAD_FIELDS = frozenset(
         "source_resource_ids",
         "terminal_resource_ref",
         "true_answer",
+        "true",
         "true_fhir_ids",
         # Authorization, governance, and source identity.
         "allowed_purposes",
@@ -132,6 +137,21 @@ _FORBIDDEN_ARM_VALUES = frozenset(
         "a11-v",
         "a11-t",
         "a11-e",
+        "t0",
+        "t1",
+        "e1",
+        "arm-t0",
+        "arm-t1",
+        "arm-e1",
+        "t0-arm",
+        "t1-arm",
+        "e1-arm",
+        "a11b-t0",
+        "a11b-t1",
+        "a11b-e1",
+        "t0_flat_traversal",
+        "t1_flat_traversal_with_aids",
+        "e1_event_groups_with_identical_aids",
     }
 )
 
@@ -181,7 +201,16 @@ def _reject_payload_leakage(value: Any, *, path: str = "payload") -> None:
             key = _normalized_field(raw_key)
             if (
                 key in _FORBIDDEN_PAYLOAD_FIELDS
-                or key.startswith(("gold_", "expected_", "true_"))
+                or key.startswith(
+                    (
+                        "audit_",
+                        "checker_",
+                        "gold_",
+                        "expected_",
+                        "governed_",
+                        "true_",
+                    )
+                )
                 or key.endswith(("_arm", "_arm_label"))
             ):
                 raise ValueError(f"forbidden model payload field at {path}.{raw_key}")

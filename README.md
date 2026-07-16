@@ -215,6 +215,11 @@ backlog remains in [ROADMAP.md](docs/ROADMAP.md):
   executor account, sshd policy, credential, or live service is installed.
 - Run A11b as flat traversal versus flat traversal plus selection/completeness
   aids versus event groups with the identical aids and clinical evidence.
+- The zero-model A11b representation compiler is implemented and adversarially
+  clean on separated synthetic development source/gold; the untouched corpus,
+  power calculation, materializer, preregistration, controller seal, install,
+  and efficacy calls remain blocked. See
+  [docs/A11B_EVENT_COMPILER.md](docs/A11B_EVENT_COMPILER.md).
 - In parallel, benchmark query-time traversal against a materialized Postgres
   edge projection for byte equivalence, policy behavior, correction/rebuild
   semantics, and latency. Do not select a native graph store from accuracy data.

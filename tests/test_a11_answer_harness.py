@@ -92,6 +92,14 @@ class A11AnswerHarnessTests(unittest.TestCase):
             "arm_id",
             "arm_name",
             "treatment_label",
+            "audit_path_citations",
+            "auditPathCitations",
+            "audit",
+            "checker",
+            "expected",
+            "gold",
+            "governed",
+            "true",
         )
         for field in forbidden_fields:
             payload = json.dumps({"resources": [{"nested": {field: "secret"}}]})
@@ -108,7 +116,20 @@ class A11AnswerHarnessTests(unittest.TestCase):
                     harness.build_verified_prompt(row, record)
 
     def test_rejects_arm_labels_even_when_hidden_under_a_generic_key(self):
-        for arm_label in ("V", "T", "E", "a11-v", "arm-t", "e-arm"):
+        for arm_label in (
+            "V",
+            "T",
+            "E",
+            "a11-v",
+            "arm-t",
+            "e-arm",
+            "T0",
+            "T1",
+            "E1",
+            "t0_flat_traversal",
+            "t1_flat_traversal_with_aids",
+            "e1_event_groups_with_identical_aids",
+        ):
             payload = json.dumps({"resources": [], "metadata": {"name": arm_label}})
             with self.subTest(arm_label=arm_label):
                 with self.assertRaisesRegex(ValueError, "arm label"):
