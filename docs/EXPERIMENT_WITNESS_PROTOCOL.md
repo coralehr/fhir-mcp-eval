@@ -1,6 +1,8 @@
 # Experiment attempt witness
 
-Status: protocol core implemented; no live answer or panel runner uses it yet.
+Status: witness and fake-driver executor cores implemented; no live answer or
+panel runner uses them yet. See
+[EXPERIMENT_EXECUTOR_PROTOCOL.md](EXPERIMENT_EXECUTOR_PROTOCOL.md).
 
 ## Why this exists
 

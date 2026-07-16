@@ -483,6 +483,8 @@ run_matrix.py                # ablation runner: staircase + cap-factorial + $-bu
 score_taxonomy.py            # answerable-set accuracy + by-cause taxonomy + paired McNemar/bootstrap
 robustness_analysis.py       # judge-free re-score + MDE power sim + Holm-Bonferroni
 eval_budget.py               # token-cost ledger with a hard cap
+experiment_witness.py        # signed monotonic call inventory
+experiment_executor.py       # sealed, crash-conservative trusted call executor
 config.yml.example           # template for the upstream GCP agents (cp -> config.yml; gitignored)
 agent/mcp_agent.py           # agent that retrieves via an MCP server
 agent/ai_agent.py            # agent that routes via Medplum's in-FHIR $ai op

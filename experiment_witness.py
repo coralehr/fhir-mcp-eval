@@ -979,6 +979,14 @@ class WitnessLedger:
             "model_calls_closed": state.model_calls_closed,
         }
 
+    def receipts(self) -> tuple[dict[str, Any], ...]:
+        """Return the fully replay-verified signed chain for external retention."""
+
+        with self._locked() as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            state = self._replay()
+        return tuple(copy.deepcopy(state.receipts))
+
     def open_call(
         self, descriptor: CallDescriptor, *, expected_head: str
     ) -> dict[str, Any]:
