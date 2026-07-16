@@ -17,9 +17,10 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 import codex_harness
+import experiment_anchor
 import panel_grade
 import run_lock
 from run_lock import AlreadyRunning, LOCK_BUSY_EXIT, acquire_single_instance
@@ -178,6 +179,33 @@ def _read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, child in pairs:
+        if key in value:
+            raise ValueError(f"duplicate controller JSON key: {key}")
+        value[key] = child
+    return value
+
+
+def _reject_json_constant(constant: str) -> None:
+    raise ValueError(f"non-finite controller JSON number: {constant}")
+
+
+def _load_controller_json(payload: bytes) -> dict[str, Any]:
+    try:
+        value = json.loads(
+            payload.decode("utf-8"),
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("controller manifest is not valid JSON") from exc
+    if not isinstance(value, dict):
+        raise ValueError("controller manifest must be an object")
+    return value
+
+
 def _is_sha256(value: Any) -> bool:
     return (
         isinstance(value, str)
@@ -186,16 +214,17 @@ def _is_sha256(value: Any) -> bool:
     )
 
 
-def load_controller_codex_identity(
+def _load_controller_codex_context(
     controller_manifest: Path,
     *,
     expected_controller_sha256: str,
-) -> tuple[str, CodexIdentity, Path]:
+) -> tuple[str, dict[str, Any], CodexIdentity, Path]:
     """Bind the panel to the exact answer-controller Codex runtime."""
 
     if not _is_sha256(expected_controller_sha256):
         raise ValueError("expected controller SHA-256 must be lowercase hex")
-    actual_controller_sha256 = sha256_file(controller_manifest)
+    controller_bytes = controller_manifest.read_bytes()
+    actual_controller_sha256 = sha256_bytes(controller_bytes)
     if actual_controller_sha256 != expected_controller_sha256:
         raise ValueError("controller manifest does not match expected SHA-256")
     sidecar = controller_manifest.with_suffix(".sha256")
@@ -204,13 +233,15 @@ def load_controller_codex_identity(
         or sidecar.read_text(encoding="ascii") != actual_controller_sha256 + "\n"
     ):
         raise ValueError("controller manifest sidecar changed")
-    controller = _read_json(controller_manifest)
-    if not isinstance(controller, dict):
-        raise ValueError("controller manifest must be an object")
+    controller = _load_controller_json(controller_bytes)
     if controller.get("kind") != "a11_interleaved_controller_manifest":
         raise ValueError("controller manifest kind is not registered for A11")
     controller_version = controller.get("schema_version")
-    if controller_version not in {"a11-controller-v1", "a11-controller-v2"}:
+    if controller_version not in {
+        "a11-controller-v1",
+        "a11-controller-v2",
+        "a11-controller-v3",
+    }:
         raise ValueError("controller manifest schema is not supported A11")
     execution = controller.get("execution")
     if not isinstance(execution, dict):
@@ -226,7 +257,7 @@ def load_controller_codex_identity(
     if controller_version == "a11-controller-v1":
         if set(raw_codex) != {"path", "version", "sha256"}:
             raise ValueError("legacy controller has no exact Codex identity")
-    elif controller_version == "a11-controller-v2":
+    elif controller_version in {"a11-controller-v2", "a11-controller-v3"}:
         if set(raw_codex) != {"path", "version", "sha256", "bytes", "native"}:
             raise ValueError("controller has no exact Codex identity")
         if not isinstance(raw_codex.get("native"), dict) or set(
@@ -270,6 +301,10 @@ def load_controller_codex_identity(
         "codex_harness": Path(codex_harness.__file__).resolve(),
         "run_lock": Path(run_lock.__file__).resolve(),
     }
+    if controller_version == "a11-controller-v3":
+        loaded_runtime["experiment_anchor"] = Path(
+            experiment_anchor.__file__
+        ).resolve()
     for name, loaded_path in loaded_runtime.items():
         entry = snapshots.get(name) if isinstance(snapshots, dict) else None
         if (
@@ -290,22 +325,40 @@ def load_controller_codex_identity(
     panel_output = Path(raw_panel_output)
     if not panel_output.is_absolute() or panel_output.resolve() != panel_output:
         raise ValueError("controller panel output must be absolute and resolved")
-    return actual_controller_sha256, CodexIdentity(
-        path=path,
-        version=version,
-        sha256=native_sha256,
-    ), panel_output
+    return (
+        actual_controller_sha256,
+        controller,
+        CodexIdentity(
+            path=path,
+            version=version,
+            sha256=native_sha256,
+        ),
+        panel_output,
+    )
+
+
+def load_controller_codex_identity(
+    controller_manifest: Path,
+    *,
+    expected_controller_sha256: str,
+) -> tuple[str, CodexIdentity, Path]:
+    """Compatibility wrapper for callers that need only the sealed identity."""
+
+    digest, _controller, codex, panel_output = _load_controller_codex_context(
+        controller_manifest,
+        expected_controller_sha256=expected_controller_sha256,
+    )
+    return digest, codex, panel_output
 
 
 def validate_registered_grading_queue(
     *,
-    controller_manifest: Path,
+    controller: Mapping[str, Any],
     controller_manifest_sha256: str,
     queue_path: Path,
-) -> None:
+) -> bytes:
     """Prove the queue is the immutable output of registered A11 grading."""
 
-    controller = _read_json(controller_manifest)
     outputs = controller.get("outputs")
     raw_grading_output = outputs.get("grading") if isinstance(outputs, dict) else None
     if not isinstance(raw_grading_output, str) or not raw_grading_output:
@@ -333,14 +386,20 @@ def validate_registered_grading_queue(
         raise PanelProtocolError("A11 grading manifest binding changed")
     artifacts = grading_manifest.get("artifacts")
     queue_receipt = artifacts.get("panel_queue.jsonl") if isinstance(artifacts, dict) else None
+    try:
+        queue_bytes = queue_path.read_bytes()
+    except OSError as exc:
+        raise PanelProtocolError("A11 grading queue binding changed") from exc
     if (
         not isinstance(queue_receipt, dict)
         or set(queue_receipt) != {"sha256", "bytes"}
+        or queue_path.is_symlink()
         or not queue_path.is_file()
-        or queue_receipt.get("sha256") != sha256_file(queue_path)
-        or queue_receipt.get("bytes") != queue_path.stat().st_size
+        or queue_receipt.get("sha256") != sha256_bytes(queue_bytes)
+        or queue_receipt.get("bytes") != len(queue_bytes)
     ):
         raise PanelProtocolError("A11 grading queue binding changed")
+    return queue_bytes
 
 
 def panel_lock_path(out_dir: Path) -> Path:
@@ -364,8 +423,7 @@ def codex_version(path: Path) -> str:
     return version
 
 
-def load_a11_queue(path: Path) -> tuple[bytes, list[dict[str, Any]]]:
-    raw = path.read_bytes()
+def _parse_a11_queue(raw: bytes) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for line_number, line in enumerate(raw.splitlines(), start=1):
         if not line.strip():
@@ -434,7 +492,12 @@ def load_a11_queue(path: Path) -> tuple[bytes, list[dict[str, Any]]]:
     hosts = [(row["arm"], row["question_id"]) for row in rows]
     if len(hosts) != len(set(hosts)):
         raise ValueError("A11 panel queue contains duplicate arm/question items")
-    return raw, rows
+    return rows
+
+
+def load_a11_queue(path: Path) -> tuple[bytes, list[dict[str, Any]]]:
+    raw = path.read_bytes()
+    return raw, _parse_a11_queue(raw)
 
 
 def build_judge_config(
@@ -1171,19 +1234,24 @@ def audit_completed_panel(
 ) -> dict[str, Any]:
     """Replay every sealed attempt and derive the exact majority result."""
 
-    controller_sha256, codex, registered_panel_output = load_controller_codex_identity(
+    (
+        controller_sha256,
+        controller,
+        codex,
+        registered_panel_output,
+    ) = _load_controller_codex_context(
         controller_manifest.resolve(),
         expected_controller_sha256=expected_controller_sha256,
     )
     out_dir = out_dir.resolve()
     if out_dir != registered_panel_output:
         raise ValueError("out_dir differs from the registered panel output")
-    validate_registered_grading_queue(
-        controller_manifest=controller_manifest.resolve(),
+    queue_bytes = validate_registered_grading_queue(
+        controller=controller,
         controller_manifest_sha256=controller_sha256,
         queue_path=queue_path,
     )
-    queue_bytes, queue = load_a11_queue(queue_path)
+    queue = _parse_a11_queue(queue_bytes)
     judge_config = build_judge_config(
         controller_manifest_sha256=controller_sha256,
         codex=codex,
@@ -1234,22 +1302,42 @@ def run_panel(
     expected_controller_sha256: str,
     out_dir: Path,
     live: bool,
+    anchor_url: str | None = None,
     run_process: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> dict[str, Any]:
     controller_manifest = controller_manifest.resolve()
-    controller_sha256, codex, registered_panel_output = load_controller_codex_identity(
+    if live:
+        if not anchor_url:
+            raise PanelProtocolError(
+                "live A11 panel requires a commit-pinned external anchor"
+            )
+    (
+        controller_sha256,
+        controller,
+        codex,
+        registered_panel_output,
+    ) = _load_controller_codex_context(
         controller_manifest,
         expected_controller_sha256=expected_controller_sha256,
     )
+    if live:
+        experiment_anchor.verify_and_record_external_anchor(
+            controller_manifest,
+            anchor_url,
+            controller_manifest.with_name("external-anchor-verification.json"),
+            expected_controller_sha256=controller_sha256,
+        )
+        if sha256_file(controller_manifest) != controller_sha256:
+            raise ValueError("controller manifest changed after external anchor")
     out_dir = out_dir.resolve()
     if out_dir != registered_panel_output:
         raise ValueError("out_dir differs from the registered panel output")
-    validate_registered_grading_queue(
-        controller_manifest=controller_manifest,
+    queue_bytes = validate_registered_grading_queue(
+        controller=controller,
         controller_manifest_sha256=controller_sha256,
         queue_path=queue_path,
     )
-    queue_bytes, queue = load_a11_queue(queue_path)
+    queue = _parse_a11_queue(queue_bytes)
     judge_config = build_judge_config(
         controller_manifest_sha256=controller_sha256,
         codex=codex,
@@ -1363,6 +1451,7 @@ def main() -> int:
     parser.add_argument("--controller-manifest", type=Path, required=True)
     parser.add_argument("--expected-controller-sha256", required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
+    parser.add_argument("--anchor-url")
     parser.add_argument("--live", action="store_true")
     parser.add_argument("--audit", action="store_true")
     args = parser.parse_args()
@@ -1383,6 +1472,7 @@ def main() -> int:
                 expected_controller_sha256=args.expected_controller_sha256,
                 out_dir=args.out_dir,
                 live=args.live,
+                anchor_url=args.anchor_url,
             )
     except AlreadyRunning as exc:
         print(f"ALREADY_RUNNING: {exc}")

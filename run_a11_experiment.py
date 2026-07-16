@@ -41,7 +41,37 @@ _BOOTSTRAP_SNAPSHOTS = {
     "a11_grading": "a11_grading.py",
     "panel_grade": "panel_grade.py",
     "paired_stats": "paired_stats.py",
+    "experiment_anchor": "experiment_anchor.py",
 }
+_LEGACY_BOOTSTRAP_SNAPSHOTS = {
+    name: filename
+    for name, filename in _BOOTSTRAP_SNAPSHOTS.items()
+    if name != "experiment_anchor"
+}
+
+
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, child in pairs:
+        if key in value:
+            raise ValueError(f"duplicate JSON key: {key}")
+        value[key] = child
+    return value
+
+
+def _reject_constant(value: str) -> None:
+    raise ValueError(f"non-finite JSON number: {value}")
+
+
+def _loads(data: bytes, *, label: str) -> Any:
+    try:
+        return json.loads(
+            data.decode("utf-8"),
+            object_pairs_hook=_unique_object,
+            parse_constant=_reject_constant,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid JSON in {label}") from exc
 
 
 def _early_sha256(path: Path) -> str:
@@ -67,10 +97,11 @@ def _early_controller() -> tuple[Path, dict[str, Any], str]:
         "--controller-manifest", "runs/a11-vte-controller/manifest.json"
     ).resolve()
     try:
-        manifest_sha256 = _early_sha256(path)
+        manifest_bytes = path.read_bytes()
+        manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
         sidecar = path.with_suffix(".sha256").read_text(encoding="ascii")
-        manifest = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        manifest = _loads(manifest_bytes, label=str(path))
+    except (OSError, ValueError) as exc:
         raise SystemExit("A11 controller is not a valid immutable manifest") from exc
     if sidecar != manifest_sha256 + "\n":
         raise SystemExit("A11 controller manifest sidecar changed")
@@ -78,13 +109,24 @@ def _early_controller() -> tuple[Path, dict[str, Any], str]:
         not isinstance(manifest, dict)
         or manifest.get("kind") != "a11_interleaved_controller_manifest"
         or manifest.get("schema_version")
-        not in {"a11-controller-v1", "a11-controller-v2"}
+        not in {"a11-controller-v1", "a11-controller-v2", "a11-controller-v3"}
     ):
         raise SystemExit("A11 controller manifest contract changed")
     return path, manifest, manifest_sha256
 
 
-def _verify_bootstrap(stage_dir: Path, *, controller_sha256: str) -> Path:
+def _bootstrap_snapshots(manifest: Mapping[str, Any]) -> Mapping[str, str]:
+    if manifest.get("schema_version") == "a11-controller-v3":
+        return _BOOTSTRAP_SNAPSHOTS
+    return _LEGACY_BOOTSTRAP_SNAPSHOTS
+
+
+def _verify_bootstrap(
+    stage_dir: Path,
+    *,
+    controller_sha256: str,
+    bootstrap_snapshots: Mapping[str, str],
+) -> Path:
     manifest_path = stage_dir / "bootstrap-manifest.json"
     try:
         receipt = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -94,7 +136,7 @@ def _verify_bootstrap(stage_dir: Path, *, controller_sha256: str) -> Path:
     if (
         receipt.get("controller_manifest_sha256") != controller_sha256
         or not isinstance(expected_files, dict)
-        or set(expected_files) != set(_BOOTSTRAP_SNAPSHOTS.values())
+        or set(expected_files) != set(bootstrap_snapshots.values())
         or stat.S_IMODE(stage_dir.stat().st_mode) & 0o222
     ):
         raise SystemExit("A11 immutable bootstrap identity changed")
@@ -116,8 +158,13 @@ def _stage_bootstrap(
     controller_path: Path, manifest: dict[str, Any], controller_sha256: str
 ) -> Path:
     stage_dir = controller_path.parent / "bootstrap"
+    bootstrap_snapshots = _bootstrap_snapshots(manifest)
     if stage_dir.exists():
-        return _verify_bootstrap(stage_dir, controller_sha256=controller_sha256)
+        return _verify_bootstrap(
+            stage_dir,
+            controller_sha256=controller_sha256,
+            bootstrap_snapshots=bootstrap_snapshots,
+        )
     snapshots = manifest.get("snapshots")
     if not isinstance(snapshots, dict):
         raise SystemExit("A11 controller has no immutable snapshots")
@@ -126,7 +173,7 @@ def _stage_bootstrap(
     renamed = False
     files: dict[str, str] = {}
     try:
-        for snapshot_name, filename in _BOOTSTRAP_SNAPSHOTS.items():
+        for snapshot_name, filename in bootstrap_snapshots.items():
             entry = snapshots.get(snapshot_name)
             if not isinstance(entry, dict):
                 raise SystemExit(f"A11 bootstrap snapshot is missing: {snapshot_name}")
@@ -170,7 +217,11 @@ def _stage_bootstrap(
                 path.chmod(0o644)
             shutil.rmtree(cleanup, ignore_errors=True)
         raise
-    return _verify_bootstrap(stage_dir, controller_sha256=controller_sha256)
+    return _verify_bootstrap(
+        stage_dir,
+        controller_sha256=controller_sha256,
+        bootstrap_snapshots=bootstrap_snapshots,
+    )
 
 
 def _exec_immutable_bootstrap(*, lock_required: bool) -> None:
@@ -212,10 +263,11 @@ def _bootstrap_before_project_imports() -> None:
     if __name__ != "__main__" or "--seal" in sys.argv:
         return
     if os.environ.get(_BOOTSTRAPPED_ENV) == "1":
-        controller_path, _, controller_sha256 = _early_controller()
+        controller_path, manifest, controller_sha256 = _early_controller()
         _verify_bootstrap(
             controller_path.parent / "bootstrap",
             controller_sha256=controller_sha256,
+            bootstrap_snapshots=_bootstrap_snapshots(manifest),
         )
         return
     recognized = {"--live", "--status", "--prepare-grading", "--finalize"} & set(sys.argv)
@@ -229,13 +281,16 @@ _bootstrap_before_project_imports()
 
 import a11_answer_harness  # noqa: E402 - immutable bootstrap runs first
 import codex_harness  # noqa: E402 - immutable bootstrap runs first
+import experiment_anchor  # noqa: E402 - immutable bootstrap runs first
 import run_qt4_experiment as transport  # noqa: E402
 
 
-CONTROLLER_VERSION = "a11-controller-v2"
-LEGACY_CONTROLLER_VERSION = "a11-controller-v1"
+CONTROLLER_VERSION = "a11-controller-v3"
+LEGACY_CONTROLLER_VERSIONS = frozenset(
+    {"a11-controller-v1", "a11-controller-v2"}
+)
 SUPPORTED_CONTROLLER_VERSIONS = frozenset(
-    {LEGACY_CONTROLLER_VERSION, CONTROLLER_VERSION}
+    {*LEGACY_CONTROLLER_VERSIONS, CONTROLLER_VERSION}
 )
 EXPERIMENT_PROFILE = "a11-vte-efficacy-120-v1"
 REGISTERED_MODEL = "gpt-5.6-sol"
@@ -298,30 +353,6 @@ def _pretty_bytes(value: Any) -> bytes:
     ).encode("utf-8")
 
 
-def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    value: dict[str, Any] = {}
-    for key, child in pairs:
-        if key in value:
-            raise ValueError(f"duplicate JSON key: {key}")
-        value[key] = child
-    return value
-
-
-def _reject_constant(value: str) -> None:
-    raise ValueError(f"non-finite JSON number: {value}")
-
-
-def _loads(data: bytes, *, label: str) -> Any:
-    try:
-        return json.loads(
-            data.decode("utf-8"),
-            object_pairs_hook=_unique_object,
-            parse_constant=_reject_constant,
-        )
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError(f"invalid JSON in {label}") from exc
-
-
 def _read_json(path: Path) -> dict[str, Any]:
     value = _loads(path.read_bytes(), label=str(path))
     if not isinstance(value, dict):
@@ -341,11 +372,70 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 def _write_exclusive(path: Path, payload: bytes, *, mode: int = 0o444) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("xb") as handle:
-        handle.write(payload)
-        handle.flush()
-        os.fsync(handle.fileno())
-    path.chmod(mode)
+    created = False
+    try:
+        with path.open("xb") as handle:
+            created = True
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        path.chmod(mode)
+    except BaseException:
+        if created:
+            path.unlink(missing_ok=True)
+        raise
+
+
+def _preflight_controller_seal(controller_manifest: Path) -> None:
+    targets = {
+        "controller manifest": controller_manifest,
+        "controller sidecar": controller_manifest.with_suffix(".sha256"),
+        "anchor request": controller_manifest.with_name("anchor-request.json"),
+        "anchor sidecar": controller_manifest.with_name("anchor-request.sha256"),
+    }
+    occupied = [
+        label for label, path in targets.items() if path.exists() or path.is_symlink()
+    ]
+    if occupied:
+        raise FileExistsError(
+            "A11 immutable seal destination already exists: " + ", ".join(occupied)
+        )
+
+
+def _publish_controller_seal(
+    *,
+    controller_manifest: Path,
+    manifest: Mapping[str, Any],
+    artifact_dir: Path,
+) -> str:
+    """Publish the controller and anchor pair, rolling back a partial zero-model seal."""
+
+    _preflight_controller_seal(controller_manifest)
+    sidecar = controller_manifest.with_suffix(".sha256")
+    created: list[Path] = []
+    try:
+        _write_exclusive(controller_manifest, _pretty_bytes(manifest))
+        created.append(controller_manifest)
+        manifest_sha256 = _sha256_file(controller_manifest)
+        _write_exclusive(sidecar, (manifest_sha256 + "\n").encode("ascii"))
+        created.append(sidecar)
+        experiment_anchor.write_anchor_request(
+            controller_manifest,
+            controller_manifest.with_name("anchor-request.json"),
+        )
+        return manifest_sha256
+    except BaseException:
+        for path in reversed(created):
+            path.unlink(missing_ok=True)
+        for path in (
+            controller_manifest.with_name("anchor-request.sha256"),
+            controller_manifest.with_name("anchor-request.json"),
+        ):
+            path.unlink(missing_ok=True)
+        if artifact_dir.exists() and not artifact_dir.is_symlink():
+            artifact_dir.chmod(0o755)
+            shutil.rmtree(artifact_dir)
+        raise
 
 
 def _write_json_atomic(path: Path, value: Any) -> None:
@@ -684,6 +774,7 @@ def _required_code_sources(repo: Path) -> dict[str, Path]:
         "a11_event_group_benchmark.py",
         "a11_governed_retrieval.py",
         "a11_packet_adapter.py",
+        "experiment_anchor.py",
         "a6_packet_builder.py",
     )
     return {Path(name).stem: repo / name for name in names}
@@ -730,8 +821,7 @@ def seal_controller(
     import a11_answer_inputs
 
     controller_manifest = controller_manifest.resolve()
-    if controller_manifest.exists() or controller_manifest.with_suffix(".sha256").exists():
-        raise FileExistsError("A11 controller manifest already exists and is immutable")
+    _preflight_controller_seal(controller_manifest)
     artifact_dir = controller_manifest.parent / "artifacts"
     if artifact_dir.exists():
         raise FileExistsError("A11 controller artifacts already exist without a manifest")
@@ -1085,26 +1175,44 @@ def seal_controller(
             "singleton_lock": str(lock_path.resolve()),
         },
     }
-    _write_exclusive(controller_manifest, _pretty_bytes(manifest))
-    manifest_sha256 = _sha256_file(controller_manifest)
-    sidecar = controller_manifest.with_suffix(".sha256")
-    _write_exclusive(sidecar, (manifest_sha256 + "\n").encode("ascii"))
+    _publish_controller_seal(
+        controller_manifest=controller_manifest,
+        manifest=manifest,
+        artifact_dir=artifact_dir,
+    )
     return load_controller(controller_manifest)
+
+
+def _read_controller_manifest_once(
+    manifest_path: Path,
+) -> tuple[str, dict[str, Any]]:
+    """Hash and parse one controller byte buffer, never two mutable path reads."""
+
+    manifest_bytes = manifest_path.read_bytes()
+    manifest_sha256 = _sha256_bytes(manifest_bytes)
+    sidecar = manifest_path.with_suffix(".sha256")
+    if sidecar.read_text(encoding="ascii") != manifest_sha256 + "\n":
+        raise ValueError("A11 controller manifest sidecar changed")
+    manifest = _loads(manifest_bytes, label=str(manifest_path))
+    if not isinstance(manifest, dict):
+        raise ValueError("A11 controller manifest is not an object")
+    return manifest_sha256, manifest
 
 
 def load_controller(manifest_path: Path) -> A11ControllerBundle:
     manifest_path = manifest_path.resolve()
-    manifest_sha256 = _sha256_file(manifest_path)
-    sidecar = manifest_path.with_suffix(".sha256")
-    if sidecar.read_text(encoding="ascii") != manifest_sha256 + "\n":
-        raise ValueError("A11 controller manifest sidecar changed")
-    manifest = _read_json(manifest_path)
+    manifest_sha256, manifest = _read_controller_manifest_once(manifest_path)
     if (
         manifest.get("kind") != "a11_interleaved_controller_manifest"
         or manifest.get("schema_version") not in SUPPORTED_CONTROLLER_VERSIONS
         or manifest.get("experiment_profile") != EXPERIMENT_PROFILE
     ):
         raise ValueError("A11 controller manifest contract changed")
+    if manifest.get("schema_version") == CONTROLLER_VERSION:
+        experiment_anchor.verify_local_anchor_request(
+            manifest_path,
+            manifest_path.with_name("anchor-request.json"),
+        )
     snapshots = manifest.get("snapshots")
     if not isinstance(snapshots, dict):
         raise ValueError("A11 controller snapshot inventory is missing")
@@ -1184,6 +1292,7 @@ def _verify_loaded_code(bundle: A11ControllerBundle) -> None:
         "run_qt4_experiment": Path(transport.__file__).resolve(),
         "a11_answer_harness": Path(a11_answer_harness.__file__).resolve(),
         "codex_harness": Path(codex_harness.__file__).resolve(),
+        "experiment_anchor": Path(experiment_anchor.__file__).resolve(),
     }
     for name, path in current.items():
         expected = bundle.manifest["snapshots"][name]["sha256"]
@@ -2214,8 +2323,22 @@ def finalize_result(bundle: A11ControllerBundle) -> dict[str, Any]:
     return final_manifest
 
 
-def run_live(bundle: A11ControllerBundle, *, lock_path: Path, max_attempts: int | None) -> int:
+def run_live(
+    bundle: A11ControllerBundle,
+    *,
+    lock_path: Path,
+    max_attempts: int | None,
+    anchor_url: str,
+) -> int:
+    if bundle.manifest.get("schema_version") != CONTROLLER_VERSION:
+        raise ValueError("legacy A11 controllers are audit-only and cannot make live calls")
     _verify_loaded_code(bundle)
+    experiment_anchor.verify_and_record_external_anchor(
+        bundle.manifest_path,
+        anchor_url,
+        bundle.manifest_path.with_name("external-anchor-verification.json"),
+        expected_controller_sha256=bundle.manifest_sha256,
+    )
     sealed_lock = Path(bundle.manifest["integrity"]["singleton_lock"])
     if lock_path.resolve() != sealed_lock:
         raise ValueError("A11 live lock path differs from the controller seal")
@@ -2367,6 +2490,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--result-out", type=Path, default=Path("runs/a11-result"))
     parser.add_argument("--lock", type=Path, default=Path("runs/.a11-vte.lock"))
     parser.add_argument("--max-attempts", type=int, default=None)
+    parser.add_argument("--anchor-url")
     modes = parser.add_mutually_exclusive_group(required=True)
     modes.add_argument("--seal", action="store_true")
     modes.add_argument("--status", action="store_true")
@@ -2410,6 +2534,9 @@ def main(argv: Iterable[str] | None = None) -> int:
                     "model_calls": 0,
                     "manifest": str(bundle.manifest_path),
                     "manifest_sha256": bundle.manifest_sha256,
+                    "anchor_request": str(
+                        bundle.manifest_path.with_name("anchor-request.json")
+                    ),
                     "questions": len(bundle.question_ids),
                     "scheduled_answers": len(bundle.question_ids) * len(bundle.arms),
                 },
@@ -2420,6 +2547,8 @@ def main(argv: Iterable[str] | None = None) -> int:
         return 0
     if not args.controller_manifest.exists():
         raise SystemExit("A11 controller is not sealed; run --seal before --status/--live")
+    if args.live and not args.anchor_url:
+        raise SystemExit("--live requires a commit-pinned --anchor-url")
     bundle = load_controller(args.controller_manifest)
     if args.status:
         print(json.dumps(a11_progress(bundle), indent=2, sort_keys=True))
@@ -2430,7 +2559,12 @@ def main(argv: Iterable[str] | None = None) -> int:
     if args.finalize:
         print(json.dumps(finalize_result(bundle), indent=2, sort_keys=True))
         return 0
-    return run_live(bundle, lock_path=args.lock, max_attempts=args.max_attempts)
+    return run_live(
+        bundle,
+        lock_path=args.lock,
+        max_attempts=args.max_attempts,
+        anchor_url=args.anchor_url,
+    )
 
 
 if __name__ == "__main__":
