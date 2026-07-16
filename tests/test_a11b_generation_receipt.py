@@ -95,9 +95,13 @@ def _fixture(root: Path) -> dict[str, object]:
                 "generator/synthea.jar",
                 "-s",
                 "20260715",
+                "-cs",
+                "20260715",
                 "-p",
                 "448",
                 "-r",
+                "20260715",
+                "-e",
                 "20260715",
                 "-c",
                 "configuration/synthea.properties",
@@ -415,7 +419,13 @@ class A11bGenerationReceiptTests(unittest.TestCase):
                 )
 
     def test_invocation_cannot_hide_seed_population_or_reference_date_drift(self) -> None:
-        mutations = (("-s", "1"), ("-p", "447"), ("-r", "20260714"))
+        mutations = (
+            ("-s", "1"),
+            ("-cs", "1"),
+            ("-p", "447"),
+            ("-r", "20260714"),
+            ("-e", "20260714"),
+        )
         for flag, value in mutations:
             with self.subTest(flag=flag), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
