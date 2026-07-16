@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import experiment_executor_deploy as deploy
 import experiment_executor_install as install
 import experiment_executor_service as service
 
@@ -460,6 +461,22 @@ class ExperimentExecutorInstallTests(unittest.TestCase):
         ):
             self.assertIn(line, config)
         self.assertTrue(config.endswith("Match all\n"))
+
+    def test_sshd_drop_in_preflight_supplies_a_sealed_host_key(self) -> None:
+        package_root = Path("/reviewed/install-package")
+        bundle_root = Path("/reviewed/controller-bundle")
+
+        self.assertEqual(
+            deploy._sshd_drop_in_check_command(package_root, bundle_root),
+            [
+                "/usr/sbin/sshd",
+                "-t",
+                "-f",
+                str(package_root / "payload/sshd_config.drop-in"),
+                "-h",
+                str(bundle_root / "witness_ed25519"),
+            ],
+        )
 
 
 if __name__ == "__main__":

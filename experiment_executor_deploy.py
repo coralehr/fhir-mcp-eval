@@ -212,6 +212,21 @@ def _run(command: list[str]) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _sshd_drop_in_check_command(
+    package_root: Path, bundle_source: Path
+) -> list[str]:
+    """Validate the isolated fragment with a sealed key, without host state."""
+
+    return [
+        "/usr/sbin/sshd",
+        "-t",
+        "-f",
+        str(package_root / "payload/sshd_config.drop-in"),
+        "-h",
+        str(bundle_source / "witness_ed25519"),
+    ]
+
+
 def _ensure_executor_account() -> tuple[int, int]:
     try:
         account = pwd.getpwnam(install.EXECUTOR_ACCOUNT)
@@ -584,14 +599,7 @@ def install_and_launch(
         if target.exists() or target.is_symlink():
             raise DeploymentError(f"fresh install target already exists: {target}")
     _run(["/usr/sbin/sshd", "-t"])
-    _run(
-        [
-            "/usr/sbin/sshd",
-            "-t",
-            "-f",
-            str(package_root / "payload/sshd_config.drop-in"),
-        ]
-    )
+    _run(_sshd_drop_in_check_command(package_root, bundle_source))
     try:
         return _install_and_launch_unchecked(
             package_root=package_root,
