@@ -82,8 +82,18 @@ Implementation status as of 2026-07-15:
   end-to-end tests. It has made no model calls.
 - [x] Independently adversarially review the production driver; its P0/P1 review
   is clean under the pinned no-fork sandbox and no-raw-egress service boundary.
-- [ ] Implement the admin-owned sealed-bundle loader plus restricted service
-  transport; no deployed service owns a live credential yet.
+- [x] Implement the admin-owned fixed-layout sealed-bundle loader, canonical
+  one-request `execute_next`/content-free `status` transport, fixed redacted
+  errors, no raw-artifact route, and A11 v4 anchor binding for the exact witness,
+  schedule, build, model configuration, executables, native runtime, sandbox,
+  and independently pinned checker key. Cached GitHub approval must carry that
+  separate checker's valid signature. It has made no model calls.
+- [ ] Bind the exact launcher, root-owned standalone Python tree, authorized key,
+  effective sshd policy, flags/environment/cwd, and hidden non-admin executor
+  principal into the next controller schema; v4 binds the service core only.
+- [ ] Build and independently approve the actual A11b bundle/controller, install
+  that localhost-only forced-command surface, and run a fresh zero-model RPC dry
+  run; no deployed service owns a live credential yet.
 - [ ] Deploy the witness/executor under a principal the run account cannot
   mutate, bind its public key and schedule into a new externally approved
   controller, and mediate the Codex credential before any A11b live call.

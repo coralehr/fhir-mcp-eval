@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -60,6 +61,108 @@ def write_controller(root: Path) -> Path:
         "snapshots": snapshots,
     }
     path = root / "manifest.json"
+    path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def trusted_executor_binding() -> dict[str, object]:
+    receipt = lambda path, digest, size: {  # noqa: E731
+        "path": path,
+        "sha256": digest,
+        "bytes": size,
+    }
+    schedule = [
+        {
+            "phase": "answer",
+            "schedule_index": 0,
+            "call_commitment": "3" * 64,
+            "max_attempts": 1,
+        },
+        {
+            "phase": "panel",
+            "schedule_index": 0,
+            "call_commitment": "4" * 64,
+            "max_attempts": 1,
+        },
+    ]
+    return {
+        "bundle_commitment": "1" * 64,
+        "bundle_schema_version": "experiment-executor-service-bundle-v1",
+        "service_protocol_version": "experiment-executor-service-v1",
+        "run_id": "2" * 64,
+        "witness": {
+            "identity": "a11b-witness",
+            "public_key": "ssh-ed25519 AAAATEST",
+            "key_id": "sha256:" + "5" * 64,
+            "schedule": schedule,
+        },
+        "runtime": {
+            **receipt("/sealed/native/codex", "6" * 64, 100),
+            "version": "codex-cli 0.144.1",
+        },
+        "sandbox": {
+            **receipt("/usr/bin/sandbox-exec", "7" * 64, 200),
+            "profile": "(version 1)(allow default)(deny process-fork)",
+        },
+        "executables": {
+            "python": receipt("/sealed/python", "8" * 64, 300),
+            "ssh_keygen": receipt("/usr/bin/ssh-keygen", "9" * 64, 400),
+        },
+        "code_subjects": [
+            {"name": name, "sha256": digest * 64, "bytes": index + 1}
+            for index, (name, digest) in enumerate(
+                (
+                    ("anchor", "a"),
+                    ("bootstrap", "b"),
+                    ("codex_harness", "c"),
+                    ("driver", "d"),
+                    ("executor", "e"),
+                    ("service", "f"),
+                    ("witness", "0"),
+                )
+            )
+        ],
+        "model_configuration": {
+            "answer": {
+                "model": "gpt-test",
+                "reasoning_effort": "high",
+                "timeout_seconds": 600,
+            },
+            "panel": {
+                "model": "judge-test",
+                "reasoning_effort": "high",
+                "votes": 3,
+                "batch_size": 20,
+                "timeout_seconds": 600,
+            },
+        },
+        "anchor_verifier": {
+            "algorithm": "ssh-ed25519",
+            "identity": "coralehr-anchor-checker-2026-07",
+            "namespace": experiment_anchor.SIGNED_ANCHOR_NAMESPACE,
+            "public_key": (
+                "ssh-ed25519 "
+                "AAAAC3NzaC1lZDI1NTE5AAAAIOs43R3qv/9/ZBJeIT3hpuUgv7RYiusjUWsWR7PasmMy"
+            ),
+            "key_id": (
+                "sha256:3ae9cbfd77e5bc24ad2914ea0fa2cb6a473ccdf9f70cc914c456c86371f2bd9d"
+            ),
+        },
+    }
+
+
+def write_v4_controller(root: Path) -> Path:
+    path = write_controller(root)
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest["schema_version"] = "a11-controller-v4"
+    binding = trusted_executor_binding()
+    manifest["execution"]["trusted_executor"] = binding
+    manifest["execution"]["codex"]["native"] = {
+        key: binding["runtime"][key] for key in ("path", "sha256", "bytes")
+    }
     path.write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -166,6 +269,266 @@ def verified_remote_fetch(
 
 
 class ExperimentAnchorTests(unittest.TestCase):
+    def _checker(
+        self, root: Path, name: str
+    ) -> tuple[Path, dict[str, str]]:
+        private_key = root / name
+        subprocess.run(
+            [
+                str(experiment_anchor.SSH_KEYGEN_PATH),
+                "-q",
+                "-t",
+                "ed25519",
+                "-N",
+                "",
+                "-C",
+                name,
+                "-f",
+                str(private_key),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        public_fields = subprocess.run(
+            [
+                str(experiment_anchor.SSH_KEYGEN_PATH),
+                "-y",
+                "-f",
+                str(private_key),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip().split()
+        public_key = " ".join(public_fields[:2])
+        return private_key, {
+            "algorithm": "ssh-ed25519",
+            "identity": name,
+            "namespace": experiment_anchor.SIGNED_ANCHOR_NAMESPACE,
+            "public_key": public_key,
+            "key_id": "sha256:"
+            + sha((public_key + "\n").encode("ascii")),
+        }
+
+    def test_v4_request_binds_exact_trusted_executor_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            controller = write_v4_controller(Path(directory))
+
+            request = experiment_anchor.build_anchor_request(controller)
+
+            self.assertEqual(
+                request["schema_version"], "experiment-external-anchor-v2"
+            )
+            self.assertEqual(
+                request["trusted_executor"], trusted_executor_binding()
+            )
+            self.assertEqual(
+                request["controller"]["schema_version"], "a11-controller-v4"
+            )
+
+    def test_v4_trusted_executor_binding_rejects_noncanonical_or_unsafe_fields(
+        self,
+    ) -> None:
+        mutations = {
+            "schedule_gap": lambda value: value["witness"]["schedule"][1].update(
+                {"schedule_index": 1}
+            ),
+            "relative_runtime": lambda value: value["runtime"].update(
+                {"path": "relative/codex"}
+            ),
+            "sandbox_profile": lambda value: value["sandbox"].update(
+                {"profile": "(allow default)"}
+            ),
+            "code_order": lambda value: value["code_subjects"].reverse(),
+            "model_timeout": lambda value: value["model_configuration"][
+                "answer"
+            ].update({"timeout_seconds": 0}),
+            "extra_field": lambda value: value.update({"prompt": "must-not-publish"}),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                controller = write_v4_controller(Path(directory))
+                manifest = json.loads(controller.read_text(encoding="utf-8"))
+                mutate(manifest["execution"]["trusted_executor"])
+                controller.write_text(
+                    json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+
+                with self.assertRaises(ValueError):
+                    experiment_anchor.build_anchor_request(controller)
+
+    def test_v4_rejects_outer_model_or_runtime_that_differs_from_service(self) -> None:
+        mutations = {
+            "answer_model": lambda value: value["execution"].update(
+                {"model": "other-model"}
+            ),
+            "answer_reasoning": lambda value: value["execution"].update(
+                {"reasoning_effort": "medium"}
+            ),
+            "answer_timeout": lambda value: value["execution"].update(
+                {"timeout_seconds": 601}
+            ),
+            "panel_model": lambda value: value["grading"]["panel"].update(
+                {"model": "other-judge"}
+            ),
+            "panel_reasoning": lambda value: value["grading"]["panel"].update(
+                {"reasoning_effort": "medium"}
+            ),
+            "panel_votes": lambda value: value["grading"]["panel"].update(
+                {"votes": 5}
+            ),
+            "panel_batch": lambda value: value["grading"]["panel"].update(
+                {"batch_size": 21}
+            ),
+            "panel_timeout": lambda value: value["grading"]["panel"].update(
+                {"timeout_seconds": 601}
+            ),
+            "native_path": lambda value: value["execution"]["codex"][
+                "native"
+            ].update({"path": "/sealed/native/other"}),
+            "native_digest": lambda value: value["execution"]["codex"][
+                "native"
+            ].update({"sha256": "0" * 64}),
+            "native_bytes": lambda value: value["execution"]["codex"][
+                "native"
+            ].update({"bytes": 101}),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                controller = write_v4_controller(Path(directory))
+                manifest = json.loads(controller.read_text(encoding="utf-8"))
+                mutate(manifest)
+                controller.write_text(
+                    json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+                with self.assertRaises(ValueError):
+                    experiment_anchor.build_anchor_request(controller)
+
+    def test_v4_service_anchor_uses_existing_exact_head_approval_verifier(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            controller = write_v4_controller(Path(directory))
+            expected = experiment_anchor.canonical_json_bytes(
+                experiment_anchor.build_anchor_request(controller)
+            )
+            commit = "c" * 40
+            url = (
+                "https://api.github.com/repos/coralehr/fhir-mcp-eval/contents/"
+                f"anchors/a11b/anchor-request.json?ref={commit}"
+            )
+
+            receipt = experiment_anchor.verify_external_anchor(
+                controller,
+                url,
+                expected_controller_sha256=sha(controller.read_bytes()),
+                fetch_bytes=verified_remote_fetch(expected, commit),
+            )
+
+            self.assertEqual(receipt["external_commit_sha"], commit)
+            self.assertEqual(
+                receipt["anchor_request_sha256"], sha(expected)
+            )
+            self.assertEqual(receipt["independent_approvers"], ["AJ112103"])
+
+    def test_signed_anchor_receipt_is_offline_verifiable_and_tamper_evident(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            controller = write_v4_controller(root)
+            expected = experiment_anchor.canonical_json_bytes(
+                experiment_anchor.build_anchor_request(controller)
+            )
+            commit = "d" * 40
+            url = (
+                "https://api.github.com/repos/coralehr/fhir-mcp-eval/contents/"
+                f"anchors/a11b/anchor-request.json?ref={commit}"
+            )
+            receipt = experiment_anchor.verify_external_anchor(
+                controller,
+                url,
+                expected_controller_sha256=sha(controller.read_bytes()),
+                fetch_bytes=verified_remote_fetch(expected, commit),
+            )
+            private_key, verifier = self._checker(root, "independent-checker")
+            signed = experiment_anchor.sign_external_anchor_verification(
+                receipt,
+                private_key_path=private_key,
+                verifier=verifier,
+            )
+            signed_bytes = experiment_anchor.canonical_json_bytes(signed)
+
+            verified = experiment_anchor.verify_signed_external_anchor_receipt(
+                controller,
+                url,
+                signed_bytes,
+                expected_controller_sha256=sha(controller.read_bytes()),
+                expected_verifier=verifier,
+            )
+            self.assertEqual(verified, receipt)
+
+            tampered = json.loads(signed_bytes)
+            tampered["body"]["independent_approvers"] = ["Arhaan2104"]
+            tampered["body"]["independent_approver_ids"] = [143709176]
+            tampered["body_sha256"] = sha(
+                experiment_anchor.canonical_json_bytes(tampered["body"])
+            )
+            with self.assertRaises(ValueError):
+                experiment_anchor.verify_signed_external_anchor_receipt(
+                    controller,
+                    url,
+                    experiment_anchor.canonical_json_bytes(tampered),
+                    expected_controller_sha256=sha(controller.read_bytes()),
+                    expected_verifier=verifier,
+                )
+
+    def test_forged_or_attacker_signed_anchor_receipt_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            controller = write_v4_controller(root)
+            expected = experiment_anchor.canonical_json_bytes(
+                experiment_anchor.build_anchor_request(controller)
+            )
+            commit = "e" * 40
+            url = (
+                "https://api.github.com/repos/coralehr/fhir-mcp-eval/contents/"
+                f"anchors/a11b/anchor-request.json?ref={commit}"
+            )
+            receipt = experiment_anchor.verify_external_anchor(
+                controller,
+                url,
+                expected_controller_sha256=sha(controller.read_bytes()),
+                fetch_bytes=verified_remote_fetch(expected, commit),
+            )
+            trusted_key, trusted_verifier = self._checker(root, "trusted-checker")
+            attacker_key, attacker_verifier = self._checker(root, "attacker-checker")
+            del trusted_key
+
+            with self.assertRaises(ValueError):
+                experiment_anchor.verify_signed_external_anchor_receipt(
+                    controller,
+                    url,
+                    experiment_anchor.canonical_json_bytes(receipt),
+                    expected_controller_sha256=sha(controller.read_bytes()),
+                    expected_verifier=trusted_verifier,
+                )
+
+            attacker_signed = experiment_anchor.sign_external_anchor_verification(
+                receipt,
+                private_key_path=attacker_key,
+                verifier=attacker_verifier,
+            )
+            with self.assertRaises(ValueError):
+                experiment_anchor.verify_signed_external_anchor_receipt(
+                    controller,
+                    url,
+                    experiment_anchor.canonical_json_bytes(attacker_signed),
+                    expected_controller_sha256=sha(controller.read_bytes()),
+                    expected_verifier=trusted_verifier,
+                )
+
     def test_controller_manifest_rejects_symlink_and_duplicate_keys(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

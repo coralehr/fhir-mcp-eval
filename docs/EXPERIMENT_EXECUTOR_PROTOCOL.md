@@ -1,8 +1,12 @@
 # Trusted experiment executor
 
-Status: no-model protocol core and production Codex driver implemented and
-independently adversarially reviewed. There is no deployed restricted service,
-A11b controller, or live answer/panel call yet.
+Status: no-model protocol core, production Codex driver, fixed-bundle loader,
+restricted one-request transport, isolated root-owned import bootstrap, and A11
+v4 service-core external-anchor schema implemented.
+The driver is independently adversarially reviewed. The external-approval cache
+is checker-signed with a verification key pinned in immutable service code.
+There is no installed service bundle, forced-command transport, externally
+approved A11b controller, or live answer/panel call yet.
 
 ## Public trust boundary
 
@@ -21,6 +25,36 @@ It cannot submit a prompt, descriptor, model, reasoning setting, runtime,
 credential, environment, outcome, retry class, token count, or artifact
 commitment. `experiment_executor.py` loads those inputs from a sealed schedule
 whose domain-separated keyed commitments must equal the signed witness schedule.
+
+`experiment_executor_service.py` makes this boundary executable. It accepts one
+canonical UTF-8 JSON request of at most 4 KiB followed by EOF. Every request
+must carry the exact service kind/version and be either `execute_next` with a
+run ID plus expected witness head or `status` with only a run ID. Duplicate
+keys, alternate serialization, trailing data, extra fields, unknown operations,
+and all caller-supplied paths/model inputs fail before dispatch. Status is a
+minimal projection without attempts or receipts; execution returns signed
+receipts, reconciled economics, outcome, and the artifact commitment but never
+the artifact reference or raw capture. All errors are fixed canonical codes
+without exception text, paths, prompts, or tracebacks.
+
+The loader reads a fixed admin-owned directory, not request, argv, environment,
+or `SSH_ORIGINAL_COMMAND` configuration. Production startup additionally
+requires isolated Python `-I -B -S`, an exact scrubbed environment, fixed working
+directory/private `TMPDIR`, and root-owned non-writable source files with no
+loaded bytecode cache. The root-owned bootstrap inserts only the fixed code
+directory after `-S` disables site and `.pth` startup. It descriptor-validates a mode-0400
+private `bundle.json`, exact 32-byte commitment key, mode-0600 single-link
+witness key, dedicated Codex home, scratch/state roots, code identities,
+Python, ssh-keygen, native runtime, sandbox executable/profile, controller,
+commit-pinned anchor locator, and checker-signed verification receipt. The
+checker signing key remains on a separate host; only its exact public key is
+present in the bundle/controller and independently pinned in code. It derives the
+witness public identity from the private key, recomputes every invocation
+commitment, requires each invocation's model/reasoning/timeout and native runtime
+to equal the controller and anchored public service binding, and only then
+constructs the driver, ledger, and executor. `bundle.json` is committed first;
+the separate immutable A11 v4 controller binds that HMAC, avoiding a
+self-referential controller/bundle seal.
 
 The production executor must run with the witness key, commitment key, Codex
 credential, and pinned native runtime under a principal the experiment account
@@ -122,13 +156,18 @@ idempotently without respawning.
 
 Before A11b can spend a token:
 
-1. implement an admin-owned sealed-bundle loader and restricted service that
-   constructs the ledger, schedule, keys, executor, and driver internally;
-2. deploy witness and executor under the Mac mini `aanishsachdev` principal,
-   with `cory` unable to mutate or sudo into it;
-3. create a private dedicated `CODEX_HOME`, validate its credential metadata,
+1. build and independently review the actual sealed A11b bundle/controller and
+   publish its v4 anchor from a separate host;
+2. extend the public anchor with exact launcher, authorized-key, effective-sshd,
+   root-owned standalone-Python tree, flags, cwd, environment, and executor-account
+   receipts; A11 v4 currently binds the service core but not this install surface;
+3. install the fixed one-request wrapper and localhost-only forced-command SSH
+   key under a hidden dedicated non-admin Mac mini executor principal with
+   `/bin/sh`, with no raw-fetch route and with the run account unable to mutate it;
+4. create a private dedicated `CODEX_HOME`, validate its credential metadata,
    and require a clean zero-model runtime probe;
-4. seal and independently approve the A11b controller, schedule, public key,
-   runtime, sandbox executable/profile, and executor build; and
-5. rerun the fake-driver suite plus a zero-model end-to-end dry run from a fresh
+5. have the separate checker verify GitHub exact-head approval and sign the
+   offline receipt, then prove the installed code, Python, ssh-keygen, runtime,
+   sandbox, witness, and schedule match the externally approved binding; and
+6. rerun the fake-driver suite plus a zero-model end-to-end dry run from a fresh
    directory.

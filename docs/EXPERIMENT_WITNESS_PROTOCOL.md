@@ -1,7 +1,8 @@
 # Experiment attempt witness
 
-Status: witness, executor, and production-driver cores implemented; no deployed
-restricted service or live answer/panel runner uses them yet. See
+Status: witness, executor, production-driver, fixed-bundle loader, and restricted
+service cores implemented; no installed/externally approved service or live
+answer/panel runner uses them yet. See
 [EXPERIMENT_EXECUTOR_PROTOCOL.md](EXPERIMENT_EXECUTOR_PROTOCOL.md).
 
 ## Why this exists
