@@ -61,9 +61,9 @@ ANCHOR_CHECKER_VERIFIER = {
     "namespace": experiment_anchor.SIGNED_ANCHOR_NAMESPACE,
     "public_key": (
         "ssh-ed25519 "
-        "AAAAC3NzaC1lZDI1NTE5AAAAIOs43R3qv/9/ZBJeIT3hpuUgv7RYiusjUWsWR7PasmMy"
+        "AAAAC3NzaC1lZDI1NTE5AAAAIBTUvOkYCO6lTyaUb5FCUmBmnG3PwYHlu61xwDylXEql"
     ),
-    "key_id": "sha256:3ae9cbfd77e5bc24ad2914ea0fa2cb6a473ccdf9f70cc914c456c86371f2bd9d",
+    "key_id": "sha256:e707d1fd1da290d19d67f470c2438e978234f8182217a0dea99e83f1a7bf0abb",
 }
 _HEX_64 = re.compile(r"^[0-9a-f]{64}$")
 _WITNESS_IDENTITY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$")
