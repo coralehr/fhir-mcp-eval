@@ -485,6 +485,7 @@ robustness_analysis.py       # judge-free re-score + MDE power sim + Holm-Bonfer
 eval_budget.py               # token-cost ledger with a hard cap
 experiment_witness.py        # signed monotonic call inventory
 experiment_executor.py       # sealed, crash-conservative trusted call executor
+trusted_codex_driver.py      # fixed-environment native Codex runtime adapter
 config.yml.example           # template for the upstream GCP agents (cp -> config.yml; gitignored)
 agent/mcp_agent.py           # agent that retrieves via an MCP server
 agent/ai_agent.py            # agent that routes via Medplum's in-FHIR $ai op

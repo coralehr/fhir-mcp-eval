@@ -76,8 +76,14 @@ Implementation status as of 2026-07-15:
 - [x] Implement the no-model trusted executor core: caller-proof sealed inputs,
   atomic journals, executor-derived runtime/schema/outcome/token validation,
   signed terminal indeterminate closes, and at-most-one-spawn recovery.
-- [ ] Implement and review the production Codex driver and restricted service
-  transport; the current executor has fake drivers only and owns no credential.
+- [x] Implement the production Codex driver with a direct native command, fixed
+  environment, private credential gate, pinned macOS no-fork sandbox,
+  process-group timeout, bounded durable raw captures, and fake-native
+  end-to-end tests. It has made no model calls.
+- [x] Independently adversarially review the production driver; its P0/P1 review
+  is clean under the pinned no-fork sandbox and no-raw-egress service boundary.
+- [ ] Implement the admin-owned sealed-bundle loader plus restricted service
+  transport; no deployed service owns a live credential yet.
 - [ ] Deploy the witness/executor under a principal the run account cannot
   mutate, bind its public key and schedule into a new externally approved
   controller, and mediate the Codex credential before any A11b live call.

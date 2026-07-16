@@ -36,6 +36,7 @@ import experiment_witness as witness
 EXECUTOR_SCHEMA_VERSION = "experiment-executor-v1"
 CAPTURE_FILE_NAMES = ("events.jsonl", "answer.json", "stderr.log")
 _HEX_64 = re.compile(r"^[0-9a-f]{64}$")
+_MODEL_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
 
 
 class ExecutorProtocolError(ValueError):
@@ -86,9 +87,12 @@ class SealedInvocation:
         if not isinstance(schema, dict):
             raise ExecutorProtocolError("sealed output schema is invalid")
         _require_hex64(self.runtime_sha256, "runtime digest")
-        if not isinstance(self.model, str) or not self.model:
+        if (
+            not isinstance(self.model, str)
+            or _MODEL_IDENTIFIER.fullmatch(self.model) is None
+        ):
             raise ExecutorProtocolError("sealed invocation model is invalid")
-        if not isinstance(self.reasoning_effort, str) or not self.reasoning_effort:
+        if self.reasoning_effort not in {"low", "medium", "high", "xhigh"}:
             raise ExecutorProtocolError("sealed invocation reasoning is invalid")
         if not isinstance(self.runtime_path, str) or not Path(
             self.runtime_path
