@@ -91,6 +91,11 @@ Implementation status as of 2026-07-15:
 - [ ] Bind the exact launcher, root-owned standalone Python tree, authorized key,
   effective sshd policy, flags/environment/cwd, and hidden non-admin executor
   principal into the next controller schema; v4 binds the service core only.
+- [x] Implement a deterministic zero-model installation-package compiler for
+  the fixed launcher, localhost-only forced key, sshd policy, root-owned source
+  payloads, and standalone-Python receipt. This is a review artifact only: it
+  has not created the executor account, installed files, reloaded sshd, or
+  provisioned credentials on the Mac mini.
 - [ ] Build and independently approve the actual A11b bundle/controller, install
   that localhost-only forced-command surface, and run a fresh zero-model RPC dry
   run; no deployed service owns a live credential yet.

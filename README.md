@@ -208,9 +208,11 @@ The evidence-driven execution plan is
 [NEXT_EXPERIMENT_PLAN.md](docs/NEXT_EXPERIMENT_PLAN.md); the full issue-ready
 backlog remains in [ROADMAP.md](docs/ROADMAP.md):
 
-- Before another answer run, externally anchor the complete controller/native-
-  binary digest and an independently owned signed monotonic attempt witness,
-  retain panel event streams, and build a patient-disjoint harder A11b holdout.
+- Before another answer run, independently approve and install the deterministic
+  restricted-executor package, externally anchor the complete install surface
+  and controller/native-binary digest, retain panel event streams, and build a
+  patient-disjoint harder A11b holdout. The package compiler exists, but no
+  executor account, sshd policy, credential, or live service is installed.
 - Run A11b as flat traversal versus flat traversal plus selection/completeness
   aids versus event groups with the identical aids and clinical evidence.
 - In parallel, benchmark query-time traversal against a materialized Postgres
