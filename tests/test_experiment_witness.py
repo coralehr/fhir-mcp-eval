@@ -691,21 +691,113 @@ class ExperimentWitnessTests(unittest.TestCase):
                         expected_head=witness.receipt_sha256(opened),
                     )
                     events = sorted((root / "ledger" / "events").glob("*.json"))
-                    for event in events:
-                        event.chmod(0o600)
+                    # Mutate in place while preserving the sealed 0o400 mode, so
+                    # detection is proven by the real integrity gate and not by
+                    # the _event_paths file-mode check, which would otherwise mask
+                    # every attack here.
+                    expected = "witness"
                     if attack == "tamper":
                         payload = json.loads(events[0].read_text())
                         payload["body"]["attempt_number"] = 99
-                        events[0].write_text(json.dumps(payload) + "\n")
+                        # Recompute the body digest and re-serialize canonically
+                        # so the envelope, digest, and on-disk canonical-bytes
+                        # gates all pass; only the stale signature can catch this.
+                        payload["body_sha256"] = witness.sha256_bytes(
+                            witness.canonical_json_bytes(payload["body"])
+                        )
+                        self._rewrite_sealed_event(
+                            events[0],
+                            witness.canonical_json_bytes(payload) + b"\n",
+                        )
+                        expected = "signature is invalid"
                     elif attack == "truncate":
-                        events[1].write_bytes(events[1].read_bytes()[:20])
+                        self._rewrite_sealed_event(
+                            events[1], events[1].read_bytes()[:20]
+                        )
                     else:
                         first = events[0].read_bytes()
                         second = events[1].read_bytes()
-                        events[0].write_bytes(second)
-                        events[1].write_bytes(first)
-                    with self.assertRaises(witness.WitnessIntegrityError):
+                        self._rewrite_sealed_event(events[0], second)
+                        self._rewrite_sealed_event(events[1], first)
+                        expected = "chain binding"
+                    with self.assertRaisesRegex(
+                        witness.WitnessIntegrityError, expected
+                    ):
                         self.make_ledger(root, authenticator).status()
+
+    @staticmethod
+    def _rewrite_sealed_event(path: Path, payload: bytes) -> None:
+        path.chmod(0o600)
+        path.write_bytes(payload)
+        path.chmod(0o400)
+
+    def test_receipt_signed_by_a_foreign_key_fails_replay(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            authenticator = self.make_authenticator(root)
+            ledger = self.make_ledger(root, authenticator)
+            opened = ledger.open_call(
+                witness.CallDescriptor(
+                    phase="answer",
+                    schedule_index=0,
+                    attempt_number=1,
+                    call_commitment=digest("answer-prompt-runtime"),
+                ),
+                expected_head=witness.GENESIS_HEAD,
+            )
+            ledger.close_call(
+                opened_receipt_sha256=witness.receipt_sha256(opened),
+                outcome="accepted",
+                artifact_root_commitment=digest("artifacts"),
+                token_usage={
+                    "input": 1,
+                    "cached": 0,
+                    "output": 1,
+                    "reasoning": 0,
+                    "total": 2,
+                    "complete": True,
+                    "source": "turn.completed",
+                },
+                expected_head=witness.receipt_sha256(opened),
+            )
+            # A second key under the SAME signer identity. The forged receipt
+            # keeps the genuine body, digest, chain binding, and signature
+            # metadata, so every gate except the Ed25519 verification passes —
+            # isolating the signature check as the only thing standing between
+            # a foreign signer and an accepted chain.
+            attacker_key = root / "attacker-ed25519"
+            subprocess.run(
+                [
+                    str(witness.SSH_KEYGEN_PATH),
+                    "-q",
+                    "-t",
+                    "ed25519",
+                    "-N",
+                    "",
+                    "-C",
+                    "coralehr-test-witness",
+                    "-f",
+                    str(attacker_key),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            attacker = witness.SshEd25519Authenticator(
+                private_key_path=attacker_key,
+                identity=authenticator.identity,
+            )
+            events = sorted((root / "ledger" / "events").glob("*.json"))
+            receipt = json.loads(events[0].read_text())
+            self.assertNotEqual(attacker.public_key, authenticator.public_key)
+            receipt["signature"] = attacker.sign_body(receipt["body"])
+            self._rewrite_sealed_event(
+                events[0], witness.canonical_json_bytes(receipt) + b"\n"
+            )
+            with self.assertRaisesRegex(
+                witness.WitnessIntegrityError, "signature is invalid"
+            ):
+                self.make_ledger(root, authenticator).status()
 
     def test_head_cache_loss_is_rebuilt_from_signed_chain(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
