@@ -275,6 +275,112 @@ class ExperimentExecutorInstallTests(unittest.TestCase):
                         python_tree_receipt=receipt,
                     )
 
+    def test_python_entry_paths_must_be_canonical(self) -> None:
+        source_root = Path(__file__).resolve().parents[1]
+        aliased = [
+            dict(PYTHON_TREE_ENTRIES[0]),
+            {
+                "path": "lib/./python3.14/os.py",
+                "sha256": "7" * 64,
+                "bytes": 4096,
+                "mode": "0444",
+                "owner": "root",
+                "group": "wheel",
+                "links": 1,
+                "format": "data",
+                "dependencies": [],
+            },
+        ]
+        receipt = {
+            **PYTHON_TREE_RECEIPT,
+            "tree_sha256": install._python_tree_digest(aliased),
+            "files": len(aliased),
+            "bytes": sum(int(entry["bytes"]) for entry in aliased),
+            "entries": aliased,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(install.InstallProtocolError) as caught:
+                install.build_install_package(
+                    source_root,
+                    Path(directory) / "package",
+                    runner_public_key=RUNNER_PUBLIC_KEY,
+                    python_tree_receipt=receipt,
+                )
+            self.assertEqual(str(caught.exception), "Python tree entry is invalid")
+
+    def test_python_entry_paths_reject_apfs_case_or_nfc_collisions(self) -> None:
+        source_root = Path(__file__).resolve().parents[1]
+        for collider in ("Lib/python3.14/os.py", "lib/python3.14/OS.py"):
+            data_entry = {
+                "path": "lib/python3.14/os.py",
+                "sha256": "7" * 64,
+                "bytes": 4096,
+                "mode": "0444",
+                "owner": "root",
+                "group": "wheel",
+                "links": 1,
+                "format": "data",
+                "dependencies": [],
+            }
+            colliding = {**data_entry, "path": collider, "sha256": "8" * 64}
+            entries = sorted(
+                [dict(PYTHON_TREE_ENTRIES[0]), data_entry, colliding],
+                key=lambda item: item["path"],
+            )
+            receipt = {
+                **PYTHON_TREE_RECEIPT,
+                "tree_sha256": install._python_tree_digest(entries),
+                "files": len(entries),
+                "bytes": sum(int(entry["bytes"]) for entry in entries),
+                "entries": entries,
+            }
+            with tempfile.TemporaryDirectory() as directory, self.subTest(
+                collider=collider
+            ):
+                with self.assertRaises(install.InstallProtocolError) as caught:
+                    install.build_install_package(
+                        source_root,
+                        Path(directory) / "package",
+                        runner_public_key=RUNNER_PUBLIC_KEY,
+                        python_tree_receipt=receipt,
+                    )
+                self.assertEqual(
+                    str(caught.exception), "Python tree entry path collides"
+                )
+
+    def test_python_entries_allow_zero_byte_files(self) -> None:
+        source_root = Path(__file__).resolve().parents[1]
+        entries = [
+            dict(PYTHON_TREE_ENTRIES[0]),
+            {
+                "path": "lib/python3.14/__init__.py",
+                "sha256": "0" * 64,
+                "bytes": 0,
+                "mode": "0444",
+                "owner": "root",
+                "group": "wheel",
+                "links": 1,
+                "format": "data",
+                "dependencies": [],
+            },
+        ]
+        receipt = {
+            **PYTHON_TREE_RECEIPT,
+            "tree_sha256": install._python_tree_digest(entries),
+            "files": len(entries),
+            "bytes": sum(int(entry["bytes"]) for entry in entries),
+            "entries": entries,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = install.build_install_package(
+                source_root,
+                Path(directory) / "package",
+                runner_public_key=RUNNER_PUBLIC_KEY,
+                python_tree_receipt=receipt,
+            )
+        self.assertEqual(manifest["python_runtime"]["files"], 2)
+        self.assertEqual(manifest["python_runtime"]["entries"][1]["bytes"], 0)
+
     def test_sshd_drop_in_is_exact_public_key_only_single_session_policy(self) -> None:
         config = install.render_sshd_drop_in().decode("ascii")
         self.assertEqual(config, install.render_sshd_drop_in().decode("ascii"))

@@ -15,6 +15,7 @@ import os
 import re
 import shutil
 import struct
+import unicodedata
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping
 
@@ -199,6 +200,7 @@ def _python_runtime_receipt(value: object) -> dict[str, object]:
     normalized_entries: list[dict[str, object]] = []
     prior_path = ""
     entry_paths: set[str] = set()
+    collapsed_paths: set[str] = set()
     for entry in entries:
         if not isinstance(entry, Mapping) or set(entry) != _PYTHON_ENTRY_FIELDS:
             raise InstallProtocolError("Python tree entry fields are invalid")
@@ -211,10 +213,11 @@ def _python_runtime_receipt(value: object) -> dict[str, object]:
             or path.startswith("/")
             or path_parts in {(), (".",)}
             or any(part in {"", ".", ".."} for part in path_parts)
+            or PurePosixPath(path).as_posix() != path
             or path <= prior_path
             or _HEX_64.fullmatch(str(entry.get("sha256") or "")) is None
             or type(entry.get("bytes")) is not int
-            or int(entry["bytes"]) <= 0
+            or int(entry["bytes"]) < 0
             or entry.get("mode") not in {"0444", "0555"}
             or entry.get("owner") != "root"
             or entry.get("group") != "wheel"
@@ -225,6 +228,14 @@ def _python_runtime_receipt(value: object) -> dict[str, object]:
             or dependencies != sorted(set(dependencies))
         ):
             raise InstallProtocolError("Python tree entry is invalid")
+        # The install target is case- and normalization-insensitive APFS, so
+        # two distinct-but-canonical strings (Lib/x vs lib/x, or NFC vs NFD)
+        # would still resolve to one on-disk path with contradictory reviewed
+        # receipts. Reject any entry that collapses onto an already-seen path.
+        collapsed = unicodedata.normalize("NFC", path).casefold()
+        if collapsed in collapsed_paths:
+            raise InstallProtocolError("Python tree entry path collides")
+        collapsed_paths.add(collapsed)
         if entry.get("format") == "data" and dependencies:
             raise InstallProtocolError("Python data entry has dependencies")
         for dependency in dependencies:
