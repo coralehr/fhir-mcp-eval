@@ -100,6 +100,8 @@ class ExperimentWitnessTests(unittest.TestCase):
                     "output": 0,
                     "reasoning": 0,
                     "total": 10,
+                    "complete": True,
+                    "source": "provider.error",
                 },
                 expected_head=witness.receipt_sha256(opened_1),
             )
@@ -122,6 +124,8 @@ class ExperimentWitnessTests(unittest.TestCase):
                     "output": 4,
                     "reasoning": 1,
                     "total": 14,
+                    "complete": True,
+                    "source": "turn.completed",
                 },
                 expected_head=witness.receipt_sha256(opened_2),
             )
@@ -144,6 +148,8 @@ class ExperimentWitnessTests(unittest.TestCase):
                     "output": 3,
                     "reasoning": 1,
                     "total": 23,
+                    "complete": True,
+                    "source": "turn.completed",
                 },
                 expected_head=witness.receipt_sha256(opened_panel),
             )
@@ -233,6 +239,65 @@ class ExperimentWitnessTests(unittest.TestCase):
         self.assertNotEqual(first, second)
         self.assertNotEqual(first, other_domain)
 
+    def test_token_receipts_distinguish_complete_usage_from_unknown_usage(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            ledger = self.make_ledger(root, self.make_authenticator(root))
+            opened = ledger.open_call(
+                witness.CallDescriptor(
+                    phase="answer",
+                    schedule_index=0,
+                    attempt_number=1,
+                    call_commitment=digest("answer-prompt-runtime"),
+                ),
+                expected_head=witness.GENESIS_HEAD,
+            )
+            closed = ledger.close_call(
+                opened_receipt_sha256=witness.receipt_sha256(opened),
+                outcome="provider_failure",
+                artifact_root_commitment=digest("provider-failure-artifacts"),
+                token_usage={
+                    "input": None,
+                    "cached": None,
+                    "output": None,
+                    "reasoning": None,
+                    "total": None,
+                    "complete": False,
+                    "source": "unavailable",
+                },
+                expected_head=witness.receipt_sha256(opened),
+            )
+            self.assertFalse(closed["body"]["token_usage"]["complete"])
+            self.assertIsNone(closed["body"]["token_usage"]["total"])
+
+            opened_retry = ledger.open_call(
+                witness.CallDescriptor(
+                    phase="answer",
+                    schedule_index=0,
+                    attempt_number=2,
+                    call_commitment=digest("answer-prompt-runtime"),
+                ),
+                expected_head=witness.receipt_sha256(closed),
+            )
+            with self.assertRaisesRegex(
+                witness.WitnessProtocolError, "accepted token usage must be complete"
+            ):
+                ledger.close_call(
+                    opened_receipt_sha256=witness.receipt_sha256(opened_retry),
+                    outcome="accepted",
+                    artifact_root_commitment=digest("invalid-accepted-artifacts"),
+                    token_usage={
+                        "input": None,
+                        "cached": None,
+                        "output": None,
+                        "reasoning": None,
+                        "total": None,
+                        "complete": False,
+                        "source": "unavailable",
+                    },
+                    expected_head=witness.receipt_sha256(opened_retry),
+                )
+
     def test_open_and_close_are_idempotent_after_lost_ack(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -267,6 +332,8 @@ class ExperimentWitnessTests(unittest.TestCase):
                     "output": 2,
                     "reasoning": 1,
                     "total": 6,
+                    "complete": True,
+                    "source": "turn.completed",
                 },
                 "expected_head": witness.receipt_sha256(opened),
             }
@@ -380,6 +447,8 @@ class ExperimentWitnessTests(unittest.TestCase):
                         "output": 1,
                         "reasoning": 0,
                         "total": 2,
+                        "complete": True,
+                        "source": "turn.completed",
                     },
                     expected_head=digest("stale-head"),
                 )
@@ -393,6 +462,8 @@ class ExperimentWitnessTests(unittest.TestCase):
                     "output": 1,
                     "reasoning": 0,
                     "total": 2,
+                    "complete": True,
+                    "source": "turn.completed",
                 },
                 expected_head=witness.receipt_sha256(opened),
             )
@@ -407,6 +478,8 @@ class ExperimentWitnessTests(unittest.TestCase):
                         "output": 1,
                         "reasoning": 0,
                         "total": 2,
+                        "complete": True,
+                        "source": "turn.completed",
                     },
                     expected_head=witness.receipt_sha256(opened),
                 )
@@ -432,11 +505,13 @@ class ExperimentWitnessTests(unittest.TestCase):
                         outcome=terminal_outcome,
                         artifact_root_commitment=digest("terminal-artifacts"),
                         token_usage={
-                            "input": 0,
-                            "cached": 0,
-                            "output": 0,
-                            "reasoning": 0,
-                            "total": 0,
+                            "input": None,
+                            "cached": None,
+                            "output": None,
+                            "reasoning": None,
+                            "total": None,
+                            "complete": False,
+                            "source": "unavailable",
                         },
                         expected_head=witness.receipt_sha256(opened),
                     )
@@ -473,11 +548,13 @@ class ExperimentWitnessTests(unittest.TestCase):
                     outcome="provider_failure",
                     artifact_root_commitment=digest(f"failure-{attempt_number}"),
                     token_usage={
-                        "input": 0,
-                        "cached": 0,
-                        "output": 0,
-                        "reasoning": 0,
-                        "total": 0,
+                        "input": None,
+                        "cached": None,
+                        "output": None,
+                        "reasoning": None,
+                        "total": None,
+                        "complete": False,
+                        "source": "unavailable",
                     },
                     expected_head=witness.receipt_sha256(opened),
                 )
@@ -547,6 +624,8 @@ class ExperimentWitnessTests(unittest.TestCase):
                             "output": 1,
                             "reasoning": 0,
                             "total": 2,
+                            "complete": True,
+                            "source": "turn.completed",
                         },
                         expected_head=witness.receipt_sha256(opened),
                     )
@@ -611,6 +690,8 @@ class ExperimentWitnessTests(unittest.TestCase):
                     "output": 1,
                     "reasoning": 0,
                     "total": 2,
+                    "complete": True,
+                    "source": "turn.completed",
                 },
                 expected_head=witness.receipt_sha256(opened),
             )
@@ -717,6 +798,8 @@ class ExperimentWitnessTests(unittest.TestCase):
                         "output": 1,
                         "reasoning": 0,
                         "total": 6,
+                        "complete": True,
+                        "source": "turn.completed",
                     },
                     expected_head=witness.receipt_sha256(opened),
                 )

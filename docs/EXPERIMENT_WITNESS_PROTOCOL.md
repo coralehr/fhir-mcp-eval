@@ -21,7 +21,8 @@ not call them immutable or append-only.
 
 - `open_call(descriptor, expected_head)` reserves exactly one scheduled call;
 - `close_call(...)` binds its terminal outcome, opaque artifact commitment, and
-  reconciled token usage;
+  token receipt. The receipt carries an explicit completeness flag and source;
+  unknown usage is represented by nulls, never silently converted to zero;
 - `status()` replays and verifies the complete signed chain.
 
 The implementation hides schedule enforcement, attempt caps, hash chaining,
@@ -75,6 +76,10 @@ The live sequence is:
   original signed receipt and creates no new event.
 - An open reservation with no conclusive captured outcome is `indeterminate` and
   aborts the run. It is never silently retried.
+- An accepted call requires complete, reconciled usage. Failure calls may carry
+  incomplete usage, but every unknown component is null and the signed receipt
+  identifies its source, so all-attempt economics cannot be misreported as
+  complete.
 - A conflicting close, stale externally retained head, skipped sequence,
   schedule substitution, signature failure, retry-cap breach, or witness outage
   blocks all new model calls.

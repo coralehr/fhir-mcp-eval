@@ -35,7 +35,14 @@ SIGNATURE_NAMESPACE = "coralehr-experiment-witness-v1"
 SIGNATURE_DOMAIN = b"coralehr-experiment-witness-v1\x00"
 PHASES = ("answer", "panel")
 OUTCOMES = ("accepted", "provider_failure", "contaminated", "indeterminate")
-TOKEN_KEYS = ("input", "cached", "output", "reasoning", "total")
+TOKEN_VALUE_KEYS = ("input", "cached", "output", "reasoning", "total")
+TOKEN_KEYS = (*TOKEN_VALUE_KEYS, "complete", "source")
+TOKEN_USAGE_SOURCES = (
+    "turn.completed",
+    "provider.error",
+    "partial.capture",
+    "unavailable",
+)
 _HEX_64 = re.compile(r"^[0-9a-f]{64}$")
 _EVENT_NAME = re.compile(r"^[0-9]{20}\.json$")
 SSH_KEYGEN_PATH = Path("/usr/bin/ssh-keygen")
@@ -170,20 +177,53 @@ def _validate_call_descriptor(descriptor: CallDescriptor) -> None:
     _require_hex64(descriptor.call_commitment, "call commitment")
 
 
-def _validate_token_usage(value: Mapping[str, Any]) -> dict[str, int]:
+def _validate_token_usage(value: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(value, Mapping) or set(value) != set(TOKEN_KEYS):
         raise WitnessProtocolError("token usage fields are invalid")
-    usage: dict[str, int] = {}
-    for key in TOKEN_KEYS:
+    complete = value["complete"]
+    source = value["source"]
+    if type(complete) is not bool:
+        raise WitnessProtocolError("token usage completeness is invalid")
+    if source not in TOKEN_USAGE_SOURCES:
+        raise WitnessProtocolError("token usage source is invalid")
+    usage: dict[str, Any] = {}
+    for key in TOKEN_VALUE_KEYS:
         amount = value[key]
-        if type(amount) is not int or amount < 0:
-            raise WitnessProtocolError("token usage values must be nonnegative integers")
+        if amount is not None and (type(amount) is not int or amount < 0):
+            raise WitnessProtocolError(
+                "token usage values must be nonnegative integers or null"
+            )
         usage[key] = amount
-    if usage["cached"] > usage["input"]:
+    usage["complete"] = complete
+    usage["source"] = source
+    if complete and any(usage[key] is None for key in TOKEN_VALUE_KEYS):
+        raise WitnessProtocolError("complete token usage has missing values")
+    if complete and source not in {"turn.completed", "provider.error"}:
+        raise WitnessProtocolError("complete token usage source is invalid")
+    if not complete and source == "turn.completed":
+        raise WitnessProtocolError("incomplete token usage source is invalid")
+    if source == "unavailable" and any(
+        usage[key] is not None for key in TOKEN_VALUE_KEYS
+    ):
+        raise WitnessProtocolError("unavailable token usage must contain null values")
+    if (
+        usage["cached"] is not None
+        and usage["input"] is not None
+        and usage["cached"] > usage["input"]
+    ):
         raise WitnessProtocolError("cached token usage exceeds input token usage")
-    if usage["reasoning"] > usage["output"]:
+    if (
+        usage["reasoning"] is not None
+        and usage["output"] is not None
+        and usage["reasoning"] > usage["output"]
+    ):
         raise WitnessProtocolError("reasoning token usage exceeds output token usage")
-    if usage["total"] != usage["input"] + usage["output"]:
+    if (
+        usage["total"] is not None
+        and usage["input"] is not None
+        and usage["output"] is not None
+        and usage["total"] != usage["input"] + usage["output"]
+    ):
         raise WitnessProtocolError("total token usage does not reconcile")
     return usage
 
@@ -486,9 +526,13 @@ class WitnessChainVerifier:
                     body.get("artifact_root_commitment"),
                     "artifact root commitment",
                 )
-                _validate_token_usage(body.get("token_usage"))
+                usage = _validate_token_usage(body.get("token_usage"))
             except WitnessProtocolError as exc:
                 raise WitnessIntegrityError("witness close economics changed") from exc
+            if outcome == "accepted" and usage["complete"] is not True:
+                raise WitnessIntegrityError(
+                    "accepted witness call has incomplete token usage"
+                )
             state.model_calls_closed += 1
             state.open_receipt = None
             item = self.schedule[state.schedule_position]
@@ -986,6 +1030,8 @@ class WitnessLedger:
             raise WitnessProtocolError("witness call outcome is invalid")
         _require_hex64(artifact_root_commitment, "artifact root commitment")
         usage = _validate_token_usage(token_usage)
+        if outcome == "accepted" and usage["complete"] is not True:
+            raise WitnessProtocolError("accepted token usage must be complete")
         _require_hex64(expected_head, "expected witness head")
         with self._locked() as lock:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
