@@ -3,11 +3,14 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
 import re
 import stat
+import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -17,8 +20,16 @@ from urllib.request import Request, urlopen
 
 
 ANCHOR_REQUEST_VERSION = "experiment-external-anchor-v1"
+ANCHOR_REQUEST_VERSION_V2 = "experiment-external-anchor-v2"
 ANCHOR_REQUEST_KIND = "experiment_external_anchor_request"
 ANCHOR_VERIFICATION_VERSION = "experiment-external-anchor-verification-v1"
+SIGNED_ANCHOR_VERIFICATION_VERSION = "experiment-external-anchor-verification-v2"
+SIGNED_ANCHOR_VERIFICATION_KIND = "experiment_external_anchor_signed_verification"
+SIGNED_ANCHOR_NAMESPACE = "coralehr-experiment-anchor-verification-v2"
+SIGNED_ANCHOR_DOMAIN = b"coralehr-experiment-anchor-verification-v2\0"
+SSH_KEYGEN_PATH = Path("/usr/bin/ssh-keygen")
+SSH_KEYGEN_ENV = {"PATH": "/usr/bin:/bin", "LC_ALL": "C"}
+SSH_KEYGEN_TIMEOUT_SECONDS = 30
 MAX_REMOTE_BYTES = 1024 * 1024
 TRUSTED_REVIEWER_ASSOCIATIONS = frozenset({"MEMBER", "OWNER", "COLLABORATOR"})
 TRUSTED_INDEPENDENT_APPROVERS_BY_ID: Mapping[int, str] = MappingProxyType(
@@ -30,6 +41,38 @@ TRUSTED_INDEPENDENT_APPROVERS_BY_ID: Mapping[int, str] = MappingProxyType(
 TRUSTED_INDEPENDENT_APPROVERS = frozenset(
     TRUSTED_INDEPENDENT_APPROVERS_BY_ID.values()
 )
+
+
+def _anchor_verifier(value: object) -> dict[str, str]:
+    if not isinstance(value, Mapping) or set(value) != {
+        "algorithm",
+        "identity",
+        "namespace",
+        "public_key",
+        "key_id",
+    }:
+        raise ValueError("anchor verifier fields are invalid")
+    identity = value.get("identity")
+    public_key = value.get("public_key")
+    if (
+        value.get("algorithm") != "ssh-ed25519"
+        or value.get("namespace") != SIGNED_ANCHOR_NAMESPACE
+        or not isinstance(identity, str)
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._@-]{0,127}", identity) is None
+        or not isinstance(public_key, str)
+        or re.fullmatch(r"ssh-ed25519 [A-Za-z0-9+/]+={0,2}", public_key) is None
+    ):
+        raise ValueError("anchor verifier identity is invalid")
+    key_id = "sha256:" + sha256_bytes((public_key + "\n").encode("ascii"))
+    if value.get("key_id") != key_id:
+        raise ValueError("anchor verifier key identity is invalid")
+    return {
+        "algorithm": "ssh-ed25519",
+        "identity": identity,
+        "namespace": SIGNED_ANCHOR_NAMESPACE,
+        "public_key": public_key,
+        "key_id": key_id,
+    }
 
 _SNAPSHOT_SUBJECTS = {
     "preregistration": "preregistration",
@@ -87,6 +130,268 @@ def _receipt(value: object, *, label: str) -> dict[str, object]:
     if not _is_sha256(digest) or type(size) is not int or size < 0:
         raise ValueError(f"anchor subject receipt is malformed: {label}")
     return {"sha256": digest, "bytes": size}
+
+
+def _path_receipt(
+    value: object, *, label: str, extra_fields: frozenset[str] = frozenset()
+) -> dict[str, object]:
+    if not isinstance(value, Mapping) or set(value) != {
+        "path",
+        "sha256",
+        "bytes",
+        *extra_fields,
+    }:
+        raise ValueError(f"trusted executor subject is malformed: {label}")
+    path = value.get("path")
+    receipt = _receipt(value, label=label)
+    if (
+        not isinstance(path, str)
+        or not Path(path).is_absolute()
+        or ".." in Path(path).parts
+        or "//" in path
+    ):
+        raise ValueError(f"trusted executor subject path is malformed: {label}")
+    return {"path": path, **receipt}
+
+
+def _model_configuration(value: object) -> dict[str, dict[str, object]]:
+    if not isinstance(value, Mapping) or set(value) != {"answer", "panel"}:
+        raise ValueError("model configuration fields are invalid")
+    answer = value.get("answer")
+    panel = value.get("panel")
+    if not isinstance(answer, Mapping) or set(answer) != {
+        "model",
+        "reasoning_effort",
+        "timeout_seconds",
+    }:
+        raise ValueError("answer model configuration is invalid")
+    if not isinstance(panel, Mapping) or set(panel) != {
+        "model",
+        "reasoning_effort",
+        "votes",
+        "batch_size",
+        "timeout_seconds",
+    }:
+        raise ValueError("panel model configuration is invalid")
+
+    def require_model(item: Mapping[str, object], label: str) -> str:
+        model = item.get("model")
+        if not isinstance(model, str) or re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._+-]{0,127}", model
+        ) is None:
+            raise ValueError(f"{label} model configuration is invalid")
+        return model
+
+    def require_reasoning(item: Mapping[str, object], label: str) -> str:
+        reasoning = item.get("reasoning_effort")
+        if reasoning not in {"minimal", "low", "medium", "high", "xhigh"}:
+            raise ValueError(f"{label} model configuration is invalid")
+        return reasoning
+
+    def require_positive_integer(
+        item: Mapping[str, object], field: str, label: str, maximum: int
+    ) -> int:
+        result = item.get(field)
+        if type(result) is not int or not 1 <= result <= maximum:
+            raise ValueError(f"{label} model configuration is invalid")
+        return result
+
+    return {
+        "answer": {
+            "model": require_model(answer, "answer"),
+            "reasoning_effort": require_reasoning(answer, "answer"),
+            "timeout_seconds": require_positive_integer(
+                answer, "timeout_seconds", "answer", 3600
+            ),
+        },
+        "panel": {
+            "model": require_model(panel, "panel"),
+            "reasoning_effort": require_reasoning(panel, "panel"),
+            "votes": require_positive_integer(panel, "votes", "panel", 9),
+            "batch_size": require_positive_integer(
+                panel, "batch_size", "panel", 1000
+            ),
+            "timeout_seconds": require_positive_integer(
+                panel, "timeout_seconds", "panel", 3600
+            ),
+        },
+    }
+
+
+def _trusted_executor_binding(value: object) -> dict[str, Any]:
+    fields = {
+        "bundle_commitment",
+        "bundle_schema_version",
+        "service_protocol_version",
+        "run_id",
+        "witness",
+        "runtime",
+        "sandbox",
+        "executables",
+        "code_subjects",
+        "model_configuration",
+        "anchor_verifier",
+    }
+    if not isinstance(value, Mapping) or set(value) != fields:
+        raise ValueError("trusted executor binding fields are invalid")
+    if (
+        not _is_sha256(value.get("bundle_commitment"))
+        or value.get("bundle_schema_version")
+        != "experiment-executor-service-bundle-v1"
+        or value.get("service_protocol_version")
+        != "experiment-executor-service-v1"
+        or not _is_sha256(value.get("run_id"))
+    ):
+        raise ValueError("trusted executor binding identity is invalid")
+
+    witness_value = value.get("witness")
+    if not isinstance(witness_value, Mapping) or set(witness_value) != {
+        "identity",
+        "public_key",
+        "key_id",
+        "schedule",
+    }:
+        raise ValueError("trusted executor witness binding is invalid")
+    identity = witness_value.get("identity")
+    public_key = witness_value.get("public_key")
+    schedule_value = witness_value.get("schedule")
+    if (
+        not isinstance(identity, str)
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._@-]{0,127}", identity) is None
+        or not isinstance(public_key, str)
+        or re.fullmatch(r"ssh-ed25519 [A-Za-z0-9+/=]+", public_key) is None
+        or re.fullmatch(
+            r"sha256:[0-9a-f]{64}", str(witness_value.get("key_id") or "")
+        )
+        is None
+        or not isinstance(schedule_value, list)
+        or not schedule_value
+    ):
+        raise ValueError("trusted executor witness binding is invalid")
+    schedule: list[dict[str, Any]] = []
+    phase_position = 0
+    last_index: dict[str, int] = {}
+    for item in schedule_value:
+        if not isinstance(item, Mapping) or set(item) != {
+            "phase",
+            "schedule_index",
+            "call_commitment",
+            "max_attempts",
+        }:
+            raise ValueError("trusted executor schedule fields are invalid")
+        phase = item.get("phase")
+        index = item.get("schedule_index")
+        attempts = item.get("max_attempts")
+        if phase not in {"answer", "panel"}:
+            raise ValueError("trusted executor schedule phase is invalid")
+        new_phase_position = ("answer", "panel").index(phase)
+        expected_index = last_index.get(phase, -1) + 1
+        if (
+            new_phase_position < phase_position
+            or type(index) is not int
+            or index != expected_index
+            or not _is_sha256(item.get("call_commitment"))
+            or type(attempts) is not int
+            or not 1 <= attempts <= 100
+        ):
+            raise ValueError("trusted executor schedule is invalid")
+        phase_position = new_phase_position
+        last_index[phase] = index
+        schedule.append(dict(item))
+
+    runtime_value = value.get("runtime")
+    if not isinstance(runtime_value, Mapping) or set(runtime_value) != {
+        "path",
+        "sha256",
+        "bytes",
+        "version",
+    }:
+        raise ValueError("trusted executor runtime binding is invalid")
+    runtime_version = runtime_value.get("version")
+    if not isinstance(runtime_version, str) or re.fullmatch(
+        r"codex-cli [A-Za-z0-9][A-Za-z0-9._+-]{0,63}", runtime_version
+    ) is None:
+        raise ValueError("trusted executor runtime version is invalid")
+    runtime = {
+        **_path_receipt(
+            runtime_value, label="runtime", extra_fields=frozenset({"version"})
+        ),
+        "version": runtime_version,
+    }
+
+    sandbox_value = value.get("sandbox")
+    if not isinstance(sandbox_value, Mapping) or set(sandbox_value) != {
+        "path",
+        "sha256",
+        "bytes",
+        "profile",
+    }:
+        raise ValueError("trusted executor sandbox binding is invalid")
+    profile = sandbox_value.get("profile")
+    if profile != "(version 1)(allow default)(deny process-fork)":
+        raise ValueError("trusted executor sandbox profile is invalid")
+    sandbox = {
+        **_path_receipt(
+            sandbox_value, label="sandbox", extra_fields=frozenset({"profile"})
+        ),
+        "profile": profile,
+    }
+
+    executable_value = value.get("executables")
+    if not isinstance(executable_value, Mapping) or set(executable_value) != {
+        "python",
+        "ssh_keygen",
+    }:
+        raise ValueError("trusted executor executable binding is invalid")
+    executables = {
+        name: _path_receipt(executable_value.get(name), label=name)
+        for name in ("python", "ssh_keygen")
+    }
+
+    code_value = value.get("code_subjects")
+    expected_code_names = (
+        "anchor",
+        "codex_harness",
+        "driver",
+        "executor",
+        "service",
+        "witness",
+    )
+    if not isinstance(code_value, list) or len(code_value) != len(
+        expected_code_names
+    ):
+        raise ValueError("trusted executor code binding is invalid")
+    code_subjects: list[dict[str, object]] = []
+    for expected_name, subject in zip(expected_code_names, code_value, strict=True):
+        if not isinstance(subject, Mapping) or set(subject) != {
+            "name",
+            "sha256",
+            "bytes",
+        }:
+            raise ValueError("trusted executor code subject is malformed")
+        if subject.get("name") != expected_name:
+            raise ValueError("trusted executor code subject order is invalid")
+        receipt = _receipt(subject, label=f"code:{expected_name}")
+        code_subjects.append({"name": expected_name, **receipt})
+
+    return {
+        "bundle_commitment": value["bundle_commitment"],
+        "bundle_schema_version": value["bundle_schema_version"],
+        "service_protocol_version": value["service_protocol_version"],
+        "run_id": value["run_id"],
+        "witness": {
+            "identity": identity,
+            "public_key": public_key,
+            "key_id": witness_value["key_id"],
+            "schedule": schedule,
+        },
+        "runtime": runtime,
+        "sandbox": sandbox,
+        "executables": executables,
+        "code_subjects": code_subjects,
+        "model_configuration": _model_configuration(value.get("model_configuration")),
+        "anchor_verifier": _anchor_verifier(value.get("anchor_verifier")),
+    }
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -592,6 +897,26 @@ def _read_existing_receipt(
     return receipt
 
 
+def verify_recorded_external_anchor(
+    controller_manifest: Path,
+    anchor_url: str,
+    receipt_path: Path,
+    *,
+    expected_controller_sha256: str,
+) -> dict[str, Any]:
+    """Validate one previously recorded immutable external-anchor receipt."""
+
+    receipt = _read_existing_receipt(
+        controller_manifest=controller_manifest,
+        anchor_url=anchor_url,
+        expected_controller_sha256=expected_controller_sha256,
+        receipt_path=receipt_path.absolute(),
+    )
+    if receipt is None:
+        raise ValueError("external anchor verification receipt is missing")
+    return receipt
+
+
 def verify_and_record_external_anchor(
     controller_manifest: Path,
     anchor_url: str,
@@ -669,6 +994,200 @@ def verify_and_record_external_anchor(
     return receipt
 
 
+def sign_external_anchor_verification(
+    receipt: Mapping[str, Any],
+    *,
+    private_key_path: Path,
+    verifier: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Sign a live GitHub verification result on the independent checker host."""
+
+    verifier_value = _anchor_verifier(verifier)
+    private_key_path = private_key_path.resolve()
+    if not private_key_path.is_file():
+        raise ValueError("anchor checker private key is unavailable")
+    try:
+        derived = subprocess.run(
+            [str(SSH_KEYGEN_PATH), "-y", "-f", str(private_key_path)],
+            check=False,
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            env=SSH_KEYGEN_ENV,
+            timeout=SSH_KEYGEN_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError("anchor checker public key could not be derived") from exc
+    derived_fields = derived.stdout.strip().split()
+    if (
+        derived.returncode != 0
+        or len(derived_fields) < 2
+        or " ".join(derived_fields[:2]) != verifier_value["public_key"]
+    ):
+        raise ValueError("anchor checker public key differs from the trust pin")
+
+    body = {**dict(receipt), "anchor_verifier_key_id": verifier_value["key_id"]}
+    body_bytes = canonical_json_bytes(body)
+    signed_payload = SIGNED_ANCHOR_DOMAIN + body_bytes
+    try:
+        with tempfile.TemporaryDirectory(
+            prefix="experiment-anchor-sign-"
+        ) as directory:
+            message = Path(directory) / "verification"
+            message.write_bytes(signed_payload)
+            process = subprocess.run(
+                [
+                    str(SSH_KEYGEN_PATH),
+                    "-Y",
+                    "sign",
+                    "-q",
+                    "-f",
+                    str(private_key_path),
+                    "-n",
+                    SIGNED_ANCHOR_NAMESPACE,
+                    str(message),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                stdin=subprocess.DEVNULL,
+                env=SSH_KEYGEN_ENV,
+                timeout=SSH_KEYGEN_TIMEOUT_SECONDS,
+            )
+            signature_path = message.with_name(message.name + ".sig")
+            if process.returncode != 0 or not signature_path.is_file():
+                raise ValueError("anchor verification receipt signing failed")
+            signature_value = base64.b64encode(signature_path.read_bytes()).decode(
+                "ascii"
+            )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError("anchor verification receipt signing failed") from exc
+    return {
+        "kind": SIGNED_ANCHOR_VERIFICATION_KIND,
+        "schema_version": SIGNED_ANCHOR_VERIFICATION_VERSION,
+        "body": body,
+        "body_sha256": sha256_bytes(body_bytes),
+        "signature": {
+            "algorithm": "ssh-ed25519",
+            "identity": verifier_value["identity"],
+            "namespace": SIGNED_ANCHOR_NAMESPACE,
+            "key_id": verifier_value["key_id"],
+            "value_base64": signature_value,
+        },
+    }
+
+
+def verify_signed_external_anchor_receipt(
+    controller_manifest: Path,
+    anchor_url: str,
+    receipt_bytes: bytes,
+    *,
+    expected_controller_sha256: str,
+    expected_verifier: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Verify a checker-signed, offline-safe external approval receipt."""
+
+    verifier = _anchor_verifier(expected_verifier)
+    envelope = _load_json_object(receipt_bytes, label="signed anchor receipt")
+    if receipt_bytes != canonical_json_bytes(envelope):
+        raise ValueError("signed anchor verification receipt is noncanonical")
+    if set(envelope) != {
+        "kind",
+        "schema_version",
+        "body",
+        "body_sha256",
+        "signature",
+    } or (
+        envelope.get("kind") != SIGNED_ANCHOR_VERIFICATION_KIND
+        or envelope.get("schema_version") != SIGNED_ANCHOR_VERIFICATION_VERSION
+    ):
+        raise ValueError("signed anchor verification receipt schema changed")
+    body = envelope.get("body")
+    if not isinstance(body, Mapping) or set(body) != {
+        *_VERIFICATION_RECEIPT_FIELDS,
+        "anchor_verifier_key_id",
+    }:
+        raise ValueError("signed anchor verification receipt body changed")
+    body_bytes = canonical_json_bytes(body)
+    if (
+        body.get("anchor_verifier_key_id") != verifier["key_id"]
+        or envelope.get("body_sha256") != sha256_bytes(body_bytes)
+    ):
+        raise ValueError("signed anchor verification receipt binding changed")
+
+    request = build_anchor_request(controller_manifest)
+    expected_request = canonical_json_bytes(request)
+    locator = parse_github_anchor_url(anchor_url)
+    unsigned_body = {
+        key: body[key] for key in _VERIFICATION_RECEIPT_FIELDS
+    }
+    _validate_receipt_contract(
+        unsigned_body,
+        request=request,
+        expected_request=expected_request,
+        anchor_url=anchor_url,
+        expected_controller_sha256=expected_controller_sha256,
+        locator=locator,
+    )
+
+    signature = envelope.get("signature")
+    if not isinstance(signature, Mapping) or set(signature) != {
+        "algorithm",
+        "identity",
+        "namespace",
+        "key_id",
+        "value_base64",
+    } or signature != {
+        "algorithm": "ssh-ed25519",
+        "identity": verifier["identity"],
+        "namespace": SIGNED_ANCHOR_NAMESPACE,
+        "key_id": verifier["key_id"],
+        "value_base64": signature.get("value_base64"),
+    }:
+        raise ValueError("signed anchor verification receipt signature changed")
+    try:
+        signature_bytes = base64.b64decode(
+            signature["value_base64"], validate=True
+        )
+        with tempfile.TemporaryDirectory(
+            prefix="experiment-anchor-verify-"
+        ) as directory:
+            root = Path(directory)
+            allowed_signers = root / "allowed_signers"
+            allowed_signers.write_text(
+                f'{verifier["identity"]} {verifier["public_key"]}\n',
+                encoding="ascii",
+            )
+            signature_path = root / "verification.sig"
+            signature_path.write_bytes(signature_bytes)
+            process = subprocess.run(
+                [
+                    str(SSH_KEYGEN_PATH),
+                    "-Y",
+                    "verify",
+                    "-q",
+                    "-f",
+                    str(allowed_signers),
+                    "-I",
+                    verifier["identity"],
+                    "-n",
+                    SIGNED_ANCHOR_NAMESPACE,
+                    "-s",
+                    str(signature_path),
+                ],
+                input=SIGNED_ANCHOR_DOMAIN + body_bytes,
+                check=False,
+                capture_output=True,
+                env=SSH_KEYGEN_ENV,
+                timeout=SSH_KEYGEN_TIMEOUT_SECONDS,
+            )
+    except (KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError) as exc:
+        raise ValueError("signed anchor verification receipt is invalid") from exc
+    if process.returncode != 0:
+        raise ValueError("signed anchor verification receipt is invalid")
+    return unsigned_body
+
+
 def build_anchor_request(controller_manifest: Path) -> dict[str, Any]:
     """Return the canonical public digest inventory for one sealed controller."""
 
@@ -677,8 +1196,9 @@ def build_anchor_request(controller_manifest: Path) -> dict[str, Any]:
     controller_manifest = controller_manifest.resolve()
     controller_bytes = controller_manifest.read_bytes()
     manifest = _load_json_object(controller_bytes, label="controller manifest")
-    if manifest.get("schema_version") != "a11-controller-v3":
-        raise ValueError("external anchors require an A11 v3 controller")
+    controller_version = manifest.get("schema_version")
+    if controller_version not in {"a11-controller-v3", "a11-controller-v4"}:
+        raise ValueError("external anchors require an A11 v3 or v4 controller")
 
     snapshots = manifest.get("snapshots")
     execution = manifest.get("execution")
@@ -697,18 +1217,8 @@ def build_anchor_request(controller_manifest: Path) -> dict[str, Any]:
     }
     subjects["native_codex"] = _receipt(native, label="native_codex")
 
-    return {
-        "kind": ANCHOR_REQUEST_KIND,
-        "schema_version": ANCHOR_REQUEST_VERSION,
-        "experiment_profile": manifest.get("experiment_profile"),
-        "controller": {
-            "kind": manifest.get("kind"),
-            "schema_version": manifest.get("schema_version"),
-            "sha256": sha256_bytes(controller_bytes),
-            "bytes": len(controller_bytes),
-        },
-        "subjects": subjects,
-        "model_configuration": {
+    model_configuration = _model_configuration(
+        {
             "answer": {
                 key: execution.get(key)
                 for key in ("model", "reasoning_effort", "timeout_seconds")
@@ -723,8 +1233,44 @@ def build_anchor_request(controller_manifest: Path) -> dict[str, Any]:
                     "timeout_seconds",
                 )
             },
+        }
+    )
+    request = {
+        "kind": ANCHOR_REQUEST_KIND,
+        "schema_version": (
+            ANCHOR_REQUEST_VERSION_V2
+            if controller_version == "a11-controller-v4"
+            else ANCHOR_REQUEST_VERSION
+        ),
+        "experiment_profile": manifest.get("experiment_profile"),
+        "controller": {
+            "kind": manifest.get("kind"),
+            "schema_version": manifest.get("schema_version"),
+            "sha256": sha256_bytes(controller_bytes),
+            "bytes": len(controller_bytes),
         },
+        "subjects": subjects,
+        "model_configuration": model_configuration,
     }
+    if controller_version == "a11-controller-v4":
+        trusted_executor = _trusted_executor_binding(
+            execution.get("trusted_executor")
+        )
+        if trusted_executor["model_configuration"] != model_configuration:
+            raise ValueError(
+                "controller model configuration differs from trusted executor"
+            )
+        if {
+            key: native.get(key) for key in ("path", "sha256", "bytes")
+        } != {
+            key: trusted_executor["runtime"][key]
+            for key in ("path", "sha256", "bytes")
+        }:
+            raise ValueError("controller native Codex differs from trusted executor")
+        request["trusted_executor"] = trusted_executor
+    elif "trusted_executor" in execution:
+        raise ValueError("A11 v3 cannot carry an unanchored trusted executor")
+    return request
 
 
 def write_anchor_request(
