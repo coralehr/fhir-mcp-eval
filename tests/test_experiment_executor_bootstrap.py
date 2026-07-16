@@ -94,8 +94,9 @@ class ExperimentExecutorBootstrapTests(unittest.TestCase):
             bundle = root / "bundle"
             tmpdir = bundle / "scratch/service-tmp"
             tmpdir.mkdir(parents=True, mode=0o700)
+            code = root / "code"
             bootstrap_path = self._materialize_sealed_tree(
-                root / "code",
+                code,
                 service_body=(
                     "import fixed_dependency, json\n"
                     "assert '/json/' in json.__file__\n"
@@ -103,6 +104,10 @@ class ExperimentExecutorBootstrapTests(unittest.TestCase):
                     "raise SystemExit(0)\n"
                 ),
             )
+            try:
+                bootstrap._require_safe_code_ancestors(code)
+            except RuntimeError as exc:
+                self.skipTest(f"temp ancestor chain is not root-safe here: {exc}")
 
             process = self._run_bootstrap(bundle, bootstrap_path, tmpdir)
 
@@ -156,6 +161,39 @@ class ExperimentExecutorBootstrapTests(unittest.TestCase):
 
             self.assertNotEqual(process.returncode, 0)
             self.assertNotIn("fixed-import-ok", process.stdout)
+
+    def test_sealed_filenames_track_every_first_party_module_the_service_imports(
+        self,
+    ) -> None:
+        # Drift guard: the preventive gate can only cover modules listed in
+        # _SEALED_CODE_FILENAMES, but run_path import-executes whatever the
+        # service imports. If a new first-party sibling is added to the service
+        # without being sealed here, the P1 silently reopens (caught only
+        # detectively). Discover the service's first-party imports by scanning
+        # its namespace for module objects that live in the same directory, and
+        # require every one to be sealed.
+        import experiment_executor_service as service
+
+        code_dir = Path(service.__file__).resolve().parent
+        imported_first_party = {
+            Path(module.__file__).name
+            for module in vars(service).values()
+            if isinstance(getattr(module, "__file__", None), str)
+            and Path(module.__file__).resolve().parent == code_dir
+            and Path(module.__file__).suffix == ".py"
+        }
+        # The service imports its siblings but never the bootstrap (the entry
+        # point) or itself as a namespace attribute; add both explicitly.
+        required = imported_first_party | {
+            Path(service.__file__).name,
+            "experiment_executor_bootstrap.py",
+        }
+        missing = required - set(bootstrap._SEALED_CODE_FILENAMES)
+        self.assertEqual(
+            missing,
+            set(),
+            f"unsealed first-party modules reachable via run_path: {sorted(missing)}",
+        )
 
     def test_prepare_rejects_nonisolated_ambient_process(self) -> None:
         with self.assertRaises(RuntimeError):
