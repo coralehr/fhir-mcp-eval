@@ -8,6 +8,7 @@ a successor controller before a separately authorized root installation.
 
 from __future__ import annotations
 
+import ast
 import base64
 import hashlib
 import json
@@ -48,6 +49,7 @@ _CODE_FILES = {
     "codex_harness": "codex_harness.py",
     "driver": "trusted_codex_driver.py",
     "executor": "experiment_executor.py",
+    "install_contract": "experiment_executor_install.py",
     "installer": "experiment_executor_deploy.py",
     "paired_stats": "paired_stats.py",
     "panel_grade": "panel_grade.py",
@@ -423,6 +425,30 @@ def _write_sealed(path: Path, payload: bytes, mode: int) -> None:
     path.chmod(mode)
 
 
+def _verify_local_import_closure(source_root: Path) -> None:
+    """Reject a package whose sealed modules import an omitted local sibling."""
+
+    sealed_filenames = set(_CODE_FILES.values())
+    for filename in sorted(sealed_filenames):
+        source = source_root / filename
+        try:
+            tree = ast.parse(source.read_bytes(), filename=filename)
+        except (OSError, SyntaxError) as exc:
+            raise InstallProtocolError("trusted source is unavailable") from exc
+        imported: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name.split(".", 1)[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                imported.add(node.module.split(".", 1)[0])
+        for module in imported:
+            local = source_root / f"{module}.py"
+            if local.is_file() and local.name not in sealed_filenames:
+                raise InstallProtocolError(
+                    "trusted local import is absent from install package"
+                )
+
+
 def build_install_package(
     source_root: Path,
     output_root: Path,
@@ -442,6 +468,7 @@ def build_install_package(
         raise InstallProtocolError("source root is unavailable")
     if python_source_root.is_symlink() or not python_source_root.is_dir():
         raise InstallProtocolError("Python source root is unavailable")
+    _verify_local_import_closure(source_root)
     public_key = _normalize_runner_public_key(runner_public_key)
     python_runtime = _python_runtime_receipt(python_tree_receipt)
     launcher = render_launcher()

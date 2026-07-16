@@ -6,6 +6,7 @@ import stat
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import experiment_executor_deploy as deploy
 import experiment_executor_install as install
@@ -169,6 +170,7 @@ class ExperimentExecutorInstallTests(unittest.TestCase):
                     "codex_harness",
                     "driver",
                     "executor",
+                    "install_contract",
                     "installer",
                     "paired_stats",
                     "panel_grade",
@@ -322,6 +324,29 @@ class ExperimentExecutorInstallTests(unittest.TestCase):
                         runner_public_key=RUNNER_PUBLIC_KEY,
                         python_tree_receipt=receipt,
                     )
+
+    def test_package_rejects_an_omitted_local_import(self) -> None:
+        source_root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            python_source = self._python_source(root)
+            incomplete = dict(install._CODE_FILES)
+            incomplete.pop("install_contract")
+
+            with (
+                mock.patch.object(install, "_CODE_FILES", incomplete),
+                self.assertRaisesRegex(
+                    install.InstallProtocolError,
+                    "local import is absent",
+                ),
+            ):
+                install.build_install_package(
+                    source_root,
+                    root / "package",
+                    python_source_root=python_source,
+                    runner_public_key=RUNNER_PUBLIC_KEY,
+                    python_tree_receipt=PYTHON_TREE_RECEIPT,
+                )
 
     def test_python_entry_paths_must_be_canonical(self) -> None:
         source_root = Path(__file__).resolve().parents[1]
