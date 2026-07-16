@@ -232,6 +232,11 @@ backlog remains in [ROADMAP.md](docs/ROADMAP.md):
   config/modules, and the complete raw-output tree. No real release has yet
   been pinned or generated; see
   [docs/A11B_GENERATION_RECEIPT.md](docs/A11B_GENERATION_RECEIPT.md).
+- A provider-neutral direct-API contract is implemented with canonical
+  content-only receipts and two provider-shaped fake adapters. It contains no
+  provider SDK, credential, network request, or model call and is not yet wired
+  into the confirmatory executor; see
+  [docs/PROVIDER_API_CONTRACT.md](docs/PROVIDER_API_CONTRACT.md).
 - In parallel, benchmark query-time traversal against a materialized Postgres
   edge projection for byte equivalence, policy behavior, correction/rebuild
   semantics, and latency. Do not select a native graph store from accuracy data.

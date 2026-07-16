@@ -256,6 +256,10 @@ unmatched budget, as a cost–accuracy frontier rather than a single number.
 - Use `codex_collect_results.py` to convert each Codex run directory back into `score_taxonomy.py` input JSON.
 - Record Codex CLI version, configured MCP server name/URL, selected `TOOL_SUBSET`, treatment-server source hash, skill hash, prompt hash, event-log paths, and final answers. Add live `tools/list` schema hashing before making product claims.
 - Treat subscription-backed Codex as a named substrate; do not mix it into raw API cost tables without labeling.
+- Route any future direct-API replication through the sealed provider-neutral
+  contract: pin adapter/SDK/model/parameters/usage mapping/pricing, retain raw
+  request-response hashes, forbid tools, and compare treatment effects within
+  each model rather than publishing an unpaired leaderboard.
 - Pre-register primary contrasts and sample size; report cluster-aware CIs and family-wise correction, or label the run exploratory.
 - MCP-vs-CLI remains a *delivery-layer ablation over the same governed broker*, not the headline question.
 
