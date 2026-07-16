@@ -10,6 +10,7 @@ complete candidate output tree to the receipt it emits.
 from __future__ import annotations
 
 import argparse
+import ast
 import copy
 import datetime as dt
 import hashlib
@@ -27,7 +28,7 @@ from a11b_power_gate import verify_power_receipt
 
 
 GENERATION_SPEC_VERSION = "a11b-synthea-generation-spec-v1"
-GENERATION_RECEIPT_VERSION = "a11b-synthea-generation-receipt-v1"
+GENERATION_RECEIPT_VERSION = "a11b-synthea-generation-receipt-v2"
 _SPEC_FIELDS = {
     "schema_version",
     "generator",
@@ -79,12 +80,53 @@ _DEPENDENCY_FILES = (
 )
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _GIT_COMMIT = re.compile(r"^[0-9a-f]{40}$")
+_PATIENT_ASSIGNMENT_DOMAIN = b"a11b-patient-assignment-v1\x00"
 MAX_REGISTERED_INPUTS = 20_000
 MAX_REGISTERED_INPUT_FILE_BYTES = 512 * 1024 * 1024
 MAX_REGISTERED_INPUT_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
 MAX_OUTPUT_ENTRIES = 100_000
 MAX_OUTPUT_FILE_BYTES = 512 * 1024 * 1024
 MAX_OUTPUT_TOTAL_BYTES = 4 * 1024 * 1024 * 1024
+MAX_ARTIFACT_DIRECTORIES = 20_000
+MAX_ARTIFACT_PATH_DEPTH = 32
+MAX_ARTIFACT_NAME_BYTES = 16 * 1024 * 1024
+MAX_CONTROL_JSON_BYTES = 16 * 1024 * 1024
+MAX_JSON_DEPTH = 64
+MAX_JSON_NODES = 2_000_000
+_FHIR_ID = re.compile(r"^[A-Za-z0-9\-.]{1,64}$")
+_SYNTHEA_LOCALE = "en-US"
+_PROCESS_LOCALE = "en_US.UTF-8"
+_ALLOWED_FHIR_R4_RESOURCE_TYPES = {
+    "AllergyIntolerance",
+    "Bundle",
+    "CarePlan",
+    "CareTeam",
+    "Claim",
+    "Condition",
+    "Coverage",
+    "Device",
+    "DiagnosticReport",
+    "DocumentReference",
+    "Encounter",
+    "ExplanationOfBenefit",
+    "Goal",
+    "ImagingStudy",
+    "Immunization",
+    "Location",
+    "Medication",
+    "MedicationAdministration",
+    "MedicationRequest",
+    "Observation",
+    "Organization",
+    "Patient",
+    "Practitioner",
+    "PractitionerRole",
+    "Procedure",
+    "Provenance",
+    "QuestionnaireResponse",
+    "ServiceRequest",
+    "SupplyDelivery",
+}
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -111,7 +153,20 @@ def _load_json_bytes(data: bytes, location: str) -> Any:
         raise ValueError(f"invalid JSON: {location}") from exc
 
 
-def _require_finite_json(value: Any, name: str) -> None:
+def _require_finite_json(
+    value: Any,
+    name: str,
+    *,
+    depth: int = 0,
+    nodes: list[int] | None = None,
+) -> None:
+    if depth > MAX_JSON_DEPTH:
+        raise ValueError(f"{name} exceeds JSON depth bound")
+    if nodes is None:
+        nodes = [0]
+    nodes[0] += 1
+    if nodes[0] > MAX_JSON_NODES:
+        raise ValueError(f"{name} exceeds JSON node bound")
     if value is None or isinstance(value, (bool, str)) or type(value) is int:
         return
     if type(value) is float:
@@ -120,11 +175,11 @@ def _require_finite_json(value: Any, name: str) -> None:
         return
     if isinstance(value, list):
         for item in value:
-            _require_finite_json(item, name)
+            _require_finite_json(item, name, depth=depth + 1, nodes=nodes)
         return
     if isinstance(value, dict) and all(isinstance(key, str) for key in value):
         for item in value.values():
-            _require_finite_json(item, name)
+            _require_finite_json(item, name, depth=depth + 1, nodes=nodes)
         return
     raise ValueError(f"{name} must contain only finite JSON values")
 
@@ -161,6 +216,8 @@ def _file_spec(value: object, name: str) -> dict[str, Any]:
 def _file_specs(value: object, name: str) -> list[dict[str, Any]]:
     if not isinstance(value, list) or not value:
         raise ValueError(f"{name} must be a non-empty list")
+    if len(value) > MAX_REGISTERED_INPUTS:
+        raise ValueError(f"{name} exceeds registered input bound")
     entries = [_file_spec(item, f"{name} entry") for item in value]
     paths = [entry["path"] for entry in entries]
     if paths != sorted(paths) or len(paths) != len(set(paths)):
@@ -175,6 +232,8 @@ def _strings(value: object, name: str) -> list[str]:
         or any(not isinstance(item, str) or not item or "\x00" in item for item in value)
     ):
         raise ValueError(f"{name} must be a non-empty string list")
+    if len(value) > 128:
+        raise ValueError(f"{name} exceeds string-list bound")
     return list(value)
 
 
@@ -182,6 +241,71 @@ def _positive_int(value: object, name: str) -> int:
     if type(value) is not int or value <= 0:
         raise ValueError(f"{name} must be a positive integer")
     return value
+
+
+def _patient_assignment_receipt(
+    patient_receipts: dict[str, dict[str, str]],
+    power_receipt: dict[str, Any],
+) -> dict[str, Any]:
+    scheme = power_receipt.get("patient_assignment")
+    development_count = power_receipt.get("required_development_patients")
+    efficacy_count = power_receipt.get("required_efficacy_patients")
+    source_count = power_receipt.get("required_source_patients")
+    if (
+        scheme != "domain-separated-sha256-order-v1"
+        or type(development_count) is not int
+        or type(efficacy_count) is not int
+        or type(source_count) is not int
+        or development_count <= 0
+        or efficacy_count <= 0
+        or source_count != development_count + efficacy_count
+        or len(patient_receipts) != source_count
+    ):
+        raise ValueError("power-gated patient assignment is invalid")
+
+    ordered_ids = sorted(
+        patient_receipts,
+        key=lambda patient_id: (
+            sha256(_PATIENT_ASSIGNMENT_DOMAIN + patient_id.encode("utf-8")),
+            sha256(patient_id.encode("utf-8")),
+        ),
+    )
+    development_ids = ordered_ids[:development_count]
+    efficacy_ids = ordered_ids[development_count:]
+    intersection = set(development_ids).intersection(efficacy_ids)
+    all_assigned = set(development_ids).union(efficacy_ids) == set(patient_receipts)
+
+    def manifest(patient_ids: list[str]) -> list[dict[str, str]]:
+        return [
+            {
+                "assignment_sha256": sha256(
+                    _PATIENT_ASSIGNMENT_DOMAIN + patient_id.encode("utf-8")
+                ),
+                **patient_receipts[patient_id],
+            }
+            for patient_id in patient_ids
+        ]
+
+    development_manifest = manifest(development_ids)
+    efficacy_manifest = manifest(efficacy_ids)
+    partition_manifest = {
+        "development": development_manifest,
+        "efficacy": efficacy_manifest,
+    }
+    return {
+        "scheme": scheme,
+        "development_patients": len(development_ids),
+        "efficacy_patients": len(efficacy_ids),
+        "source_patients": len(patient_receipts),
+        "development_manifest_sha256": sha256(
+            canonical_bytes(development_manifest)
+        ),
+        "efficacy_manifest_sha256": sha256(canonical_bytes(efficacy_manifest)),
+        "partition_manifest_sha256": sha256(canonical_bytes(partition_manifest)),
+        "intersection_patients": len(intersection),
+        "all_source_patients_assigned": all_assigned,
+        "patient_identifiers_disclosed": False,
+    }
 
 
 def _validate_spec(
@@ -260,29 +384,20 @@ def _validate_spec(
         parsed_reference_date = dt.date.fromisoformat(reference_date)
     except ValueError as exc:
         raise ValueError("reference date is invalid") from exc
-    expected_flags = {
-        "-s": str(seed),
-        "-p": str(population),
-        "-r": parsed_reference_date.strftime("%Y%m%d"),
-    }
-    for flag, expected in expected_flags.items():
-        if argv.count(flag) != 1:
-            raise ValueError(f"generation argv must contain exactly one {flag}")
-        index = argv.index(flag)
-        if index + 1 >= len(argv) or argv[index + 1] != expected:
-            raise ValueError(f"generation argv {flag} value is invalid")
     environment = invocation.get("environment")
     if not isinstance(environment, dict) or set(environment) != {"LANG", "LC_ALL", "TZ"}:
         raise ValueError("generation environment fields are invalid")
     if any(not isinstance(value, str) or not value for value in environment.values()):
         raise ValueError("generation environment values are invalid")
-    if environment["LANG"] != environment["LC_ALL"]:
+    if (
+        environment["LANG"] != _PROCESS_LOCALE
+        or environment["LC_ALL"] != _PROCESS_LOCALE
+    ):
         raise ValueError("generation locale environment is inconsistent")
     locale = invocation.get("locale")
     timezone = invocation.get("timezone")
     if (
-        not isinstance(locale, str)
-        or not locale
+        locale != _SYNTHEA_LOCALE
         or timezone != "UTC"
         or environment["TZ"] != timezone
     ):
@@ -292,12 +407,34 @@ def _validate_spec(
 
     configuration = _file_specs(spec.get("configuration_files"), "configuration files")
     modules = _file_specs(spec.get("module_files"), "module files")
+    if len(configuration) != 1:
+        raise ValueError("generation requires exactly one registered configuration file")
     for entry in configuration:
         if not entry["path"].startswith("configuration/"):
             raise ValueError("configuration file is outside configuration/")
     for entry in modules:
         if not entry["path"].startswith("modules/"):
             raise ValueError("module file is outside modules/")
+    expected_argv = [
+        executable["path"],
+        "-jar",
+        jar["path"],
+        "-s",
+        str(seed),
+        "-p",
+        str(population),
+        "-r",
+        parsed_reference_date.strftime("%Y%m%d"),
+        "-c",
+        configuration[0]["path"],
+        "-d",
+        "modules",
+    ]
+    if argv != expected_argv:
+        raise ValueError(
+            "generation argv must exactly bind the registered seed, population, "
+            "reference date, configuration, and module tree"
+        )
 
     exporter = spec.get("exporter_settings")
     if not isinstance(exporter, dict) or not exporter:
@@ -357,8 +494,7 @@ def _validate_spec(
         "generator": copy.deepcopy(generator),
         "runtime": copy.deepcopy(runtime),
         "invocation": copy.deepcopy(invocation),
-        "configuration": configuration,
-        "modules": modules,
+        "configuration_path": configuration[0]["path"],
         "exporter": copy.deepcopy(exporter),
         "output_root": output_root,
         "suffixes": suffixes,
@@ -369,32 +505,94 @@ def _validate_spec(
     }
 
 
-def _inventory(root: Path) -> list[str]:
-    try:
-        root_metadata = root.lstat()
-    except FileNotFoundError as exc:
-        raise ValueError("artifact root does not exist") from exc
-    if stat.S_ISLNK(root_metadata.st_mode) or not stat.S_ISDIR(root_metadata.st_mode):
+def _metadata_receipt(metadata: os.stat_result, kind: str) -> tuple[object, ...]:
+    return (
+        kind,
+        metadata.st_dev,
+        metadata.st_ino,
+        stat.S_IMODE(metadata.st_mode),
+        metadata.st_nlink,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def _inventory_fd(root_fd: int) -> dict[str, tuple[object, ...]]:
+    """Inventory one descriptor-anchored tree and fail closed on traversal errors."""
+
+    root_metadata = os.fstat(root_fd)
+    if not stat.S_ISDIR(root_metadata.st_mode):
         raise ValueError("artifact root must be a real directory")
-    paths: list[str] = []
-    for directory, directory_names, file_names in os.walk(root, followlinks=False):
-        directory_path = Path(directory)
-        for name in sorted(directory_names):
-            child = directory_path / name
-            metadata = child.lstat()
-            if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
-                raise ValueError(f"artifact tree contains unsafe directory: {name}")
-        for name in sorted(file_names):
-            child = directory_path / name
-            metadata = child.lstat()
-            relative = child.relative_to(root).as_posix()
-            if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+    snapshot: dict[str, tuple[object, ...]] = {
+        "": _metadata_receipt(root_metadata, "directory")
+    }
+    directory_count = 1
+    name_bytes = 0
+    hard_entry_limit = MAX_REGISTERED_INPUTS + MAX_OUTPUT_ENTRIES
+
+    def walk(directory_fd: int, prefix: PurePosixPath | None, depth: int) -> None:
+        nonlocal directory_count, name_bytes
+        if depth > MAX_ARTIFACT_PATH_DEPTH:
+            raise ValueError("artifact tree exceeds path-depth bound")
+        try:
+            with os.scandir(directory_fd) as iterator:
+                entries = sorted(iterator, key=lambda entry: entry.name)
+        except OSError as exc:
+            raise ValueError("artifact tree contains an unreadable directory") from exc
+        for entry in entries:
+            name = entry.name
+            if not name or name in {".", ".."} or "/" in name or "\x00" in name:
+                raise ValueError("artifact tree contains an unsafe entry name")
+            name_bytes += len(os.fsencode(name))
+            if name_bytes > MAX_ARTIFACT_NAME_BYTES:
+                raise ValueError("artifact tree exceeds name-byte bound")
+            relative_path = PurePosixPath(name) if prefix is None else prefix / name
+            relative = _safe_relative(relative_path.as_posix(), "artifact path").as_posix()
+            try:
+                metadata = entry.stat(follow_symlinks=False)
+            except OSError as exc:
+                raise ValueError(f"cannot stat artifact entry: {relative}") from exc
+            if stat.S_ISLNK(metadata.st_mode):
+                raise ValueError(f"artifact tree contains unsafe symlink: {relative}")
+            if stat.S_ISDIR(metadata.st_mode):
+                directory_count += 1
+                if directory_count > MAX_ARTIFACT_DIRECTORIES:
+                    raise ValueError("artifact tree exceeds directory bound")
+                snapshot[relative] = _metadata_receipt(metadata, "directory")
+                try:
+                    child_fd = os.open(
+                        name,
+                        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                        dir_fd=directory_fd,
+                    )
+                except OSError as exc:
+                    raise ValueError(
+                        f"artifact tree contains unreadable directory: {relative}"
+                    ) from exc
+                try:
+                    opened = os.fstat(child_fd)
+                    if (opened.st_dev, opened.st_ino) != (
+                        metadata.st_dev,
+                        metadata.st_ino,
+                    ):
+                        raise ValueError(
+                            f"artifact directory changed during traversal: {relative}"
+                        )
+                    walk(child_fd, relative_path, depth + 1)
+                finally:
+                    os.close(child_fd)
+                continue
+            if not stat.S_ISREG(metadata.st_mode):
                 raise ValueError(f"artifact tree contains unsafe file: {relative}")
             if metadata.st_nlink != 1:
                 raise ValueError(f"artifact tree contains hard-linked file: {relative}")
-            _safe_relative(relative, "artifact path")
-            paths.append(relative)
-    return sorted(paths)
+            snapshot[relative] = _metadata_receipt(metadata, "file")
+            if len(snapshot) - directory_count > hard_entry_limit:
+                raise ValueError("artifact tree exceeds hard entry bound")
+
+    walk(root_fd, None, 1)
+    return snapshot
 
 
 def _read_registered(
@@ -450,29 +648,94 @@ def _read_registered(
 
 
 def _iter_resources(value: Any) -> Iterable[dict[str, Any]]:
-    if isinstance(value, list):
-        for child in value:
-            yield from _iter_resources(child)
-        return
-    if not isinstance(value, dict):
-        return
-    if value.get("resourceType") == "Bundle":
-        entries = value.get("entry")
-        if not isinstance(entries, list):
-            raise ValueError("FHIR Bundle entry must be a list")
-        for entry in entries:
-            if not isinstance(entry, dict) or "resource" not in entry:
-                raise ValueError("FHIR Bundle entry is invalid")
-            yield from _iter_resources(entry["resource"])
-        return
-    if isinstance(value.get("resourceType"), str):
-        yield value
+    if not isinstance(value, dict) or value.get("resourceType") != "Bundle":
+        raise ValueError("generated JSON must be a FHIR R4 Bundle")
+    if value.get("type") not in {"collection", "transaction"}:
+        raise ValueError("generated FHIR Bundle type is invalid")
+    entries = value.get("entry")
+    if not isinstance(entries, list) or not entries:
+        raise ValueError("FHIR Bundle entry must be a non-empty list")
+    for entry in entries:
+        if not isinstance(entry, dict) or not isinstance(entry.get("resource"), dict):
+            raise ValueError("FHIR Bundle entry is invalid")
+        resource = entry["resource"]
+        resource_type = resource.get("resourceType")
+        if resource_type not in _ALLOWED_FHIR_R4_RESOURCE_TYPES - {"Bundle"}:
+            raise ValueError(f"generated FHIR resource type is invalid: {resource_type!r}")
+        resource_id = resource.get("id")
+        if resource_id is not None and (
+            not isinstance(resource_id, str) or _FHIR_ID.fullmatch(resource_id) is None
+        ):
+            raise ValueError("generated FHIR resource id is invalid")
+        yield resource
+
+
+def _parse_properties(data: bytes) -> dict[str, str]:
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("registered Synthea configuration is not UTF-8") from exc
+    properties: dict[str, str] = {}
+    for line_number, raw_line in enumerate(text.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line or line.startswith(("#", "!")):
+            continue
+        if raw_line.rstrip().endswith("\\"):
+            raise ValueError("configuration continuations are not permitted")
+        separator = "=" if "=" in line else ":" if ":" in line else None
+        if separator is None:
+            raise ValueError(f"invalid configuration line: {line_number}")
+        key, value = (part.strip() for part in line.split(separator, 1))
+        if not key or key in properties:
+            raise ValueError(f"duplicate or empty configuration key: {key!r}")
+        properties[key] = value
+    return properties
+
+
+def _property_value(value: Any) -> str:
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if isinstance(value, (str, int)) and not isinstance(value, bool):
+        return str(value)
+    raise ValueError("exporter settings must be strings, integers, or booleans")
+
+
+def _checked_dependency_files() -> tuple[str, ...]:
+    root = Path(__file__).resolve().parent
+    pending = [Path(__file__).name]
+    discovered: set[str] = set()
+    while pending:
+        relative = pending.pop()
+        if relative in discovered:
+            continue
+        discovered.add(relative)
+        tree = ast.parse((root / relative).read_text(encoding="utf-8"), filename=relative)
+        local_modules: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                local_modules.update(alias.name.split(".", 1)[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                local_modules.add(node.module.split(".", 1)[0])
+        for module in local_modules:
+            candidate = f"{module}.py"
+            if (root / candidate).is_file() and candidate not in discovered:
+                pending.append(candidate)
+    actual = tuple(sorted(discovered))
+    expected = tuple(sorted(_DEPENDENCY_FILES))
+    if actual != expected:
+        raise ValueError(
+            f"generation compiler dependency closure drifted: expected={expected}, "
+            f"actual={actual}"
+        )
+    return actual
 
 
 def _dependency_receipts() -> list[dict[str, Any]]:
     root = Path(__file__).resolve().parent
     receipts = []
-    for relative in sorted(_DEPENDENCY_FILES):
+    for relative in _checked_dependency_files():
         payload = (root / relative).read_bytes()
         receipts.append(
             {"path": relative, "sha256": sha256(payload), "bytes": len(payload)}
@@ -492,30 +755,45 @@ def compile_generation_receipt(
     validated = _validate_spec(spec, power_spec, power_receipt)
     dependencies_before = _dependency_receipts()
     artifact_root = Path(artifact_root)
-    inventory = _inventory(artifact_root)
-    input_by_path = {entry["path"]: entry for entry in validated["input_entries"]}
-    output_prefix = f'{validated["output_root"]}/'
-    output_paths = [path for path in inventory if path.startswith(output_prefix)]
-    if not output_paths:
-        raise ValueError("generated output tree is empty")
-    unexpected = sorted(set(inventory) - set(input_by_path) - set(output_paths))
-    missing = sorted(set(input_by_path) - set(inventory))
-    if unexpected or missing:
-        raise ValueError(
-            "artifact tree differs from registered inputs: "
-            f"missing={missing}, unexpected={unexpected}"
-        )
-    if len(output_paths) > validated["bounds"]["max_entries"]:
-        raise ValueError("generated output exceeds entry bound")
-
     input_entries: list[dict[str, Any]] = []
     output_entries: list[dict[str, Any]] = []
     patient_receipts: dict[str, dict[str, str]] = {}
     total_output_bytes = 0
-    content_digest = hashlib.sha256()
     probe_data: bytes | None = None
-    root_fd = os.open(artifact_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    configuration_data: bytes | None = None
     try:
+        root_fd = os.open(
+            artifact_root,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+        )
+    except OSError as exc:
+        raise ValueError("artifact root must be an accessible real directory") from exc
+    try:
+        inventory_before = _inventory_fd(root_fd)
+        file_paths = {
+            path
+            for path, metadata in inventory_before.items()
+            if path and metadata[0] == "file"
+        }
+        input_by_path = {
+            entry["path"]: entry for entry in validated["input_entries"]
+        }
+        output_prefix = f'{validated["output_root"]}/'
+        output_paths = sorted(
+            path for path in file_paths if path.startswith(output_prefix)
+        )
+        if not output_paths:
+            raise ValueError("generated output tree is empty")
+        unexpected = sorted(file_paths - set(input_by_path) - set(output_paths))
+        missing = sorted(set(input_by_path) - file_paths)
+        if unexpected or missing:
+            raise ValueError(
+                "artifact tree differs from registered inputs: "
+                f"missing={missing}, unexpected={unexpected}"
+            )
+        if len(output_paths) > validated["bounds"]["max_entries"]:
+            raise ValueError("generated output exceeds entry bound")
+
         for path, expected in sorted(input_by_path.items()):
             data = _read_registered(
                 root_fd,
@@ -531,6 +809,8 @@ def compile_generation_receipt(
             input_entries.append(actual)
             if path == validated["runtime"]["version_probe"]["path"]:
                 probe_data = data
+            if path == validated["configuration_path"]:
+                configuration_data = data
 
         if probe_data is None:
             raise ValueError("registered Java version probe is missing")
@@ -543,6 +823,14 @@ def compile_generation_receipt(
             or validated["runtime"]["version"] not in probe_text
         ):
             raise ValueError("Java version probe does not contain the registered runtime")
+        if configuration_data is None:
+            raise ValueError("registered Synthea configuration is missing")
+        properties = _parse_properties(configuration_data)
+        for key, value in validated["exporter"].items():
+            if properties.get(key) != _property_value(value):
+                raise ValueError(
+                    f"exporter setting is not bound to configuration: {key}"
+                )
 
         for path in output_paths:
             suffix = PurePosixPath(path).suffix.lower()
@@ -556,20 +844,17 @@ def compile_generation_receipt(
                 raise ValueError("generated output exceeds total byte bound")
             entry = {"path": path, "sha256": sha256(data), "bytes": len(data)}
             output_entries.append(entry)
-            encoded_path = path.encode("utf-8")
-            content_digest.update(len(encoded_path).to_bytes(8, "big"))
-            content_digest.update(encoded_path)
-            content_digest.update(len(data).to_bytes(8, "big"))
-            content_digest.update(data)
             value = _load_json_bytes(data, path)
             resource_count = 0
+            patient_count = 0
             for resource in _iter_resources(value):
                 resource_count += 1
                 if resource.get("resourceType") != "Patient":
                     continue
+                patient_count += 1
                 patient_id = resource.get("id")
-                if not isinstance(patient_id, str) or not patient_id:
-                    raise ValueError(f"generated Patient has no id: {path}")
+                if not isinstance(patient_id, str) or _FHIR_ID.fullmatch(patient_id) is None:
+                    raise ValueError(f"generated Patient id is invalid: {path}")
                 if patient_id in patient_receipts:
                     raise ValueError(f"duplicate generated Patient id: {patient_id}")
                 patient_receipts[patient_id] = {
@@ -578,6 +863,13 @@ def compile_generation_receipt(
                 }
             if resource_count == 0:
                 raise ValueError("generated JSON contains no FHIR resource")
+            if patient_count != 1:
+                raise ValueError(
+                    "each generated FHIR Bundle must contain exactly one Patient"
+                )
+        inventory_after = _inventory_fd(root_fd)
+        if inventory_after != inventory_before:
+            raise ValueError("artifact tree changed during receipt compilation")
     finally:
         os.close(root_fd)
 
@@ -586,14 +878,17 @@ def compile_generation_receipt(
             "generated Patient count does not match the power-gated population"
         )
     patient_manifest = [patient_receipts[key] for key in sorted(patient_receipts)]
-    public_output_entries = [
-        {
-            "path_sha256": sha256(entry["path"].encode("utf-8")),
-            "sha256": entry["sha256"],
-            "bytes": entry["bytes"],
-        }
-        for entry in output_entries
-    ]
+    public_output_entries = sorted(
+        (
+            {"sha256": entry["sha256"], "bytes": entry["bytes"]}
+            for entry in output_entries
+        ),
+        key=lambda entry: (entry["sha256"], entry["bytes"]),
+    )
+    content_digest = hashlib.sha256()
+    for entry in public_output_entries:
+        content_digest.update(bytes.fromhex(entry["sha256"]))
+        content_digest.update(entry["bytes"].to_bytes(8, "big"))
     dependencies_after = _dependency_receipts()
     if dependencies_after != dependencies_before:
         raise ValueError("generation receipt dependencies changed during compilation")
@@ -624,11 +919,13 @@ def compile_generation_receipt(
         "source_population": {
             "patients": len(patient_receipts),
             "patient_manifest_sha256": sha256(canonical_bytes(patient_manifest)),
+            "assignment": _patient_assignment_receipt(
+                patient_receipts,
+                power_receipt,
+            ),
             "patient_identifiers_disclosed": False,
         },
         "compiler_dependencies": dependencies_before,
-        "efficacy_artifacts_opened": False,
-        "gold_artifacts_opened": False,
         "model_calls": 0,
     }
 
@@ -652,7 +949,69 @@ def verify_generation_receipt(
 
 
 def _load_json(path: Path) -> object:
-    return _load_json_bytes(path.read_bytes(), path.name)
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError as exc:
+        raise ValueError(f"cannot safely open control JSON: {path.name}") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+            raise ValueError(f"control JSON is not a unique regular file: {path.name}")
+        if metadata.st_size > MAX_CONTROL_JSON_BYTES:
+            raise ValueError(f"control JSON exceeds byte bound: {path.name}")
+        data = bytearray()
+        while len(data) <= MAX_CONTROL_JSON_BYTES:
+            chunk = os.read(
+                descriptor,
+                min(1024 * 1024, MAX_CONTROL_JSON_BYTES + 1 - len(data)),
+            )
+            if not chunk:
+                break
+            data.extend(chunk)
+        if len(data) != metadata.st_size or len(data) > MAX_CONTROL_JSON_BYTES:
+            raise ValueError(f"control JSON changed or exceeds byte bound: {path.name}")
+    finally:
+        os.close(descriptor)
+    value = _load_json_bytes(bytes(data), path.name)
+    _require_finite_json(value, path.name)
+    return value
+
+
+def _validate_cli_output_path(output: Path, artifact_root: Path, inputs: list[Path]) -> None:
+    try:
+        artifact = artifact_root.resolve(strict=True)
+        parent = output.parent.resolve(strict=True)
+        resolved_inputs = [path.resolve(strict=True) for path in inputs]
+    except OSError as exc:
+        raise ValueError("CLI paths must have existing real parents and inputs") from exc
+    candidate = parent / output.name
+    if candidate == artifact or artifact in candidate.parents:
+        raise ValueError("receipt output cannot overlap the artifact root")
+    if candidate in resolved_inputs:
+        raise ValueError("receipt output cannot overwrite a control input")
+
+
+def _write_new_file(path: Path, data: bytes) -> None:
+    parent = path.parent.resolve(strict=True)
+    parent_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            path.name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            0o600,
+            dir_fd=parent_fd,
+        )
+        sent = 0
+        while sent < len(data):
+            sent += os.write(descriptor, data[sent:])
+        os.fsync(descriptor)
+    except OSError as exc:
+        raise ValueError(f"refusing unsafe or existing output path: {path.name}") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        os.close(parent_fd)
 
 
 def main() -> None:
@@ -673,14 +1032,20 @@ def main() -> None:
     power_spec = _load_json(args.power_spec)
     power_receipt = _load_json(args.power_receipt)
     if args.command == "compile":
+        _validate_cli_output_path(
+            args.output,
+            args.artifact_root,
+            [args.spec, args.power_spec, args.power_receipt],
+        )
         receipt = compile_generation_receipt(
             spec,
             artifact_root=args.artifact_root,
             power_spec=power_spec,
             power_receipt=power_receipt,
         )
-        args.output.write_bytes(
-            json.dumps(receipt, sort_keys=True, indent=2).encode("utf-8") + b"\n"
+        _write_new_file(
+            args.output,
+            json.dumps(receipt, sort_keys=True, indent=2).encode("utf-8") + b"\n",
         )
     else:
         verify_generation_receipt(

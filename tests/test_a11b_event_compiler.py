@@ -259,6 +259,20 @@ class A11bEventCompilerTests(unittest.TestCase):
             ),
         )
 
+    def test_clinical_tnm_stage_is_not_mistaken_for_an_arm_label(self) -> None:
+        case = _load_cases()[0]
+        source = _source_packet(case)
+        source["resources"][0]["valueString"] = "T1"
+
+        compiled = compile_arms(
+            source,
+            _question(case),
+            _plan(case),
+            max_packet_bytes=MAX_PACKET_BYTES,
+        )
+
+        self.assertEqual(set(compiled["arms"]), {ARM_T0, ARM_T1, ARM_E1})
+
     def test_gold_and_arm_derived_inputs_fail_closed(self) -> None:
         case = _load_cases()[0]
         source = _source_packet(case)
@@ -288,7 +302,7 @@ class A11bEventCompilerTests(unittest.TestCase):
                     )
 
         nested_arm = copy.deepcopy(source)
-        nested_arm["resources"][0]["meta"] = {"opaque": "T0"}
+        nested_arm["resources"][0]["meta"] = {"opaque": ARM_T0}
         with self.assertRaisesRegex(ValueError, "forbidden compiler input"):
             compile_arms(
                 nested_arm,

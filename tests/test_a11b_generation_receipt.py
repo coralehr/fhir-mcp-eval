@@ -4,7 +4,8 @@ import copy
 import json
 import math
 import os
-import re
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -48,25 +49,25 @@ def _fixture(root: Path) -> dict[str, object]:
     config = _write(
         root,
         "configuration/synthea.properties",
-        b"exporter.fhir.export=true\n",
+        b"exporter.baseDirectory=output\nexporter.fhir.export=true\n",
     )
     module = _write(root, "modules/allergies.json", b'{"name":"Allergies"}\n')
-    bundle = {
-        "resourceType": "Bundle",
-        "type": "collection",
-        "entry": [
-            {
-                "resource": {
-                    "resourceType": "Patient",
-                    "id": f"synthetic-{index:03d}",
+    for index in range(448):
+        bundle = {
+            "resourceType": "Bundle",
+            "type": "collection",
+            "entry": [
+                {
+                    "resource": {
+                        "resourceType": "Patient",
+                        "id": f"synthetic-{index:03d}",
+                    }
                 }
-            }
-            for index in range(448)
-        ],
-    }
-    output = root / "output" / "fhir" / "patients.json"
-    output.parent.mkdir(parents=True)
-    output.write_bytes(canonical_bytes(bundle))
+            ],
+        }
+        output = root / "output" / "fhir" / f"patient-{index:03d}.json"
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(canonical_bytes(bundle))
     return {
         "schema_version": "a11b-synthea-generation-spec-v1",
         "generator": {
@@ -98,6 +99,10 @@ def _fixture(root: Path) -> dict[str, object]:
                 "448",
                 "-r",
                 "20260715",
+                "-c",
+                "configuration/synthea.properties",
+                "-d",
+                "modules",
             ],
             "environment": {"LANG": "en_US.UTF-8", "LC_ALL": "en_US.UTF-8", "TZ": "UTC"},
             "seed": 20260715,
@@ -144,20 +149,20 @@ class A11bGenerationReceiptTests(unittest.TestCase):
 
             self.assertEqual(
                 receipt["schema_version"],
-                "a11b-synthea-generation-receipt-v1",
+                "a11b-synthea-generation-receipt-v2",
             )
             self.assertEqual(receipt["source_population"]["patients"], 448)
             self.assertEqual(receipt["power_gate"]["required_source_patients"], 448)
             self.assertEqual(receipt["model_calls"], 0)
-            self.assertFalse(receipt["efficacy_artifacts_opened"])
-            self.assertFalse(receipt["gold_artifacts_opened"])
+            self.assertNotIn("efficacy_artifacts_opened", receipt)
+            self.assertNotIn("gold_artifacts_opened", receipt)
             self.assertNotIn(directory, json.dumps(receipt, sort_keys=True))
 
     def test_receipt_binds_but_does_not_disclose_output_file_names(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             spec = _fixture(root)
-            original = root / "output" / "fhir" / "patients.json"
+            original = root / "output" / "fhir" / "patient-000.json"
             private_name = "synthetic-000-Alice-Smith.json"
             original.rename(original.with_name(private_name))
 
@@ -172,8 +177,41 @@ class A11bGenerationReceiptTests(unittest.TestCase):
             self.assertNotIn(private_name, serialized)
             self.assertEqual(
                 set(receipt["raw_output"]["entries"][0]),
-                {"path_sha256", "sha256", "bytes"},
+                {"sha256", "bytes"},
             )
+
+    def test_receipt_proves_patient_disjoint_assignment_without_identifiers(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            spec = _fixture(root)
+
+            receipt = compile_generation_receipt(
+                spec,
+                artifact_root=root,
+                power_spec=POWER_SPEC,
+                power_receipt=POWER_RECEIPT,
+            )
+
+            assignment = receipt["source_population"]["assignment"]
+            self.assertEqual(
+                assignment["scheme"],
+                "domain-separated-sha256-order-v1",
+            )
+            self.assertEqual(assignment["development_patients"], 64)
+            self.assertEqual(assignment["efficacy_patients"], 384)
+            self.assertEqual(assignment["source_patients"], 448)
+            self.assertEqual(assignment["intersection_patients"], 0)
+            self.assertTrue(assignment["all_source_patients_assigned"])
+            self.assertFalse(assignment["patient_identifiers_disclosed"])
+            self.assertRegex(
+                assignment["development_manifest_sha256"],
+                r"^[0-9a-f]{64}$",
+            )
+            self.assertRegex(
+                assignment["efficacy_manifest_sha256"],
+                r"^[0-9a-f]{64}$",
+            )
+            self.assertNotIn("synthetic-", json.dumps(assignment, sort_keys=True))
 
     def test_independent_roots_compile_byte_identical_receipts_and_verify(self) -> None:
         with (
@@ -278,7 +316,7 @@ class A11bGenerationReceiptTests(unittest.TestCase):
             jar.unlink()
             jar.symlink_to(external)
 
-            with self.assertRaisesRegex(ValueError, "unsafe file"):
+            with self.assertRaisesRegex(ValueError, "unsafe symlink"):
                 compile_generation_receipt(
                     spec,
                     artifact_root=root,
@@ -321,10 +359,7 @@ class A11bGenerationReceiptTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             spec = _fixture(root)
-            output = root / "output" / "fhir" / "patients.json"
-            bundle = json.loads(output.read_text())
-            bundle["entry"].pop()
-            output.write_bytes(canonical_bytes(bundle))
+            (root / "output" / "fhir" / "patient-447.json").unlink()
 
             with self.assertRaisesRegex(ValueError, "Patient count"):
                 compile_generation_receipt(
@@ -338,9 +373,9 @@ class A11bGenerationReceiptTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             spec = _fixture(root)
-            output = root / "output" / "fhir" / "patients.json"
+            output = root / "output" / "fhir" / "patient-447.json"
             bundle = json.loads(output.read_text())
-            bundle["entry"][-1]["resource"]["id"] = bundle["entry"][0]["resource"]["id"]
+            bundle["entry"][0]["resource"]["id"] = "synthetic-000"
             output.write_bytes(canonical_bytes(bundle))
 
             with self.assertRaisesRegex(ValueError, "duplicate generated Patient"):
@@ -388,13 +423,71 @@ class A11bGenerationReceiptTests(unittest.TestCase):
                 argv = spec["invocation"]["argv"]
                 argv[argv.index(flag) + 1] = value
 
-                with self.assertRaisesRegex(ValueError, f"{re.escape(flag)} value"):
+                with self.assertRaisesRegex(ValueError, "argv must exactly bind"):
                     compile_generation_receipt(
                         spec,
                         artifact_root=root,
                         power_spec=POWER_SPEC,
                         power_receipt=POWER_RECEIPT,
                     )
+
+    def test_invocation_rejects_every_unregistered_synthea_input_channel(self) -> None:
+        mutations = (
+            ["-c", "/etc/passwd"],
+            ["-d", "/tmp/modules"],
+            ["-i", "/tmp/patients"],
+            ["-u", "/tmp/terminology"],
+            ["-f", "/tmp/fixed-records"],
+            ["-k", "/tmp/keep"],
+            ["--exporter.fhir.export=false"],
+        )
+        for extra in mutations:
+            with self.subTest(extra=extra), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                spec = _fixture(root)
+                spec["invocation"]["argv"].extend(extra)
+
+                with self.assertRaisesRegex(ValueError, "argv must exactly bind"):
+                    compile_generation_receipt(
+                        spec,
+                        artifact_root=root,
+                        power_spec=POWER_SPEC,
+                        power_receipt=POWER_RECEIPT,
+                    )
+
+    def test_registered_configuration_binds_exporter_settings_and_locale(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            spec = _fixture(root)
+            drifted = copy.deepcopy(spec)
+            drifted["exporter_settings"]["exporter.fhir.export"] = False
+            with self.assertRaisesRegex(ValueError, "FHIR export must be enabled"):
+                compile_generation_receipt(
+                    drifted,
+                    artifact_root=root,
+                    power_spec=POWER_SPEC,
+                    power_receipt=POWER_RECEIPT,
+                )
+
+            drifted = copy.deepcopy(spec)
+            drifted["exporter_settings"]["exporter.pretty_print"] = False
+            with self.assertRaisesRegex(ValueError, "not bound to configuration"):
+                compile_generation_receipt(
+                    drifted,
+                    artifact_root=root,
+                    power_spec=POWER_SPEC,
+                    power_receipt=POWER_RECEIPT,
+                )
+
+            drifted = copy.deepcopy(spec)
+            drifted["invocation"]["locale"] = "ja-JP"
+            with self.assertRaisesRegex(ValueError, "locale or timezone"):
+                compile_generation_receipt(
+                    drifted,
+                    artifact_root=root,
+                    power_spec=POWER_SPEC,
+                    power_receipt=POWER_RECEIPT,
+                )
 
     def test_unregistered_output_format_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -428,7 +521,7 @@ class A11bGenerationReceiptTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             spec = _fixture(root)
-            (root / "output" / "fhir" / "patients.json").write_bytes(
+            (root / "output" / "fhir" / "patient-000.json").write_bytes(
                 b'{"resourceType":"Bundle","resourceType":"Patient","id":"x"}'
             )
 
@@ -448,13 +541,89 @@ class A11bGenerationReceiptTests(unittest.TestCase):
                 '{"not":"FHIR"}\n'
             )
 
-            with self.assertRaisesRegex(ValueError, "contains no FHIR resource"):
+            with self.assertRaisesRegex(ValueError, "must be a FHIR R4 Bundle"):
                 compile_generation_receipt(
                     spec,
                     artifact_root=root,
                     power_spec=POWER_SPEC,
                     power_receipt=POWER_RECEIPT,
                 )
+
+    def test_fake_fhir_resource_and_invalid_patient_id_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            spec = _fixture(root)
+            output = root / "output" / "fhir" / "patient-000.json"
+            bundle = json.loads(output.read_text())
+            bundle["entry"][0]["resource"]["resourceType"] = "NotFHIR"
+            output.write_bytes(canonical_bytes(bundle))
+            with self.assertRaisesRegex(ValueError, "resource type is invalid"):
+                compile_generation_receipt(
+                    spec,
+                    artifact_root=root,
+                    power_spec=POWER_SPEC,
+                    power_receipt=POWER_RECEIPT,
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            spec = _fixture(root)
+            output = root / "output" / "fhir" / "patient-000.json"
+            bundle = json.loads(output.read_text())
+            bundle["entry"][0]["resource"]["id"] = "bad\npatient"
+            output.write_bytes(canonical_bytes(bundle))
+            with self.assertRaisesRegex(ValueError, "resource id is invalid"):
+                compile_generation_receipt(
+                    spec,
+                    artifact_root=root,
+                    power_spec=POWER_SPEC,
+                    power_receipt=POWER_RECEIPT,
+                )
+
+    def test_post_inventory_addition_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            spec = _fixture(root)
+            original = __import__("a11b_generation_receipt")._read_registered
+            changed = False
+
+            def mutate(*args: object, **kwargs: object) -> bytes:
+                nonlocal changed
+                data = original(*args, **kwargs)
+                if not changed:
+                    changed = True
+                    (root / "gold.json").write_text('{"answer":"leak"}\n')
+                return data
+
+            with mock.patch(
+                "a11b_generation_receipt._read_registered",
+                side_effect=mutate,
+            ), self.assertRaisesRegex(ValueError, "changed during receipt compilation"):
+                compile_generation_receipt(
+                    spec,
+                    artifact_root=root,
+                    power_spec=POWER_SPEC,
+                    power_receipt=POWER_RECEIPT,
+                )
+
+    def test_unreadable_directory_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            spec = _fixture(root)
+            hidden = root / "hidden"
+            hidden.mkdir()
+            (hidden / "gold.json").write_text('{"answer":"leak"}\n')
+            hidden.chmod(0)
+            try:
+                with self.assertRaisesRegex(ValueError, "unreadable directory"):
+                    compile_generation_receipt(
+                        spec,
+                        artifact_root=root,
+                        power_spec=POWER_SPEC,
+                        power_receipt=POWER_RECEIPT,
+                    )
+            finally:
+                hidden.chmod(0o700)
 
     def test_compiler_dependency_drift_during_read_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -535,6 +704,78 @@ class A11bGenerationReceiptTests(unittest.TestCase):
                     power_spec=POWER_SPEC,
                     power_receipt=POWER_RECEIPT,
                 )
+
+    def test_compile_cli_refuses_artifact_input_existing_and_symlink_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            root = base / "artifacts"
+            root.mkdir()
+            spec = _fixture(root)
+            spec_path = base / "spec.json"
+            power_spec_path = base / "power-spec.json"
+            power_receipt_path = base / "power-receipt.json"
+            spec_path.write_bytes(canonical_bytes(spec))
+            power_spec_path.write_bytes(canonical_bytes(POWER_SPEC))
+            power_receipt_path.write_bytes(canonical_bytes(POWER_RECEIPT))
+            command = [
+                sys.executable,
+                str(ROOT / "a11b_generation_receipt.py"),
+                "compile",
+                "--spec",
+                str(spec_path),
+                "--power-spec",
+                str(power_spec_path),
+                "--power-receipt",
+                str(power_receipt_path),
+                "--artifact-root",
+                str(root),
+                "--output",
+            ]
+
+            inside = subprocess.run(
+                [*command, str(root / "receipt.json")],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(inside.returncode, 0)
+            self.assertIn("cannot overlap the artifact root", inside.stderr)
+
+            overwrite = subprocess.run(
+                [*command, str(spec_path)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(overwrite.returncode, 0)
+            self.assertIn("cannot overwrite a control input", overwrite.stderr)
+
+            output = base / "receipt.json"
+            first = subprocess.run(
+                [*command, str(output)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(first.returncode, 0, first.stderr)
+            second = subprocess.run(
+                [*command, str(output)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(second.returncode, 0)
+            self.assertIn("refusing unsafe or existing output", second.stderr)
+
+            symlink = base / "receipt-link.json"
+            symlink.symlink_to(output)
+            linked = subprocess.run(
+                [*command, str(symlink)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(linked.returncode, 0)
 
 
 if __name__ == "__main__":
