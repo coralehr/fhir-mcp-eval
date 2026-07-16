@@ -486,6 +486,7 @@ eval_budget.py               # token-cost ledger with a hard cap
 experiment_witness.py        # signed monotonic call inventory
 experiment_executor.py       # sealed, crash-conservative trusted call executor
 trusted_codex_driver.py      # fixed-environment native Codex runtime adapter
+experiment_executor_bootstrap.py # root-owned -I/-B/-S service import bootstrap
 experiment_executor_service.py # fixed-bundle, no-raw-egress one-request service
 config.yml.example           # template for the upstream GCP agents (cp -> config.yml; gitignored)
 agent/mcp_agent.py           # agent that retrieves via an MCP server

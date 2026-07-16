@@ -1,7 +1,8 @@
 # Trusted experiment executor
 
 Status: no-model protocol core, production Codex driver, fixed-bundle loader,
-restricted one-request transport, and A11 v4 external-anchor schema implemented.
+restricted one-request transport, isolated root-owned import bootstrap, and A11
+v4 service-core external-anchor schema implemented.
 The driver is independently adversarially reviewed. The external-approval cache
 is checker-signed with a verification key pinned in immutable service code.
 There is no installed service bundle, forced-command transport, externally
@@ -38,9 +39,10 @@ without exception text, paths, prompts, or tracebacks.
 
 The loader reads a fixed admin-owned directory, not request, argv, environment,
 or `SSH_ORIGINAL_COMMAND` configuration. Production startup additionally
-requires isolated Python `-I -B`, an exact scrubbed environment, fixed working
+requires isolated Python `-I -B -S`, an exact scrubbed environment, fixed working
 directory/private `TMPDIR`, and root-owned non-writable source files with no
-loaded bytecode cache. It descriptor-validates a mode-0400
+loaded bytecode cache. The root-owned bootstrap inserts only the fixed code
+directory after `-S` disables site and `.pth` startup. It descriptor-validates a mode-0400
 private `bundle.json`, exact 32-byte commitment key, mode-0600 single-link
 witness key, dedicated Codex home, scratch/state roots, code identities,
 Python, ssh-keygen, native runtime, sandbox executable/profile, controller,
@@ -156,13 +158,16 @@ Before A11b can spend a token:
 
 1. build and independently review the actual sealed A11b bundle/controller and
    publish its v4 anchor from a separate host;
-2. install the fixed one-request wrapper and localhost-only forced-command SSH
-   key under a dedicated Mac mini executor principal, with no raw-fetch route and
-   with the run account unable to mutate or sudo into it;
-3. create a private dedicated `CODEX_HOME`, validate its credential metadata,
+2. extend the public anchor with exact launcher, authorized-key, effective-sshd,
+   root-owned standalone-Python tree, flags, cwd, environment, and executor-account
+   receipts; A11 v4 currently binds the service core but not this install surface;
+3. install the fixed one-request wrapper and localhost-only forced-command SSH
+   key under a hidden dedicated non-admin Mac mini executor principal with
+   `/bin/sh`, with no raw-fetch route and with the run account unable to mutate it;
+4. create a private dedicated `CODEX_HOME`, validate its credential metadata,
    and require a clean zero-model runtime probe;
-4. have the separate checker verify GitHub exact-head approval and sign the
+5. have the separate checker verify GitHub exact-head approval and sign the
    offline receipt, then prove the installed code, Python, ssh-keygen, runtime,
    sandbox, witness, and schedule match the externally approved binding; and
-5. rerun the fake-driver suite plus a zero-model end-to-end dry run from a fresh
+6. rerun the fake-driver suite plus a zero-model end-to-end dry run from a fresh
    directory.

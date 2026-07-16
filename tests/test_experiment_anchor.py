@@ -116,11 +116,12 @@ def trusted_executor_binding() -> dict[str, object]:
             for index, (name, digest) in enumerate(
                 (
                     ("anchor", "a"),
-                    ("codex_harness", "b"),
-                    ("driver", "c"),
-                    ("executor", "d"),
-                    ("service", "e"),
-                    ("witness", "f"),
+                    ("bootstrap", "b"),
+                    ("codex_harness", "c"),
+                    ("driver", "d"),
+                    ("executor", "e"),
+                    ("service", "f"),
+                    ("witness", "0"),
                 )
             )
         ],

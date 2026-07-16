@@ -88,8 +88,11 @@ Implementation status as of 2026-07-15:
   schedule, build, model configuration, executables, native runtime, sandbox,
   and independently pinned checker key. Cached GitHub approval must carry that
   separate checker's valid signature. It has made no model calls.
+- [ ] Bind the exact launcher, root-owned standalone Python tree, authorized key,
+  effective sshd policy, flags/environment/cwd, and hidden non-admin executor
+  principal into the next controller schema; v4 binds the service core only.
 - [ ] Build and independently approve the actual A11b bundle/controller, install
-  the localhost-only forced-command wrapper, and run a fresh zero-model RPC dry
+  that localhost-only forced-command surface, and run a fresh zero-model RPC dry
   run; no deployed service owns a live credential yet.
 - [ ] Deploy the witness/executor under a principal the run account cannot
   mutate, bind its public key and schedule into a new externally approved

@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import re
+import resource
 import signal
 import stat
 import sys
@@ -43,6 +44,9 @@ PRODUCTION_BUNDLE_DIR = Path(
 PRODUCTION_SERVICE_PATH = Path(
     "/usr/local/lib/coralehr-experiment-executor/experiment_executor_service.py"
 )
+PRODUCTION_CODE_DIR = PRODUCTION_SERVICE_PATH.parent
+PRODUCTION_BOOTSTRAP_PATH = PRODUCTION_CODE_DIR / "experiment_executor_bootstrap.py"
+PRODUCTION_PYTHON_PATH = PRODUCTION_CODE_DIR / "python/bin/python3.14"
 PRODUCTION_TMPDIR = PRODUCTION_BUNDLE_DIR / "scratch/service-tmp"
 PRODUCTION_ENVIRONMENT = {
     "HOME": str(PRODUCTION_BUNDLE_DIR),
@@ -50,6 +54,7 @@ PRODUCTION_ENVIRONMENT = {
     "PATH": "/usr/bin:/bin",
     "TMPDIR": str(PRODUCTION_TMPDIR),
 }
+_MACOS_TEXT_ENCODING = "__CF_USER_TEXT_ENCODING"
 ANCHOR_CHECKER_VERIFIER = {
     "algorithm": "ssh-ed25519",
     "identity": "coralehr-anchor-checker-2026-07",
@@ -315,23 +320,33 @@ def _read_immutable_code_file(path: Path, *, label: str) -> bytes:
 
 
 def _current_code_subjects() -> list[dict[str, object]]:
-    modules = {
-        "anchor": experiment_anchor,
-        "codex_harness": codex_harness,
-        "driver": trusted_codex_driver,
-        "executor": executor_module,
-        "service": sys.modules[__name__],
-        "witness": witness,
+    subjects = {
+        "anchor": Path(experiment_anchor.__file__),
+        "bootstrap": PRODUCTION_BOOTSTRAP_PATH,
+        "codex_harness": Path(codex_harness.__file__),
+        "driver": Path(trusted_codex_driver.__file__),
+        "executor": Path(executor_module.__file__),
+        "service": Path(sys.modules[__name__].__file__),
+        "witness": Path(witness.__file__),
     }
     result: list[dict[str, object]] = []
-    for name, module in sorted(modules.items()):
-        module_path = getattr(module, "__file__", None)
-        if not isinstance(module_path, str):
+    for name, module_path in sorted(subjects.items()):
+        if not isinstance(module_path, Path):
             raise ServiceBootstrapError("trusted code subject path is unavailable")
-        cached_path = getattr(module, "__cached__", None)
+        module = sys.modules.get(
+            {
+                "anchor": experiment_anchor.__name__,
+                "codex_harness": codex_harness.__name__,
+                "driver": trusted_codex_driver.__name__,
+                "executor": executor_module.__name__,
+                "service": __name__,
+                "witness": witness.__name__,
+            }.get(name, "")
+        )
+        cached_path = getattr(module, "__cached__", None) if module else None
         if isinstance(cached_path, str) and Path(cached_path).exists():
             raise ServiceBootstrapError("trusted code subject loaded from cache")
-        payload = _read_immutable_code_file(Path(module_path), label=name)
+        payload = _read_immutable_code_file(module_path, label=name)
         result.append({"name": name, "sha256": _sha256(payload), "bytes": len(payload)})
     return result
 
@@ -976,14 +991,40 @@ def _install_shutdown_handlers() -> None:
 
 
 def _require_production_process() -> None:
+    actual_environment = dict(os.environ)
+    text_encoding = actual_environment.pop(_MACOS_TEXT_ENCODING, None)
+    environment_is_exact = actual_environment == PRODUCTION_ENVIRONMENT and (
+        text_encoding is None
+        or (
+            isinstance(text_encoding, str)
+            and text_encoding.startswith("0x")
+            and len(text_encoding) <= 32
+            and all(
+                character in "0123456789abcdefABCDEFx:"
+                for character in text_encoding
+            )
+        )
+    )
+    current_umask = os.umask(0o077)
+    os.umask(current_umask)
+    process_limits_are_exact = (
+        current_umask == 0o077
+        and resource.getrlimit(resource.RLIMIT_CORE) == (0, 0)
+    )
     if (
         sys.flags.isolated != 1
         or sys.flags.dont_write_bytecode != 1
+        or sys.flags.no_site != 1
         or len(sys.argv) != 1
+        or Path(sys.executable).resolve() != PRODUCTION_PYTHON_PATH
         or Path(os.path.abspath(sys.argv[0])) != PRODUCTION_SERVICE_PATH
         or Path.cwd() != PRODUCTION_BUNDLE_DIR
-        or os.environ != PRODUCTION_ENVIRONMENT
+        or not environment_is_exact
         or Path(tempfile.gettempdir()).resolve() != PRODUCTION_TMPDIR
+        or not sys.path
+        or Path(sys.path[-1]) != PRODUCTION_CODE_DIR
+        or sys.path.count(str(PRODUCTION_CODE_DIR)) != 1
+        or not process_limits_are_exact
     ):
         raise ServiceBootstrapError("trusted service process isolation changed")
 

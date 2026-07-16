@@ -351,6 +351,7 @@ def _trusted_executor_binding(value: object) -> dict[str, Any]:
     code_value = value.get("code_subjects")
     expected_code_names = (
         "anchor",
+        "bootstrap",
         "codex_harness",
         "driver",
         "executor",

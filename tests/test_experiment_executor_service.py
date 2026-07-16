@@ -322,17 +322,19 @@ class SealedBundleLoaderTests(unittest.TestCase):
         }
 
     def _code_subjects(self) -> list[dict[str, object]]:
-        modules = {
-            "anchor": experiment_anchor,
-            "codex_harness": codex_harness,
-            "driver": trusted_codex_driver,
-            "executor": executor,
-            "service": service_module,
-            "witness": witness,
+        paths = {
+            "anchor": Path(experiment_anchor.__file__).resolve(),
+            "bootstrap": Path(service_module.__file__).with_name(
+                "experiment_executor_bootstrap.py"
+            ),
+            "codex_harness": Path(codex_harness.__file__).resolve(),
+            "driver": Path(trusted_codex_driver.__file__).resolve(),
+            "executor": Path(executor.__file__).resolve(),
+            "service": Path(service_module.__file__).resolve(),
+            "witness": Path(witness.__file__).resolve(),
         }
         result = []
-        for name, module in sorted(modules.items()):
-            path = Path(module.__file__).resolve()
+        for name, path in sorted(paths.items()):
             payload = path.read_bytes()
             result.append(
                 {
@@ -971,13 +973,23 @@ class SealedBundleLoaderTests(unittest.TestCase):
         with self.assertRaises(service_module.ServiceBootstrapError):
             service_module._require_production_process()
 
-        flags = SimpleNamespace(isolated=1, dont_write_bytecode=1)
+        flags = SimpleNamespace(isolated=1, dont_write_bytecode=1, no_site=1)
         with (
             mock.patch.object(service_module.sys, "flags", flags),
             mock.patch.object(
                 service_module.sys,
                 "argv",
                 [str(service_module.PRODUCTION_SERVICE_PATH)],
+            ),
+            mock.patch.object(
+                service_module.sys,
+                "executable",
+                str(service_module.PRODUCTION_PYTHON_PATH),
+            ),
+            mock.patch.object(
+                service_module.sys,
+                "path",
+                ["/stdlib", str(service_module.PRODUCTION_CODE_DIR)],
             ),
             mock.patch.object(
                 service_module.Path,
@@ -993,6 +1005,16 @@ class SealedBundleLoaderTests(unittest.TestCase):
                 service_module.os.environ,
                 service_module.PRODUCTION_ENVIRONMENT,
                 clear=True,
+            ),
+            mock.patch.object(
+                service_module.resource,
+                "getrlimit",
+                return_value=(0, 0),
+            ),
+            mock.patch.object(
+                service_module.os,
+                "umask",
+                side_effect=(0o077, None),
             ),
         ):
             service_module._require_production_process()
