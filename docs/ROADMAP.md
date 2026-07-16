@@ -333,8 +333,8 @@ remaining attribution question.
   incomplete selected paths, plausible complete distractors, and balanced
   timestamp/answerability/path-family difficulty.
 - A pre-answer external digest over the preregistration, packets, controller,
-  native executable, and grader; append-only attempt receipts and retained panel
-  event streams.
+  native executable, grader, and independent witness schedule; signed monotonic
+  attempt receipts and retained panel event streams.
 - If E1 is not promoted, stop using event grouping as an accuracy claim. Keep it
   only if a separately registered auditability, compression, usability, or
   latency benchmark supports it.
