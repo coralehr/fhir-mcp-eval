@@ -346,10 +346,13 @@ class ExperimentExecutorInstallTests(unittest.TestCase):
             "entries": aliased,
         }
         with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            python_source = self._python_source(root)
             with self.assertRaises(install.InstallProtocolError) as caught:
                 install.build_install_package(
                     source_root,
-                    Path(directory) / "package",
+                    root / "package",
+                    python_source_root=python_source,
                     runner_public_key=RUNNER_PUBLIC_KEY,
                     python_tree_receipt=receipt,
                 )
@@ -384,10 +387,13 @@ class ExperimentExecutorInstallTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as directory, self.subTest(
                 collider=collider
             ):
+                root = Path(directory)
+                python_source = self._python_source(root)
                 with self.assertRaises(install.InstallProtocolError) as caught:
                     install.build_install_package(
                         source_root,
-                        Path(directory) / "package",
+                        root / "package",
+                        python_source_root=python_source,
                         runner_public_key=RUNNER_PUBLIC_KEY,
                         python_tree_receipt=receipt,
                     )
@@ -401,7 +407,7 @@ class ExperimentExecutorInstallTests(unittest.TestCase):
             dict(PYTHON_TREE_ENTRIES[0]),
             {
                 "path": "lib/python3.14/__init__.py",
-                "sha256": "0" * 64,
+                "sha256": hashlib.sha256(b"").hexdigest(),
                 "bytes": 0,
                 "mode": "0444",
                 "owner": "root",
@@ -419,9 +425,16 @@ class ExperimentExecutorInstallTests(unittest.TestCase):
             "entries": entries,
         }
         with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            python_source = self._python_source(root)
+            empty_module = python_source / "lib/python3.14/__init__.py"
+            empty_module.parent.mkdir(parents=True)
+            empty_module.write_bytes(b"")
+            empty_module.chmod(0o444)
             manifest = install.build_install_package(
                 source_root,
-                Path(directory) / "package",
+                root / "package",
+                python_source_root=python_source,
                 runner_public_key=RUNNER_PUBLIC_KEY,
                 python_tree_receipt=receipt,
             )
