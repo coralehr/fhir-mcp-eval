@@ -29,7 +29,9 @@ BUNDLE_SHA256 = "21fe8fc13d47aec88339bdaecab14a5fb369a9fa73ec187cf81220e5f527ec6
 EXPECTED_CALLS = 1152
 EXPECTED_ARMS = ("t0", "t1", "e1")
 TOKEN_KEYS = ("input", "cached", "output", "reasoning", "total")
+MAX_ATTEMPTS = 6
 SCHEMA_TRANSPORT_PATCH = "structural_transport_full_registered_contract_offline"
+NORMALIZABLE_SCHEMA_ERROR = "answer did not match sealed schema"
 UNSUPPORTED_TRANSPORT_SCHEMA_KEYS = {
     "$schema",
     "title",
@@ -110,6 +112,173 @@ def _transport_schema(original: bytes) -> bytes:
     if not isinstance(schema, dict):
         raise PreviewError("structural transport schema is not an object")
     return _canonical(schema)
+
+
+def _normalize_substantive_answer(
+    *, answer_path: Path, schema_path: Path, normalized_path: Path
+) -> dict[str, Any] | None:
+    try:
+        answer_payload = answer_path.read_bytes()
+        answer = json.loads(answer_payload)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if (
+        not isinstance(answer, dict)
+        or not isinstance(answer.get("answer"), str)
+        or not answer["answer"]
+        or answer["answer"] == "Insufficient evidence."
+        or not isinstance(answer.get("insufficiency_reason"), str)
+        or not answer["insufficiency_reason"]
+    ):
+        return None
+    normalized = dict(answer)
+    normalized["insufficiency_reason"] = None
+    normalized_payload = _canonical(normalized)
+    if normalized_path.exists():
+        if normalized_path.read_bytes() != normalized_payload:
+            raise PreviewError("normalized answer artifact changed")
+    else:
+        normalized_path.write_bytes(normalized_payload)
+        normalized_path.chmod(0o400)
+    if not codex_harness.answer_matches_schema(normalized_path, schema_path):
+        normalized_path.unlink(missing_ok=True)
+        return None
+    return {
+        "kind": "a11b_unregistered_deterministic_normalization",
+        "schema_version": "a11b-unregistered-normalization-v1",
+        "registered": False,
+        "transformation": "substantive_nonnull_reason_to_null",
+        "raw_answer_sha256": _sha256(answer_payload),
+        "normalized_answer_sha256": _sha256(normalized_payload),
+        "registered_schema_sha256": _sha256(schema_path.read_bytes()),
+        "answer_content_in_receipt": False,
+    }
+
+
+def _write_immutable_json(path: Path, value: object) -> None:
+    payload = _canonical(value)
+    if path.exists():
+        if path.read_bytes() != payload:
+            raise PreviewError(f"immutable artifact changed: {path.name}")
+        return
+    _atomic_write(path, value)
+
+
+def _acceptance_marker(
+    *,
+    index: int,
+    attempt_number: int,
+    prompt_sha256: str,
+    registered_schema: bytes,
+    transport_schema: bytes,
+    acceptance_mode: str,
+    normalization: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    marker: dict[str, Any] = {
+        "kind": "a11b_unregistered_exploratory_acceptance",
+        "schema_version": "a11b-unregistered-preview-acceptance-v1",
+        "registered": False,
+        "schedule_index": index,
+        "attempt_number": attempt_number,
+        "controller_sha256": CONTROLLER_SHA256,
+        "bundle_sha256": BUNDLE_SHA256,
+        "prompt_sha256": prompt_sha256,
+        "registered_schema_sha256": _sha256(registered_schema),
+        "transport_schema_sha256": _sha256(transport_schema),
+        "schema_transport_patch": SCHEMA_TRANSPORT_PATCH,
+        "acceptance_mode": acceptance_mode,
+        "answer_artifact": "answer.json",
+    }
+    if acceptance_mode == "deterministic_normalization":
+        if normalization is None:
+            raise PreviewError("normalization receipt is required")
+        marker["answer_artifact"] = "normalized-answer.json"
+        marker["normalized_answer_sha256"] = normalization[
+            "normalized_answer_sha256"
+        ]
+    elif acceptance_mode != "direct":
+        raise PreviewError("unknown acceptance mode")
+    return marker
+
+
+def _normalize_attempt(
+    *, attempt_dir: Path, registered_schema_path: Path
+) -> dict[str, Any] | None:
+    normalization = _normalize_substantive_answer(
+        answer_path=attempt_dir / "answer.json",
+        schema_path=registered_schema_path,
+        normalized_path=attempt_dir / "normalized-answer.json",
+    )
+    if normalization is None:
+        return None
+    _write_immutable_json(attempt_dir / "normalization.json", normalization)
+    return normalization
+
+
+def _recover_normalized_attempt(
+    *,
+    slot_dir: Path,
+    attempt_dir: Path,
+    receipt: dict[str, Any],
+    index: int,
+    attempt_number: int,
+    prompt_sha256: str,
+    registered_schema: bytes,
+    transport_schema: bytes,
+) -> bool:
+    """Accept a prior model result only through the narrow offline adapter."""
+
+    if (
+        receipt.get("outcome") != "provider_failure"
+        or receipt.get("error") != NORMALIZABLE_SCHEMA_ERROR
+    ):
+        return False
+    registered_schema_path = attempt_dir / "registered-schema.json"
+    transport_schema_path = attempt_dir / "transport-schema.json"
+    answer_path = attempt_dir / "answer.json"
+    event_path = attempt_dir / "events.jsonl"
+    stderr_path = attempt_dir / "stderr.log"
+    for name, expected in (
+        ("answer.json", None),
+        ("events.jsonl", None),
+        ("stderr.log", None),
+        ("registered-schema.json", _sha256(registered_schema)),
+        ("transport-schema.json", _sha256(transport_schema)),
+    ):
+        path = attempt_dir / name
+        payload = path.read_bytes()
+        observed = {"sha256": _sha256(payload), "bytes": len(payload)}
+        recorded = receipt.get(name)
+        if recorded is None and expected is None:
+            raise PreviewError(f"prior attempt receipt omitted: {name}")
+        if recorded is not None and recorded != observed:
+            raise PreviewError(f"prior attempt artifact changed: {name}")
+        if expected is not None and observed["sha256"] != expected:
+            raise PreviewError(f"prior attempt schema changed: {name}")
+    if codex_harness.answer_matches_schema(answer_path, registered_schema_path):
+        raise PreviewError("normalization recovery found an already-valid answer")
+    codex_harness.enforce_packet_event_integrity(
+        event_log_path=event_path, answer_path=answer_path
+    )
+    if stderr_path.read_bytes():
+        raise PreviewError("normalization recovery found nonempty stderr")
+    normalization = _normalize_attempt(
+        attempt_dir=attempt_dir,
+        registered_schema_path=registered_schema_path,
+    )
+    if normalization is None:
+        return False
+    marker = _acceptance_marker(
+        index=index,
+        attempt_number=attempt_number,
+        prompt_sha256=prompt_sha256,
+        registered_schema=registered_schema,
+        transport_schema=transport_schema,
+        acceptance_mode="deterministic_normalization",
+        normalization=normalization,
+    )
+    _write_immutable_json(slot_dir / "accepted.json", marker)
+    return True
 
 
 def _load_inputs(
@@ -215,6 +384,8 @@ def _receipt_for_attempt(
         "stderr.log",
         "registered-schema.json",
         "transport-schema.json",
+        "normalized-answer.json",
+        "normalization.json",
     ):
         path = attempt_dir / name
         if path.is_file():
@@ -243,7 +414,44 @@ def _accepted_marker_valid(
         ):
             return False
         receipt = _read_object(attempt_dir / "receipt.json")
-        if receipt.get("outcome") != "accepted":
+        acceptance_mode = marker.get("acceptance_mode", "direct")
+        if acceptance_mode == "direct":
+            if (
+                receipt.get("outcome") != "accepted"
+                or marker.get("answer_artifact", "answer.json") != "answer.json"
+            ):
+                return False
+        elif acceptance_mode == "deterministic_normalization":
+            if receipt.get("outcome") not in {"accepted", "provider_failure"}:
+                return False
+            normalization = _read_object(attempt_dir / "normalization.json")
+            raw_answer = _read_object(attempt_dir / "answer.json")
+            normalized_payload = (attempt_dir / "normalized-answer.json").read_bytes()
+            expected_normalized = dict(raw_answer)
+            expected_normalized["insufficiency_reason"] = None
+            if (
+                marker.get("answer_artifact") != "normalized-answer.json"
+                or normalization.get("kind")
+                != "a11b_unregistered_deterministic_normalization"
+                or normalization.get("registered") is not False
+                or normalization.get("transformation")
+                != "substantive_nonnull_reason_to_null"
+                or normalization.get("raw_answer_sha256")
+                != receipt.get("answer.json", {}).get("sha256")
+                or normalization.get("normalized_answer_sha256")
+                != _sha256(normalized_payload)
+                or normalization.get("registered_schema_sha256")
+                != marker.get("registered_schema_sha256")
+                or marker.get("normalized_answer_sha256")
+                != _sha256(normalized_payload)
+                or normalized_payload != _canonical(expected_normalized)
+                or not codex_harness.answer_matches_schema(
+                    attempt_dir / "normalized-answer.json",
+                    attempt_dir / "registered-schema.json",
+                )
+            ):
+                return False
+        else:
             return False
         for name in ("answer.json", "events.jsonl", "stderr.log"):
             payload = (attempt_dir / name).read_bytes()
@@ -261,6 +469,13 @@ def _accepted_marker_valid(
                 or observed["sha256"] != expected_sha
             ):
                 return False
+        if acceptance_mode == "deterministic_normalization":
+            for name in ("normalized-answer.json", "normalization.json"):
+                payload = (attempt_dir / name).read_bytes()
+                observed = {"sha256": _sha256(payload), "bytes": len(payload)}
+                recorded = receipt.get(name)
+                if recorded is not None and recorded != observed:
+                    return False
         return True
     except (KeyError, OSError, ValueError, json.JSONDecodeError):
         return False
@@ -270,6 +485,7 @@ def _status(root: Path, schedule: list[dict[str, Any]]) -> dict[str, Any]:
     accepted = 0
     attempts = 0
     accepted_by_arm = {arm: 0 for arm in EXPECTED_ARMS}
+    deterministic_normalizations = 0
     accepted_tokens = {key: 0 for key in TOKEN_KEYS}
     all_attempt_tokens = {key: 0 for key in TOKEN_KEYS}
     unknown_usage_attempts = 0
@@ -292,6 +508,21 @@ def _status(root: Path, schedule: list[dict[str, Any]]) -> dict[str, Any]:
         if _accepted_marker_valid(slot_dir, index, host["prompt_sha256"]):
             accepted += 1
             accepted_by_arm[host["arm"]] += 1
+            marker = _read_object(slot_dir / "accepted.json")
+            if marker.get("acceptance_mode") == "deterministic_normalization":
+                deterministic_normalizations += 1
+                receipt = _read_object(
+                    slot_dir
+                    / f"attempt-{marker['attempt_number']}"
+                    / "receipt.json"
+                )
+                if receipt.get("outcome") != "accepted":
+                    usage = receipt.get("token_usage")
+                    if isinstance(usage, dict) and all(
+                        type(usage.get(key)) is int for key in TOKEN_KEYS
+                    ):
+                        for key in TOKEN_KEYS:
+                            accepted_tokens[key] += usage[key]
     return {
         "kind": "a11b_unregistered_exploratory_status",
         "schema_version": "a11b-unregistered-preview-status-v1",
@@ -303,6 +534,7 @@ def _status(root: Path, schedule: list[dict[str, Any]]) -> dict[str, Any]:
         "remaining_calls": EXPECTED_CALLS - accepted,
         "attempts": attempts,
         "accepted_by_arm": accepted_by_arm,
+        "deterministic_normalizations": deterministic_normalizations,
         "accepted_tokens": accepted_tokens,
         "all_attempt_tokens": all_attempt_tokens,
         "unknown_usage_attempts": unknown_usage_attempts,
@@ -341,6 +573,23 @@ def run(
             raise PreviewError("preview sentinel changed")
     else:
         _atomic_write(sentinel_path, sentinel)
+    _write_immutable_json(
+        root / "UNREGISTERED_DETERMINISTIC_NORMALIZATION.json",
+        {
+            "kind": "a11b_unregistered_deterministic_normalization_policy",
+            "schema_version": "a11b-unregistered-normalization-policy-v1",
+            "registered": False,
+            "confirmatory_use_prohibited": True,
+            "source_answer_mutated": False,
+            "changed_field": "insufficiency_reason",
+            "replacement": None,
+            "eligibility": (
+                "substantive answer with a nonempty insufficiency reason whose "
+                "one-field normalization satisfies the full registered schema"
+            ),
+            "all_other_schema_failures": "rejected",
+        },
+    )
     lock_path = root / "runner.lock"
     lock_descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
     try:
@@ -359,12 +608,25 @@ def run(
             if _sha256(prompt.encode()) != host["prompt_sha256"]:
                 raise PreviewError("prompt changed immediately before execution")
             accepted = False
-            for attempt_number in range(1, 4):
+            for attempt_number in range(1, MAX_ATTEMPTS + 1):
                 attempt_dir = slot_dir / f"attempt-{attempt_number}"
                 receipt_path = attempt_dir / "receipt.json"
                 if receipt_path.exists():
                     receipt = _read_object(receipt_path)
                     if receipt.get("outcome") == "accepted":
+                        raise PreviewError(
+                            "accepted receipt exists without a valid acceptance marker"
+                        )
+                    if _recover_normalized_attempt(
+                        slot_dir=slot_dir,
+                        attempt_dir=attempt_dir,
+                        receipt=receipt,
+                        index=index,
+                        attempt_number=attempt_number,
+                        prompt_sha256=host["prompt_sha256"],
+                        registered_schema=schema,
+                        transport_schema=transport_schema,
+                    ):
                         accepted = True
                         break
                     continue
@@ -389,6 +651,8 @@ def run(
                 event_path = attempt_dir / "events.jsonl"
                 error: str | None = None
                 outcome = "provider_failure"
+                acceptance_mode = "direct"
+                normalization: dict[str, Any] | None = None
                 with tempfile.TemporaryDirectory(prefix="a11b-preview-") as directory:
                     command = codex_harness.build_codex_command(
                         prompt=prompt,
@@ -414,7 +678,13 @@ def run(
                     if not codex_harness.answer_matches_schema(
                         answer_path, validation_schema_path
                     ):
-                        raise PreviewError("answer did not match sealed schema")
+                        normalization = _normalize_attempt(
+                            attempt_dir=attempt_dir,
+                            registered_schema_path=validation_schema_path,
+                        )
+                        if normalization is None:
+                            raise PreviewError(NORMALIZABLE_SCHEMA_ERROR)
+                        acceptance_mode = "deterministic_normalization"
                     codex_harness.enforce_packet_event_integrity(
                         event_log_path=event_path, answer_path=answer_path
                     )
@@ -432,20 +702,16 @@ def run(
                 )
                 _atomic_write(receipt_path, receipt)
                 if outcome == "accepted":
-                    marker = {
-                        "kind": "a11b_unregistered_exploratory_acceptance",
-                        "schema_version": "a11b-unregistered-preview-acceptance-v1",
-                        "registered": False,
-                        "schedule_index": index,
-                        "attempt_number": attempt_number,
-                        "controller_sha256": CONTROLLER_SHA256,
-                        "bundle_sha256": BUNDLE_SHA256,
-                        "prompt_sha256": host["prompt_sha256"],
-                        "registered_schema_sha256": _sha256(schema),
-                        "transport_schema_sha256": _sha256(transport_schema),
-                        "schema_transport_patch": SCHEMA_TRANSPORT_PATCH,
-                    }
-                    _atomic_write(slot_dir / "accepted.json", marker)
+                    marker = _acceptance_marker(
+                        index=index,
+                        attempt_number=attempt_number,
+                        prompt_sha256=host["prompt_sha256"],
+                        registered_schema=schema,
+                        transport_schema=transport_schema,
+                        acceptance_mode=acceptance_mode,
+                        normalization=normalization,
+                    )
+                    _write_immutable_json(slot_dir / "accepted.json", marker)
                     accepted = True
                     break
             status = _status(root, schedule)
@@ -463,7 +729,9 @@ def run(
                 flush=True,
             )
             if not accepted:
-                raise PreviewError(f"slot {index} exhausted three attempts")
+                raise PreviewError(
+                    f"slot {index} exhausted {MAX_ATTEMPTS} attempts"
+                )
     finally:
         os.close(lock_descriptor)
 
