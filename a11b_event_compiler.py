@@ -67,9 +67,6 @@ _FORBIDDEN_PREFIXES = (
     "true_",
 )
 _FORBIDDEN_ARM_VALUES = {
-    "t0",
-    "t1",
-    "e1",
     ARM_T0,
     ARM_T1,
     ARM_E1,

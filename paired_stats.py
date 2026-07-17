@@ -85,7 +85,13 @@ def cluster_bootstrap_ci(
     }
 
 
-def paired_summary(pairs: list[tuple[str, int, int]], *, n_boot: int = 10_000, seed: int = 20260712) -> dict:
+def paired_summary(
+    pairs: list[tuple[str, int, int]],
+    *,
+    n_boot: int = 10_000,
+    alpha: float = 0.05,
+    seed: int = 20260712,
+) -> dict:
     """Full prereg §6 summary for (cluster_id, a_correct, b_correct) pairs."""
     n = len(pairs)
     a_acc = sum(a for _, a, _ in pairs) / n
@@ -100,5 +106,10 @@ def paired_summary(pairs: list[tuple[str, int, int]], *, n_boot: int = 10_000, s
         "discordant_a_only": b_only,
         "discordant_b_only": c_only,
         "mcnemar_p": exact_mcnemar_p(b_only, c_only),
-        "cluster_bootstrap": cluster_bootstrap_ci(pairs, n_boot=n_boot, seed=seed),
+        "cluster_bootstrap": cluster_bootstrap_ci(
+            pairs,
+            n_boot=n_boot,
+            alpha=alpha,
+            seed=seed,
+        ),
     }

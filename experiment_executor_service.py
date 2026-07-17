@@ -61,9 +61,9 @@ ANCHOR_CHECKER_VERIFIER = {
     "namespace": experiment_anchor.SIGNED_ANCHOR_NAMESPACE,
     "public_key": (
         "ssh-ed25519 "
-        "AAAAC3NzaC1lZDI1NTE5AAAAIOs43R3qv/9/ZBJeIT3hpuUgv7RYiusjUWsWR7PasmMy"
+        "AAAAC3NzaC1lZDI1NTE5AAAAIBTUvOkYCO6lTyaUb5FCUmBmnG3PwYHlu61xwDylXEql"
     ),
-    "key_id": "sha256:3ae9cbfd77e5bc24ad2914ea0fa2cb6a473ccdf9f70cc914c456c86371f2bd9d",
+    "key_id": "sha256:e707d1fd1da290d19d67f470c2438e978234f8182217a0dea99e83f1a7bf0abb",
 }
 _HEX_64 = re.compile(r"^[0-9a-f]{64}$")
 _WITNESS_IDENTITY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$")
@@ -321,6 +321,10 @@ def _read_immutable_code_file(path: Path, *, label: str) -> bytes:
 
 def _current_code_subjects() -> list[dict[str, object]]:
     subjects = {
+        "a11b_nightly_bootstrap": Path(__file__).with_name(
+            "a11b_nightly_bootstrap.py"
+        ),
+        "a11b_nightly_runner": Path(__file__).with_name("a11b_nightly_runner.py"),
         "anchor": Path(experiment_anchor.__file__),
         "bootstrap": PRODUCTION_BOOTSTRAP_PATH,
         "codex_harness": Path(codex_harness.__file__),
@@ -655,6 +659,148 @@ def _validate_recorded_service_anchor(
     }
 
 
+def _verify_bound_installation(bundle_dir: Path, controller_bytes: bytes) -> None:
+    """Recompute the signed install-manifest and complete Python-tree bindings."""
+
+    try:
+        controller = json.loads(controller_bytes)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ServiceBootstrapError("sealed controller is invalid") from exc
+    inputs = controller.get("inputs") if isinstance(controller, dict) else None
+    snapshots = controller.get("snapshots") if isinstance(controller, dict) else None
+    if not isinstance(inputs, Mapping) or not isinstance(snapshots, Mapping):
+        return
+    install_sha = inputs.get("install_manifest_sha256")
+    python_sha = inputs.get("python_tree_receipt_sha256")
+    if install_sha is None and python_sha is None:
+        return
+    install_sha = _require_hex64(install_sha, "install manifest digest")
+    python_sha = _require_hex64(python_sha, "Python tree receipt digest")
+
+    bound_files: dict[str, bytes] = {}
+    for snapshot_name, filename, expected_sha in (
+        ("install_manifest", "install-manifest.json", install_sha),
+        ("python_tree", "python-tree-receipt.json", python_sha),
+    ):
+        snapshot = snapshots.get(snapshot_name)
+        if not isinstance(snapshot, Mapping):
+            raise ServiceBootstrapError("controller install snapshot is missing")
+        payload = _read_sealed_file(
+            bundle_dir / filename,
+            label=f"sealed {snapshot_name}",
+            allowed_modes=frozenset({0o400}),
+            byte_cap=MAX_CONTROL_FILE_BYTES,
+        )
+        if {
+            "sha256": _sha256(payload),
+            "bytes": len(payload),
+        } != {
+            "sha256": snapshot.get("sha256"),
+            "bytes": snapshot.get("bytes"),
+        } or _sha256(payload) != expected_sha:
+            raise ServiceBootstrapError("controller install snapshot changed")
+        bound_files[snapshot_name] = payload
+
+    python_tree = _load_canonical_object(
+        bound_files["python_tree"], label="Python tree receipt"
+    )
+    entries = python_tree.get("entries")
+    python_root = PRODUCTION_CODE_DIR / "python"
+    if (
+        set(python_tree) != {
+            "schema_version",
+            "root",
+            "executable",
+            "tree_sha256",
+            "files",
+            "bytes",
+            "version",
+            "entries",
+        }
+        or python_tree.get("schema_version") != "experiment-python-tree-v1"
+        or python_tree.get("root") != str(python_root)
+        or python_tree.get("executable") != str(PRODUCTION_PYTHON_PATH)
+        or not isinstance(entries, list)
+        or type(python_tree.get("files")) is not int
+        or python_tree.get("files") != len(entries)
+    ):
+        raise ServiceBootstrapError("Python tree receipt changed")
+    expected_paths: set[str] = set()
+    expected_bytes = 0
+    for entry in entries:
+        if not isinstance(entry, Mapping) or set(entry) != {
+            "path",
+            "sha256",
+            "bytes",
+            "mode",
+            "owner",
+            "group",
+            "links",
+            "format",
+            "dependencies",
+        }:
+            raise ServiceBootstrapError("Python tree entry changed")
+        relative = entry.get("path")
+        parts = Path(str(relative)).parts
+        if (
+            not isinstance(relative, str)
+            or not relative
+            or Path(relative).is_absolute()
+            or any(part in {"", ".", ".."} for part in parts)
+            or relative in expected_paths
+            or _require_hex64(entry.get("sha256"), "Python entry digest")
+            != entry.get("sha256")
+            or type(entry.get("bytes")) is not int
+            or int(entry["bytes"]) <= 0
+            or entry.get("mode") not in {"0444", "0555"}
+            or entry.get("owner") != "root"
+            or entry.get("group") != "wheel"
+            or entry.get("links") != 1
+        ):
+            raise ServiceBootstrapError("Python tree entry changed")
+        path = python_root / relative
+        try:
+            status = path.lstat()
+        except OSError as exc:
+            raise ServiceBootstrapError("installed Python entry is unavailable") from exc
+        payload = path.read_bytes()
+        if (
+            path.is_symlink()
+            or not stat.S_ISREG(status.st_mode)
+            or status.st_uid != 0
+            or status.st_gid != 0
+            or status.st_nlink != 1
+            or stat.S_IMODE(status.st_mode) != int(str(entry["mode"]), 8)
+            or _sha256(payload) != entry["sha256"]
+            or len(payload) != entry["bytes"]
+        ):
+            raise ServiceBootstrapError("installed Python entry changed")
+        expected_paths.add(relative)
+        expected_bytes += len(payload)
+    observed_paths: set[str] = set()
+    for path in python_root.rglob("*"):
+        status = path.lstat()
+        if stat.S_ISLNK(status.st_mode) or (
+            not stat.S_ISDIR(status.st_mode) and not stat.S_ISREG(status.st_mode)
+        ):
+            raise ServiceBootstrapError("installed Python inventory is unsafe")
+        if stat.S_ISREG(status.st_mode):
+            observed_paths.add(path.relative_to(python_root).as_posix())
+    tree_preimage = canonical_json_line(
+        {
+            "schema_version": "experiment-python-tree-v1",
+            "root": str(python_root),
+            "entries": entries,
+        }
+    )
+    if (
+        observed_paths != expected_paths
+        or python_tree.get("bytes") != expected_bytes
+        or python_tree.get("tree_sha256") != _sha256(tree_preimage)
+    ):
+        raise ServiceBootstrapError("installed Python tree changed")
+
+
 def _load_sealed_service(
     bundle_dir: Path,
     *,
@@ -902,6 +1048,8 @@ def _load_sealed_service(
         "bytes": runtime["bytes"],
     }:
         raise ServiceBootstrapError("external native runtime changed")
+
+    _verify_bound_installation(bundle_dir, controller_bytes)
 
     model_driver = driver_factory(
         account_home=bundle_dir,

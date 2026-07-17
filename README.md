@@ -226,6 +226,12 @@ backlog remains in [ROADMAP.md](docs/ROADMAP.md):
   ceiling is an explicit assumption, and neither the spec nor receipt is an
   external approval or corpus seal. See
   [docs/results/A11B_POWER_GATE.md](docs/results/A11B_POWER_GATE.md).
+- The zero-model Synthea generation-receipt verifier is implemented. It binds
+  the power-derived 448-Patient population to a pinned generator/JAR, complete
+  staged Java runtime and probe, exact argv/environment, registered
+  config/modules, and the complete raw-output tree. No real release has yet
+  been pinned or generated; see
+  [docs/A11B_GENERATION_RECEIPT.md](docs/A11B_GENERATION_RECEIPT.md).
 - In parallel, benchmark query-time traversal against a materialized Postgres
   edge projection for byte equivalence, policy behavior, correction/rebuild
   semantics, and latency. Do not select a native graph store from accuracy data.

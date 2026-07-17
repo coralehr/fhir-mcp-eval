@@ -41,6 +41,33 @@ TRUSTED_INDEPENDENT_APPROVERS_BY_ID: Mapping[int, str] = MappingProxyType(
 TRUSTED_INDEPENDENT_APPROVERS = frozenset(
     TRUSTED_INDEPENDENT_APPROVERS_BY_ID.values()
 )
+_SANDBOX_ROOT = "/Library/Application Support/CoralEHR/experiment-executor"
+_SANDBOX_DENIED_SUBPATHS = ("audit-input", "state", "results", "snapshots")
+_SANDBOX_DENIED_FILES = (
+    "controller.json",
+    "controller.sha256",
+    "bundle.json",
+    "commitment.key",
+    "witness_ed25519",
+    "python-tree-receipt.json",
+    "external-anchor-verification.json",
+    "anchor-locator.json",
+    "install-manifest.json",
+    "nightly-status.json",
+    "nightly-runner.log",
+    "nightly-runner.lock",
+)
+EXPECTED_SANDBOX_PROFILE = (
+    "(version 1)(allow default)(deny process-fork)"
+    + "".join(
+        f'(deny file-read* (subpath "{_SANDBOX_ROOT}/{relative}"))'
+        for relative in _SANDBOX_DENIED_SUBPATHS
+    )
+    + "".join(
+        f'(deny file-read* (literal "{_SANDBOX_ROOT}/{relative}"))'
+        for relative in _SANDBOX_DENIED_FILES
+    )
+)
 
 
 def _anchor_verifier(value: object) -> dict[str, str]:
@@ -218,7 +245,19 @@ def _model_configuration(value: object) -> dict[str, dict[str, object]]:
     }
 
 
-def _trusted_executor_binding(value: object) -> dict[str, Any]:
+def _trusted_executor_binding(
+    value: object,
+    *,
+    expected_code_names: tuple[str, ...] = (
+        "anchor",
+        "bootstrap",
+        "codex_harness",
+        "driver",
+        "executor",
+        "service",
+        "witness",
+    ),
+) -> dict[str, Any]:
     fields = {
         "bundle_commitment",
         "bundle_schema_version",
@@ -328,7 +367,7 @@ def _trusted_executor_binding(value: object) -> dict[str, Any]:
     }:
         raise ValueError("trusted executor sandbox binding is invalid")
     profile = sandbox_value.get("profile")
-    if profile != "(version 1)(allow default)(deny process-fork)":
+    if profile != EXPECTED_SANDBOX_PROFILE:
         raise ValueError("trusted executor sandbox profile is invalid")
     sandbox = {
         **_path_receipt(
@@ -349,15 +388,6 @@ def _trusted_executor_binding(value: object) -> dict[str, Any]:
     }
 
     code_value = value.get("code_subjects")
-    expected_code_names = (
-        "anchor",
-        "bootstrap",
-        "codex_harness",
-        "driver",
-        "executor",
-        "service",
-        "witness",
-    )
     if not isinstance(code_value, list) or len(code_value) != len(
         expected_code_names
     ):
@@ -1216,6 +1246,40 @@ def build_anchor_request(controller_manifest: Path) -> dict[str, Any]:
         public_name: _receipt(snapshots.get(snapshot_name), label=public_name)
         for public_name, snapshot_name in _SNAPSHOT_SUBJECTS.items()
     }
+    if manifest.get("experiment_profile") == "a11b-causal-isolation-v2":
+        subjects["a11b_postprocess"] = _receipt(
+            snapshots.get("a11b_postprocess"), label="a11b_postprocess"
+        )
+        subjects["answer_input"] = _receipt(
+            snapshots.get("answer_input"), label="answer_input"
+        )
+        subjects["a11b_nightly_bootstrap"] = _receipt(
+            snapshots.get("a11b_nightly_bootstrap"),
+            label="a11b_nightly_bootstrap",
+        )
+        subjects["a11b_nightly_runner"] = _receipt(
+            snapshots.get("a11b_nightly_runner"), label="a11b_nightly_runner"
+        )
+        inputs = manifest.get("inputs")
+        if isinstance(inputs, Mapping) and (
+            "python_tree_receipt_sha256" in inputs
+            or "install_manifest_sha256" in inputs
+        ):
+            python_tree = _receipt(
+                snapshots.get("python_tree"), label="python_tree"
+            )
+            install_manifest = _receipt(
+                snapshots.get("install_manifest"), label="install_manifest"
+            )
+            if (
+                inputs.get("python_tree_receipt_sha256")
+                != python_tree["sha256"]
+                or inputs.get("install_manifest_sha256")
+                != install_manifest["sha256"]
+            ):
+                raise ValueError("controller install snapshot binding changed")
+            subjects["python_tree"] = python_tree
+            subjects["install_manifest"] = install_manifest
     subjects["native_codex"] = _receipt(native, label="native_codex")
 
     model_configuration = _model_configuration(
@@ -1254,8 +1318,33 @@ def build_anchor_request(controller_manifest: Path) -> dict[str, Any]:
         "model_configuration": model_configuration,
     }
     if controller_version == "a11-controller-v4":
+        profile = manifest.get("experiment_profile")
+        expected_code_names = (
+            (
+                "a11b_nightly_bootstrap",
+                "a11b_nightly_runner",
+                "anchor",
+                "bootstrap",
+                "codex_harness",
+                "driver",
+                "executor",
+                "service",
+                "witness",
+            )
+            if profile == "a11b-causal-isolation-v2"
+            else (
+                "anchor",
+                "bootstrap",
+                "codex_harness",
+                "driver",
+                "executor",
+                "service",
+                "witness",
+            )
+        )
         trusted_executor = _trusted_executor_binding(
-            execution.get("trusted_executor")
+            execution.get("trusted_executor"),
+            expected_code_names=expected_code_names,
         )
         if trusted_executor["model_configuration"] != model_configuration:
             raise ValueError(

@@ -323,6 +323,12 @@ class SealedBundleLoaderTests(unittest.TestCase):
 
     def _code_subjects(self) -> list[dict[str, object]]:
         paths = {
+            "a11b_nightly_bootstrap": Path(service_module.__file__).with_name(
+                "a11b_nightly_bootstrap.py"
+            ),
+            "a11b_nightly_runner": Path(service_module.__file__).with_name(
+                "a11b_nightly_runner.py"
+            ),
             "anchor": Path(experiment_anchor.__file__).resolve(),
             "bootstrap": Path(service_module.__file__).with_name(
                 "experiment_executor_bootstrap.py"
@@ -379,6 +385,10 @@ class SealedBundleLoaderTests(unittest.TestCase):
                 "a11_grading",
                 "run_a11_panel",
                 "panel_grade",
+                "a11b_postprocess",
+                "answer_input",
+                "a11b_nightly_bootstrap",
+                "a11b_nightly_runner",
             )
         }
         manifest = {

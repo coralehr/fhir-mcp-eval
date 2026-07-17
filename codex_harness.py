@@ -815,23 +815,114 @@ def enforce_packet_event_integrity(*, event_log_path: Path, answer_path: Path) -
 
 def _matches_json_schema(value: Any, schema: dict[str, Any]) -> bool:
     """Validate the small JSON-Schema subset used by Codex answer schemas."""
+    if not isinstance(schema, dict):
+        return False
+
+    if "const" in schema and not (
+        type(value) is type(schema["const"]) and value == schema["const"]
+    ):
+        return False
+    enum = schema.get("enum")
+    if enum is not None:
+        if not isinstance(enum, list) or not any(
+            type(value) is type(candidate) and value == candidate for candidate in enum
+        ):
+            return False
+    negated = schema.get("not")
+    if isinstance(negated, dict) and _matches_json_schema(value, negated):
+        return False
+    alternatives = schema.get("oneOf")
+    if alternatives is not None:
+        if not isinstance(alternatives, list) or not alternatives:
+            return False
+        if sum(
+            isinstance(alternative, dict)
+            and _matches_json_schema(value, alternative)
+            for alternative in alternatives
+        ) != 1:
+            return False
+
     declared_type = schema.get("type")
     if isinstance(declared_type, list):
-        return any(_matches_json_schema(value, {**schema, "type": item}) for item in declared_type)
+        if not declared_type or not any(
+            _matches_json_schema(value, {"type": item}) for item in declared_type
+        ):
+            return False
     if declared_type == "null":
         return value is None
     if declared_type == "string":
-        return isinstance(value, str)
-    if declared_type == "array":
+        if not isinstance(value, str):
+            return False
+    elif declared_type == "array":
         if not isinstance(value, list):
             return False
-        item_schema = schema.get("items")
-        return not isinstance(item_schema, dict) or all(
-            _matches_json_schema(item, item_schema) for item in value
-        )
-    if declared_type == "object":
+    elif declared_type == "object":
         if not isinstance(value, dict):
             return False
+
+    if isinstance(value, str):
+        minimum_length = schema.get("minLength")
+        maximum_length = schema.get("maxLength")
+        if minimum_length is not None and (
+            type(minimum_length) is not int
+            or minimum_length < 0
+            or len(value) < minimum_length
+        ):
+            return False
+        if maximum_length is not None and (
+            type(maximum_length) is not int
+            or maximum_length < 0
+            or len(value) > maximum_length
+        ):
+            return False
+        pattern = schema.get("pattern")
+        if pattern is not None:
+            if not isinstance(pattern, str):
+                return False
+            try:
+                if re.search(pattern, value) is None:
+                    return False
+            except re.error:
+                return False
+
+    if isinstance(value, list):
+        minimum_items = schema.get("minItems")
+        maximum_items = schema.get("maxItems")
+        if minimum_items is not None and (
+            type(minimum_items) is not int
+            or minimum_items < 0
+            or len(value) < minimum_items
+        ):
+            return False
+        if maximum_items is not None and (
+            type(maximum_items) is not int
+            or maximum_items < 0
+            or len(value) > maximum_items
+        ):
+            return False
+        if schema.get("uniqueItems") is True:
+            try:
+                encoded_items = [
+                    json.dumps(
+                        item,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                        allow_nan=False,
+                    )
+                    for item in value
+                ]
+            except (TypeError, ValueError):
+                return False
+            if len(encoded_items) != len(set(encoded_items)):
+                return False
+        item_schema = schema.get("items")
+        if isinstance(item_schema, dict) and not all(
+            _matches_json_schema(item, item_schema) for item in value
+        ):
+            return False
+
+    if isinstance(value, dict):
         required = schema.get("required", [])
         if not isinstance(required, list) or any(key not in value for key in required):
             return False
@@ -840,12 +931,13 @@ def _matches_json_schema(value: Any, schema: dict[str, Any]) -> bool:
             return False
         if schema.get("additionalProperties") is False and set(value) - set(properties):
             return False
-        return all(
+        if not all(
             key not in value
             or not isinstance(child_schema, dict)
             or _matches_json_schema(value[key], child_schema)
             for key, child_schema in properties.items()
-        )
+        ):
+            return False
     return True
 
 

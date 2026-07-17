@@ -36,6 +36,14 @@ def _record(payload: str, *, row: dict[str, str] | None = None) -> dict[str, str
 
 
 class A11AnswerHarnessTests(unittest.TestCase):
+    def test_prompt_requires_canonical_visible_fhir_references(self):
+        prompt = harness.render_prompt_bytes(_input_row(), '{"evidence":{"resources":[]}}')
+
+        self.assertIn(
+            b"source_resource_ids must contain exact ResourceType/id references visible in the packet",
+            prompt,
+        )
+
     def test_payload_bytes_are_inserted_verbatim(self):
         payload = '{\n  "resources" : [ ],\n  "note": "snowman ☃"\n}'
         prompt = harness.build_verified_prompt(_input_row(), _record(payload))

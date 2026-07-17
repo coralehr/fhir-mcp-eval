@@ -105,7 +105,7 @@ def trusted_executor_binding() -> dict[str, object]:
         },
         "sandbox": {
             **receipt("/usr/bin/sandbox-exec", "7" * 64, 200),
-            "profile": "(version 1)(allow default)(deny process-fork)",
+            "profile": experiment_anchor.EXPECTED_SANDBOX_PROFILE,
         },
         "executables": {
             "python": receipt("/sealed/python", "8" * 64, 300),

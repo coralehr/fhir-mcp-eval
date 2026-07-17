@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest import mock
 
 import experiment_executor as executor
+import experiment_anchor
 import experiment_witness as witness
 import trusted_codex_driver as driver_module
 
@@ -53,6 +54,33 @@ class _CompletedProcess:
 
 
 class TrustedCodexDriverTests(unittest.TestCase):
+    def test_production_sandbox_denies_every_model_readable_control_surface(self) -> None:
+        profile = driver_module.TrustedCodexDriver._SANDBOX_PROFILE
+        self.assertEqual(profile, experiment_anchor.EXPECTED_SANDBOX_PROFILE)
+        self.assertIn("deny file-read*", profile)
+        for relative in (
+            "audit-input",
+            "state",
+            "results",
+            "snapshots",
+            "controller.json",
+            "bundle.json",
+            "commitment.key",
+            "witness_ed25519",
+            "python-tree-receipt.json",
+            "external-anchor-verification.json",
+            "anchor-locator.json",
+            "install-manifest.json",
+            "nightly-status.json",
+            "nightly-runner.log",
+            "nightly-runner.lock",
+        ):
+            self.assertIn(
+                "/Library/Application Support/CoralEHR/experiment-executor/"
+                + relative,
+                profile,
+            )
+
     def _private_dir(self, root: Path, name: str) -> Path:
         path = root / name
         path.mkdir(mode=0o700)

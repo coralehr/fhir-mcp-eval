@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import multiprocessing
 import os
@@ -96,6 +97,37 @@ class FakeModelDriver:
             timed_out=False,
             runtime_sha256=invocation.runtime_sha256,
         )
+
+
+class SealedScheduleValidationTests(unittest.TestCase):
+    def test_shared_runtime_is_hashed_once_for_large_schedule(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            invocations = tuple(_test_invocation(root, index) for index in range(1152))
+            schedule = tuple(
+                witness.ScheduleItem(
+                    phase=item.phase,
+                    schedule_index=item.schedule_index,
+                    call_commitment=item.call_commitment(CALL_KEY),
+                    max_attempts=3,
+                )
+                for item in invocations
+            )
+            ledger = mock.Mock(schedule=schedule)
+            observed = invocations[0].runtime_sha256
+
+            with mock.patch.object(
+                executor.ExperimentExecutor,
+                "_runtime_sha256",
+                return_value=observed,
+            ) as runtime_sha256:
+                instance = object.__new__(executor.ExperimentExecutor)
+                instance.invocations = invocations
+                instance.ledger = ledger
+                instance.commitment_key = CALL_KEY
+                instance._validate_sealed_schedule()
+
+            runtime_sha256.assert_called_once_with(invocations[0].runtime_path)
 
 
 class FileCountDriver(FakeModelDriver):
@@ -327,6 +359,56 @@ class ExperimentExecutorTests(unittest.TestCase):
             status = service.status(run_id=ledger.run_id)
             self.assertEqual(len(status["signed_receipts"]), 2)
             self.assertEqual(status["attempts"][0]["state"], "closed")
+
+    def test_completed_run_export_is_atomic_verified_and_gold_free(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            invocations = (self.invocation(root, 0), self.invocation(root, 1))
+            service, ledger, _driver = self.make_system(
+                root,
+                invocations=invocations,
+            )
+            with self.assertRaisesRegex(executor.ExecutorProtocolError, "complete"):
+                service.export_completed_run()
+
+            first = service.execute_next(
+                run_id=ledger.run_id,
+                expected_head=witness.GENESIS_HEAD,
+            )
+            service.execute_next(
+                run_id=ledger.run_id,
+                expected_head=first.witness_head,
+            )
+            exported = service.export_completed_run()
+
+            self.assertEqual(exported["schema_version"], "experiment-run-export-v1")
+            self.assertEqual(exported["schedule_length"], 2)
+            self.assertEqual(exported["accepted_slots"], 2)
+            self.assertEqual(len(exported["attempts"]), 2)
+            self.assertEqual(
+                [row["descriptor"]["schedule_index"] for row in exported["attempts"]],
+                [0, 1],
+            )
+            self.assertNotIn("gold", json.dumps(exported, sort_keys=True).lower())
+            for row in exported["attempts"]:
+                artifact = json.loads(base64.b64decode(row["artifact_base64"]))
+                self.assertEqual(artifact["derived"]["outcome"], "accepted")
+
+    def test_completed_run_export_revalidates_every_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            service, ledger, _driver = self.make_system(root)
+            service.execute_next(
+                run_id=ledger.run_id,
+                expected_head=witness.GENESIS_HEAD,
+            )
+            bundle_path = next((root / "executor" / "attempts").glob("*/bundle.json"))
+            bundle_path.chmod(0o600)
+            bundle_path.write_bytes(bundle_path.read_bytes() + b" ")
+            bundle_path.chmod(0o400)
+
+            with self.assertRaises(executor.ExecutorIntegrityError):
+                service.export_completed_run()
 
     def test_public_call_rejects_caller_controlled_execution_fields(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -409,6 +409,7 @@ class ExperimentExecutor:
     def _validate_sealed_schedule(self) -> None:
         if len(self.invocations) != len(self.ledger.schedule):
             raise ExecutorProtocolError("sealed invocation schedule length changed")
+        runtimes: dict[str, str] = {}
         for invocation, item in zip(self.invocations, self.ledger.schedule, strict=True):
             if (
                 invocation.phase != item.phase
@@ -419,7 +420,16 @@ class ExperimentExecutor:
                 raise ExecutorProtocolError(
                     "sealed invocation differs from the witnessed schedule"
                 )
-            if self._runtime_sha256(invocation.runtime_path) != invocation.runtime_sha256:
+            prior_digest = runtimes.setdefault(
+                invocation.runtime_path,
+                invocation.runtime_sha256,
+            )
+            if prior_digest != invocation.runtime_sha256:
+                raise ExecutorProtocolError(
+                    "sealed invocations disagree about one runtime digest"
+                )
+        for runtime_path, runtime_sha256 in runtimes.items():
+            if self._runtime_sha256(runtime_path) != runtime_sha256:
                 raise ExecutorIntegrityError("sealed runtime digest changed")
 
     @staticmethod
@@ -1430,6 +1440,114 @@ class ExperimentExecutor:
                 "run_id": self.ledger.run_id,
                 "witness": self.ledger.status(),
                 "signed_receipts": list(self.ledger.receipts()),
+                "attempts": attempts,
+            }
+
+    def export_completed_run(self) -> dict[str, Any]:
+        """Return one fully revalidated, gold-free export after run completion.
+
+        This method is intentionally not exposed by the restricted SSH service.
+        It is for an executor-owned postprocessor that runs under the same trust
+        principal after the sealed witness schedule is complete.
+        """
+
+        with self._locked():
+            status = self.ledger.status()
+            if (
+                status.get("state") != "complete"
+                or status.get("schedule_position") != len(self.invocations)
+                or status.get("model_calls_reserved")
+                != status.get("model_calls_closed")
+            ):
+                raise ExecutorProtocolError(
+                    "sealed run must be complete before artifact export"
+                )
+            receipts = list(self.ledger.receipts())
+            attempts: list[dict[str, Any]] = []
+            for path in sorted(self.attempts_dir.iterdir(), key=lambda item: item.name):
+                if path.is_symlink() or not path.is_dir():
+                    raise ExecutorIntegrityError(
+                        "executor attempt inventory changed before export"
+                    )
+                self._require_private_directory(path, "executor attempt")
+                opened = self._read_canonical(path / "opened.json")
+                descriptor, _opened_receipt = self._validated_opened_marker(opened)
+                invocation = self._invocation_for_descriptor(descriptor)
+                result_path = path / "result.json"
+                if not result_path.exists():
+                    raise ExecutorIntegrityError(
+                        "completed executor attempt has no result"
+                    )
+                result = self._result_from_marker(self._read_canonical(result_path))
+                raw = self._validated_artifact_bytes(path, result)
+                attempts.append(
+                    {
+                        "descriptor": asdict(descriptor),
+                        "request_head": result.request_head,
+                        "witness_head": result.witness_head,
+                        "outcome": result.outcome,
+                        "token_usage": copy.deepcopy(result.token_usage),
+                        "artifact_root_commitment": result.artifact_root_commitment,
+                        "artifact_sha256": hashlib.sha256(raw).hexdigest(),
+                        "artifact_bytes": len(raw),
+                        "artifact_base64": base64.b64encode(raw).decode("ascii"),
+                        "opened_receipt": copy.deepcopy(result.opened_receipt),
+                        "closed_receipt": copy.deepcopy(result.closed_receipt),
+                    }
+                )
+
+            if len(attempts) != status["model_calls_closed"]:
+                raise ExecutorIntegrityError(
+                    "executor attempt inventory differs from witnessed calls"
+                )
+            attempts.sort(
+                key=lambda row: (
+                    row["descriptor"]["schedule_index"],
+                    row["descriptor"]["attempt_number"],
+                )
+            )
+            accepted_slots = 0
+            for item, invocation in zip(
+                self.ledger.schedule,
+                self.invocations,
+                strict=True,
+            ):
+                slot = [
+                    row
+                    for row in attempts
+                    if row["descriptor"]["phase"] == item.phase
+                    and row["descriptor"]["schedule_index"]
+                    == item.schedule_index
+                ]
+                if (
+                    not slot
+                    or [row["descriptor"]["attempt_number"] for row in slot]
+                    != list(range(1, len(slot) + 1))
+                    or any(
+                        row["descriptor"]["call_commitment"]
+                        != invocation.call_commitment(self.commitment_key)
+                        for row in slot
+                    )
+                    or any(row["outcome"] != "provider_failure" for row in slot[:-1])
+                    or slot[-1]["outcome"] != "accepted"
+                ):
+                    raise ExecutorIntegrityError(
+                        "completed executor slot has invalid attempt history"
+                    )
+                accepted_slots += 1
+            if accepted_slots != len(self.invocations):
+                raise ExecutorIntegrityError(
+                    "completed executor accepted coverage changed"
+                )
+            return {
+                "schema_version": "experiment-run-export-v1",
+                "run_id": self.ledger.run_id,
+                "witness_head": status["head"],
+                "schedule_length": len(self.invocations),
+                "accepted_slots": accepted_slots,
+                "model_calls_reserved": status["model_calls_reserved"],
+                "model_calls_closed": status["model_calls_closed"],
+                "signed_receipts": receipts,
                 "attempts": attempts,
             }
 

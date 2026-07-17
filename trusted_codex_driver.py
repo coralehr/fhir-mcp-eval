@@ -49,7 +49,41 @@ class TrustedCodexDriver:
     _PROCESS_GROUP_DRAIN_SECONDS = 5.0
     _MAX_CREDENTIAL_BYTES = 4 * 1024 * 1024
     _MAX_CAPTURE_BYTES = 64 * 1024 * 1024
-    _SANDBOX_PROFILE = "(version 1)(allow default)(deny process-fork)"
+    _SANDBOX_PROFILE = (
+        '(version 1)(allow default)(deny process-fork)'
+        '(deny file-read* (subpath "/Library/Application Support/CoralEHR/'
+        'experiment-executor/audit-input"))'
+        '(deny file-read* (subpath "/Library/Application Support/CoralEHR/'
+        'experiment-executor/state"))'
+        '(deny file-read* (subpath "/Library/Application Support/CoralEHR/'
+        'experiment-executor/results"))'
+        '(deny file-read* (subpath "/Library/Application Support/CoralEHR/'
+        'experiment-executor/snapshots"))'
+        '(deny file-read* (literal "/Library/Application Support/CoralEHR/'
+        'experiment-executor/controller.json"))'
+        '(deny file-read* (literal "/Library/Application Support/CoralEHR/'
+        'experiment-executor/controller.sha256"))'
+        '(deny file-read* (literal "/Library/Application Support/CoralEHR/'
+        'experiment-executor/bundle.json"))'
+        '(deny file-read* (literal "/Library/Application Support/CoralEHR/'
+        'experiment-executor/commitment.key"))'
+        '(deny file-read* (literal "/Library/Application Support/CoralEHR/'
+        'experiment-executor/witness_ed25519"))'
+        '(deny file-read* (literal "/Library/Application Support/CoralEHR/'
+        'experiment-executor/python-tree-receipt.json"))'
+        '(deny file-read* (literal "/Library/Application Support/CoralEHR/'
+        'experiment-executor/external-anchor-verification.json"))'
+        '(deny file-read* (literal "/Library/Application Support/CoralEHR/'
+        'experiment-executor/anchor-locator.json"))'
+        '(deny file-read* (literal "/Library/Application Support/CoralEHR/'
+        'experiment-executor/install-manifest.json"))'
+        '(deny file-read* (literal "/Library/Application Support/CoralEHR/'
+        'experiment-executor/nightly-status.json"))'
+        '(deny file-read* (literal "/Library/Application Support/CoralEHR/'
+        'experiment-executor/nightly-runner.log"))'
+        '(deny file-read* (literal "/Library/Application Support/CoralEHR/'
+        'experiment-executor/nightly-runner.lock"))'
+    )
 
     def __init__(
         self,

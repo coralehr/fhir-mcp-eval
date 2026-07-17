@@ -112,6 +112,16 @@ Implementation status as of 2026-07-15:
   and receipt still require independent exact-head approval before efficacy
   identifiers can be created. See
   [A11B_POWER_GATE.md](results/A11B_POWER_GATE.md).
+- [x] Implement the zero-model Synthea generation-receipt verifier. It binds the
+  power gate, release/commit, JAR, complete staged Java distribution and
+  version probe, exact argv/environment, registered configuration/modules,
+  exporter settings, and the complete 448-Patient raw-output tree. This is
+  verifier infrastructure,
+  not a completed source pin or generation; see
+  [A11B_GENERATION_RECEIPT.md](A11B_GENERATION_RECEIPT.md).
+- [ ] Pin and independently approve the real Synthea/JAR/Java/configuration
+  spec, generate two clean 448-Patient roots, and require byte-identical
+  generation receipts before assigning the 64/384 splits.
 - [ ] Deploy the witness/executor under a principal the run account cannot
   mutate, bind its public key and schedule into a new externally approved
   controller, and mediate the Codex credential before any A11b live call.
@@ -185,6 +195,8 @@ The development-only compiler contract and its remaining boundary are recorded
 in [A11B_EVENT_COMPILER.md](A11B_EVENT_COMPILER.md).
 The prospective power assumptions, exact receipt, and non-claims are recorded
 in [A11B_POWER_GATE.md](results/A11B_POWER_GATE.md).
+The generator/runtime/output trust boundary and remaining real-pin work are
+recorded in [A11B_GENERATION_RECEIPT.md](A11B_GENERATION_RECEIPT.md).
 
 ## P1: A11b causal isolation
 

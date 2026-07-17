@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import stat
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
+import experiment_executor_deploy as deploy
 import experiment_executor_install as install
 import experiment_executor_service as service
 
@@ -14,11 +17,12 @@ RUNNER_PUBLIC_KEY = (
     "ssh-ed25519 "
     "AAAAC3NzaC1lZDI1NTE5AAAAIOs43R3qv/9/ZBJeIT3hpuUgv7RYiusjUWsWR7PasmMy"
 )
+PYTHON_EXECUTABLE_PAYLOAD = b"synthetic pinned Python Mach-O payload"
 PYTHON_TREE_ENTRIES = [
     {
         "path": "bin/python3.14",
-        "sha256": "6" * 64,
-        "bytes": 456789,
+        "sha256": hashlib.sha256(PYTHON_EXECUTABLE_PAYLOAD).hexdigest(),
+        "bytes": len(PYTHON_EXECUTABLE_PAYLOAD),
         "mode": "0555",
         "owner": "root",
         "group": "wheel",
@@ -33,13 +37,22 @@ PYTHON_TREE_RECEIPT = {
     "executable": str(service.PRODUCTION_PYTHON_PATH),
     "tree_sha256": install._python_tree_digest(PYTHON_TREE_ENTRIES),
     "files": 1,
-    "bytes": 456789,
+    "bytes": len(PYTHON_EXECUTABLE_PAYLOAD),
     "version": install.PINNED_PYTHON_VERSION,
     "entries": PYTHON_TREE_ENTRIES,
 }
 
 
 class ExperimentExecutorInstallTests(unittest.TestCase):
+    @staticmethod
+    def _python_source(root: Path) -> Path:
+        python_root = root / "python-source"
+        executable = python_root / "bin/python3.14"
+        executable.parent.mkdir(parents=True)
+        executable.write_bytes(PYTHON_EXECUTABLE_PAYLOAD)
+        executable.chmod(0o555)
+        return python_root
+
     def test_launcher_is_fixed_isolated_and_suppresses_bootstrap_stderr(self) -> None:
         launcher = install.render_launcher().decode("ascii")
 
@@ -108,22 +121,28 @@ class ExperimentExecutorInstallTests(unittest.TestCase):
         source_root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            python_source = self._python_source(root)
             first = root / "first"
             second = root / "second"
             first_manifest = install.build_install_package(
                 source_root,
                 first,
+                python_source_root=python_source,
                 runner_public_key=RUNNER_PUBLIC_KEY,
                 python_tree_receipt=PYTHON_TREE_RECEIPT,
             )
             second_manifest = install.build_install_package(
                 source_root,
                 second,
+                python_source_root=python_source,
                 runner_public_key=RUNNER_PUBLIC_KEY,
                 python_tree_receipt=PYTHON_TREE_RECEIPT,
             )
 
             self.assertEqual(first_manifest, second_manifest)
+            self.assertEqual(
+                install.validate_install_manifest(first_manifest), first_manifest
+            )
             first_files = {
                 path.relative_to(first): path.read_bytes()
                 for path in first.rglob("*")
@@ -142,11 +161,21 @@ class ExperimentExecutorInstallTests(unittest.TestCase):
             self.assertEqual(
                 set(first_manifest["code_subjects"]),
                 {
+                    "a11b_nightly_bootstrap",
+                    "a11b_nightly_runner",
+                    "a11b_grading",
+                    "a11b_postprocess",
                     "anchor",
                     "bootstrap",
                     "codex_harness",
                     "driver",
                     "executor",
+                    "install_contract",
+                    "installer",
+                    "paired_stats",
+                    "panel_grade",
+                    "run_a11b_panel",
+                    "run_lock",
                     "service",
                     "witness",
                 },
@@ -178,6 +207,7 @@ class ExperimentExecutorInstallTests(unittest.TestCase):
                     subject["package_path"]: 0o400
                     for subject in first_manifest["code_subjects"].values()
                 },
+                "payload/python/bin/python3.14": 0o555,
             }.items():
                 self.assertEqual(
                     stat.S_IMODE((first / relative).stat().st_mode),
@@ -195,16 +225,34 @@ class ExperimentExecutorInstallTests(unittest.TestCase):
             ):
                 self.assertNotIn(forbidden, combined)
 
+            mutations = []
+            wrong_path = json.loads(json.dumps(first_manifest))
+            wrong_path["transport"]["launcher"]["path"] = "/tmp/root-write"
+            mutations.append(wrong_path)
+            extra_subject = json.loads(json.dumps(first_manifest))
+            extra_subject["code_subjects"]["attacker"] = dict(
+                next(iter(extra_subject["code_subjects"].values()))
+            )
+            mutations.append(extra_subject)
+            wrong_principal = json.loads(json.dumps(first_manifest))
+            wrong_principal["executor_principal"]["admin"] = True
+            mutations.append(wrong_principal)
+            for mutation in mutations:
+                with self.assertRaises(install.InstallProtocolError):
+                    install.validate_install_manifest(mutation)
+
     def test_package_refuses_overwrite_or_unexpected_source(self) -> None:
         source_root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            python_source = self._python_source(root)
             output = root / "package"
             output.mkdir()
             with self.assertRaises(FileExistsError):
                 install.build_install_package(
                     source_root,
                     output,
+                    python_source_root=python_source,
                     runner_public_key=RUNNER_PUBLIC_KEY,
                     python_tree_receipt=PYTHON_TREE_RECEIPT,
                 )
@@ -213,6 +261,7 @@ class ExperimentExecutorInstallTests(unittest.TestCase):
                 install.build_install_package(
                     root / "missing-source",
                     root / "other",
+                    python_source_root=python_source,
                     runner_public_key=RUNNER_PUBLIC_KEY,
                     python_tree_receipt=PYTHON_TREE_RECEIPT,
                 )
@@ -271,9 +320,33 @@ class ExperimentExecutorInstallTests(unittest.TestCase):
                     install.build_install_package(
                         source_root,
                         root / f"invalid-{len(list(root.iterdir()))}",
+                        python_source_root=python_source,
                         runner_public_key=RUNNER_PUBLIC_KEY,
                         python_tree_receipt=receipt,
                     )
+
+    def test_package_rejects_an_omitted_local_import(self) -> None:
+        source_root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            python_source = self._python_source(root)
+            incomplete = dict(install._CODE_FILES)
+            incomplete.pop("install_contract")
+
+            with (
+                mock.patch.object(install, "_CODE_FILES", incomplete),
+                self.assertRaisesRegex(
+                    install.InstallProtocolError,
+                    "local import is absent",
+                ),
+            ):
+                install.build_install_package(
+                    source_root,
+                    root / "package",
+                    python_source_root=python_source,
+                    runner_public_key=RUNNER_PUBLIC_KEY,
+                    python_tree_receipt=PYTHON_TREE_RECEIPT,
+                )
 
     def test_python_entry_paths_must_be_canonical(self) -> None:
         source_root = Path(__file__).resolve().parents[1]
@@ -299,10 +372,13 @@ class ExperimentExecutorInstallTests(unittest.TestCase):
             "entries": aliased,
         }
         with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            python_source = self._python_source(root)
             with self.assertRaises(install.InstallProtocolError) as caught:
                 install.build_install_package(
                     source_root,
-                    Path(directory) / "package",
+                    root / "package",
+                    python_source_root=python_source,
                     runner_public_key=RUNNER_PUBLIC_KEY,
                     python_tree_receipt=receipt,
                 )
@@ -337,10 +413,13 @@ class ExperimentExecutorInstallTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as directory, self.subTest(
                 collider=collider
             ):
+                root = Path(directory)
+                python_source = self._python_source(root)
                 with self.assertRaises(install.InstallProtocolError) as caught:
                     install.build_install_package(
                         source_root,
-                        Path(directory) / "package",
+                        root / "package",
+                        python_source_root=python_source,
                         runner_public_key=RUNNER_PUBLIC_KEY,
                         python_tree_receipt=receipt,
                     )
@@ -354,7 +433,7 @@ class ExperimentExecutorInstallTests(unittest.TestCase):
             dict(PYTHON_TREE_ENTRIES[0]),
             {
                 "path": "lib/python3.14/__init__.py",
-                "sha256": "0" * 64,
+                "sha256": hashlib.sha256(b"").hexdigest(),
                 "bytes": 0,
                 "mode": "0444",
                 "owner": "root",
@@ -372,9 +451,16 @@ class ExperimentExecutorInstallTests(unittest.TestCase):
             "entries": entries,
         }
         with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            python_source = self._python_source(root)
+            empty_module = python_source / "lib/python3.14/__init__.py"
+            empty_module.parent.mkdir(parents=True)
+            empty_module.write_bytes(b"")
+            empty_module.chmod(0o444)
             manifest = install.build_install_package(
                 source_root,
-                Path(directory) / "package",
+                root / "package",
+                python_source_root=python_source,
                 runner_public_key=RUNNER_PUBLIC_KEY,
                 python_tree_receipt=receipt,
             )
@@ -400,6 +486,22 @@ class ExperimentExecutorInstallTests(unittest.TestCase):
         ):
             self.assertIn(line, config)
         self.assertTrue(config.endswith("Match all\n"))
+
+    def test_sshd_drop_in_preflight_supplies_a_sealed_host_key(self) -> None:
+        package_root = Path("/reviewed/install-package")
+        bundle_root = Path("/reviewed/controller-bundle")
+
+        self.assertEqual(
+            deploy._sshd_drop_in_check_command(package_root, bundle_root),
+            [
+                "/usr/sbin/sshd",
+                "-t",
+                "-f",
+                str(package_root / "payload/sshd_config.drop-in"),
+                "-h",
+                str(bundle_root / "witness_ed25519"),
+            ],
+        )
 
 
 if __name__ == "__main__":
