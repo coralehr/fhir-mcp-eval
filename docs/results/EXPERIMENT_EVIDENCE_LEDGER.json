@@ -142,14 +142,16 @@
     {
       "id": "a11b-causal-isolation-384",
       "name": "A11b causal isolation",
-      "status": "sealed_pending",
+      "status": "exploratory_not_promoted",
       "population": "64 development Patients + 384 untouched efficacy Patients; one efficacy question per Patient; 1,152 answer slots",
-      "result": "No registered efficacy result and zero official executor calls. A separately labeled unregistered subscription preview was launched only after transport preflight exposed that the sealed oneOf/uniqueItems answer schema is rejected by the current backend.",
-      "decision": "No claim can be licensed from the preview. A registered or future API run requires a newly sealed backend-compatible transport schema with the full original contract enforced offline.",
-      "economics": {"accepted_tokens": null, "all_attempt_tokens": null, "notes": "Official run pending. Unregistered preview economics remain separate until completion."},
+      "result": "Unregistered r3 preview: T0, T1, and E1 each scored 288/384 (75.0%). Both paired contrasts were 0.0pp with cluster 95% CI 0.0 to 0.0. All arms were 288/288 on answerable cases and 0/96 on unanswerable cases because every arm answered instead of abstaining.",
+      "decision": "Exploratory do-not-promote. The corpus ceilinged on supported cases and exposed a shared abstention failure on unsupported cases. No registered claim is licensed; the used efficacy Patients are spent, and any confirmatory/API run needs a fresh holdout plus a newly sealed backend-compatible schema.",
+      "economics": {"accepted_tokens": 24481563, "all_attempt_tokens": 24568225, "notes": "Unregistered answer preview only; all-attempt usage is a lower bound because three pre-inference rejects lacked usable usage. Panel added 1,987,299 tokens."},
       "sources": [
         {"kind": "repo_file", "path": "docs/prereg/A11B_PREREGISTRATION.md", "sha256": "b27242503f7d18344c30f580107e32a4a8c8fdc7030510e9d64442c6737b77a6"},
-        {"kind": "repo_file", "path": "docs/results/A11B_POWER_GATE.md", "sha256": "1ff38186295847f8a3ea0a9570473b19313595453666e51f2f991ebc54b90df3"}
+        {"kind": "repo_file", "path": "docs/results/A11B_POWER_GATE.md", "sha256": "1ff38186295847f8a3ea0a9570473b19313595453666e51f2f991ebc54b90df3"},
+        {"kind": "repo_file", "path": "docs/results/A11B_R3_UNREGISTERED_EXPLORATORY_RESULT.md", "sha256": "799f9b47c175fbb3d242e040997273ba8b5e63ab000473f3981e9034c1469e42"},
+        {"kind": "external_aggregate", "path": "macmini-cory:/Users/cory/a11b-stage-0716/a11b-unregistered-preview-r3-structural-schema-0716/result-unregistered-v1/result.json", "sha256": "0599d68ae8a344d154b9bb0b6051cb2fc27c63eb9f69b17972066909a6585d68", "verified_at": "2026-07-16"}
       ]
     }
   ],
@@ -175,7 +177,7 @@
     {
       "claim": "Typed event grouping improves accuracy beyond identical evidence and deterministic aids.",
       "disposition": "pending",
-      "boundary": "A11 bundled grouping with temporal rank and an answerability receipt. A11b is the first causal isolation test and has not run.",
+      "boundary": "A11 bundled grouping with temporal rank and an answerability receipt. The unregistered A11b r3 preview found an exact T0/T1/E1 tie, but the run cannot license a confirmatory claim and the corpus had no answerable-case headroom. A fresh discriminating holdout is required before this claim can be resolved.",
       "evidence": ["a11-vte-120", "a11b-causal-isolation-384"]
     },
     {
@@ -195,8 +197,9 @@
     "The exploratory model/effort grid must be regraded on its registered 99-question subset before any generality statement.",
     "A6a and QT-1 through QT-3 retained subscription token receipts but not provider-priced monetary cost.",
     "The A11 panel used the same model family as the answerer; a cross-family sensitivity judge remains useful.",
-    "A11b post-result no-cheating claims require raw prompt and event inspection in addition to aggregate finalization receipts.",
+    "The A11b preview completion replay validated prompt, answer, schema, event, usage, and artifact receipts, but a separately implemented independent raw-audit adapter and cross-family panel sensitivity remain undone.",
     "A11b r3 is not runnable as sealed against the current Codex backend: oneOf and uniqueItems are rejected in response-format schemas; an official run requires a new seal.",
+    "The 384 A11b efficacy Patients are spent for confirmatory use; a replacement must demonstrate nonzero paired discordance on separate development data before a fresh holdout or cross-API matrix is opened.",
     "No native graph database, Postgres recursive-query, or natural clinical chart comparison has been run."
   ]
 }

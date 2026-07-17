@@ -41,6 +41,18 @@
 > artifacts, and forensic review: [A11_RESULT.md](docs/results/A11_RESULT.md) and
 > [A11_FORENSIC_AUDIT.md](docs/results/A11_FORENSIC_AUDIT.md).
 
+> **New (2026-07-16): the explicitly unregistered A11b r3 preview completed,
+> and it is a clean null.** T0, T1, and E1 each scored 288/384 (75.0%), with
+> zero paired discordances and cluster 95% intervals fixed at [0, 0]. All arms
+> were perfect on the 288 answerable cases and all failed the same 96
+> unanswerable cases by answering instead of abstaining. T1 used 2.2% more
+> accepted answer tokens than T0, and E1 used 3.6% more than T1, with no gain.
+> The run is reliable exploratory evidence but not confirmatory: r3's sealed
+> response schema was backend-incompatible, so a reduced transport schema and
+> full offline validation were declared before execution. Result, receipts,
+> limitations, and next-run requirements:
+> [A11B_R3_UNREGISTERED_EXPLORATORY_RESULT.md](docs/results/A11B_R3_UNREGISTERED_EXPLORATORY_RESULT.md).
+
 > **New (2026-07-14): the promoted recipe and A11 event-group gate are executable.** New packet builds
 > can use `compile_evidence.py`, which defaults to the holdout-promoted vocabulary recipe while preserving
 > every historical experiment entrypoint. The zero-model A11 gate separately exercises synthetic
@@ -141,6 +153,12 @@ apparent win is a context-overflow artifact (a null at matched budget), not a re
   substituted a later complete event for an earlier incomplete one. E prevented
   it, but E bundled event grouping, temporal rank, and an answerability receipt,
   so the causal feature is unresolved.
+- **A11b r3 exploratory result: no arm won.** T0/T1/E1 tied at 75.0% with
+  identical labels on all 384 Patients. The supported set was ceilinged and the
+  only errors were shared unsupported answers on all 96 unanswerable cases.
+  The grouping treatment added packet bytes and tokens without accuracy value.
+  Because the preview required a declared post-seal transport adaptation, it
+  cannot license a confirmatory claim.
 - ⚠️ **Reproducibility is split.** For the trustworthy re-grade, the committed artifacts are the aggregate
   summary (`medplum-eval/full409_summary.json`) and a durable per-question answer backup
   (`medplum-eval/full409_answers.json`); the per-question panel/deterministic labels live under gitignored
@@ -150,9 +168,10 @@ apparent win is a context-overflow artifact (a null at matched budget), not a re
   locally recomputable when those dumps are present; [FINAL_REPORT.md](docs/FINAL_REPORT.md) records the exact scope.
   **Opus tool-ablation numbers are not** (run on torn-down EC2). See
   [Reproducibility status](#where-this-was-actually-run--reproducibility-status).
-- **Start here: [A11_RESULT.md](docs/results/A11_RESULT.md)** for the latest
-  mechanism result and [A11_FORENSIC_AUDIT.md](docs/results/A11_FORENSIC_AUDIT.md)
-  for the post-result no-cheating and failure analysis. Then read the
+- **Start here: [A11B_R3_UNREGISTERED_EXPLORATORY_RESULT.md](docs/results/A11B_R3_UNREGISTERED_EXPLORATORY_RESULT.md)**
+  for the latest causal-isolation readout and its strict non-confirmatory
+  boundary. Then read [A11_RESULT.md](docs/results/A11_RESULT.md) and
+  [A11_FORENSIC_AUDIT.md](docs/results/A11_FORENSIC_AUDIT.md), followed by the
   [QT-4 holdout result](docs/results/QT4_VALID374_RESULT.md),
   [FINDINGS.md](docs/FINDINGS.md) (the earlier capstone conclusion), the tool-ablation deep-dive
   **[REPORT.md](docs/REPORT.md)** and the code result **[CODE_EXPERIMENT.md](docs/CODE_EXPERIMENT.md)**.
@@ -208,35 +227,35 @@ The evidence-driven execution plan is
 [NEXT_EXPERIMENT_PLAN.md](docs/NEXT_EXPERIMENT_PLAN.md); the full issue-ready
 backlog remains in [ROADMAP.md](docs/ROADMAP.md):
 
-- Before another answer run, independently approve and install the deterministic
-  restricted-executor package, externally anchor the complete install surface
-  and controller/native-binary digest, retain panel event streams, and build a
-  patient-disjoint harder A11b holdout. The package compiler exists, but no
-  executor account, sshd policy, credential, or live service is installed.
-- Run A11b as flat traversal versus flat traversal plus selection/completeness
-  aids versus event groups with the identical aids and clinical evidence.
+- Before another answer run, seal a backend-compatible transport schema with an
+  explicit arm-identical abstention contract, remove the need for deterministic
+  output normalization, and build a fresh patient-disjoint A11b holdout. Require
+  nonzero paired discordance on separate development data first.
+- Do not replay the spent 384-Patient r3 corpus across APIs: it has no
+  answerable-case headroom. Freeze the cross-API harness only after a fresh
+  T0/T1/E1 contrast is demonstrably discriminating.
 - The zero-model A11b representation compiler is implemented and adversarially
-  clean on separated synthetic development source/gold; the untouched corpus,
-  power calculation, materializer, preregistration, controller seal, install,
-  and efficacy calls remain blocked. See
+  clean on separated synthetic development source/gold. Its first 384-Patient
+  efficacy corpus is now spent by the unregistered r3 preview; the compiler is
+  reusable, but the corpus and result are not confirmatory. See
   [docs/A11B_EVENT_COMPILER.md](docs/A11B_EVENT_COMPILER.md).
 - The zero-model A11b prospective power gate is also implemented and
-  adversarially clean. It derives 384 unique efficacy patients plus 64
-  development patients under a receipt-bound 30% discordance ceiling; that
-  ceiling is an explicit assumption, and neither the spec nor receipt is an
-  external approval or corpus seal. See
+  adversarially clean. Its original 384-efficacy/64-development design did not
+  produce any paired correctness discordance in the preview, so the old power
+  assumption cannot justify a rerun. A successor needs a development-observed
+  discordance model and a fresh receipt. See
   [docs/results/A11B_POWER_GATE.md](docs/results/A11B_POWER_GATE.md).
 - The zero-model Synthea generation-receipt verifier is implemented. It binds
   the power-derived 448-Patient population to a pinned generator/JAR, complete
   staged Java runtime and probe, exact argv/environment, registered
-  config/modules, and the complete raw-output tree. No real release has yet
-  been pinned or generated; see
+  config/modules, and the complete raw-output tree. Preserve the original r3
+  receipt, but generate a new patient-disjoint source for any successor; see
   [docs/A11B_GENERATION_RECEIPT.md](docs/A11B_GENERATION_RECEIPT.md).
 - In parallel, benchmark query-time traversal against a materialized Postgres
   edge projection for byte equivalence, policy behavior, correction/rebuild
   semantics, and latency. Do not select a native graph store from accuracy data.
-- After A11b, prioritize error fidelity (A12), then principal-varying
-  authorization (A14).
+- In parallel, prioritize error fidelity (A12), then principal-varying
+  authorization (A14); neither needs to wait for another A11b answer run.
 - Publish a minimized reproducibility artifact package with checksums.
 - Rerun A0, A0', and A5 on one substrate.
 - Add cross-family or human adjudication for A0' non-numeric labels.

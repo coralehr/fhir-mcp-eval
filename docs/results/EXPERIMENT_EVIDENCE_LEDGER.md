@@ -19,7 +19,7 @@ licensed only at the scope shown below.
 | QT-4 micro42 mechanism screen | `exploratory_advanced_to_confirmation` | 42 inspected microbiology questions | Vocabulary versus A6a +42.9pp (95% CI +20.5 to +63.6); traversal versus vocabulary +7.1pp (95% CI 0 to +15.9). | Advance vocabulary to untouched confirmation; do not promote traversal from the same-set screen. |
 | QT-4 valid374 holdout | `confirmatory_promoted` | 374 questions: 44 dispatched / 330 byte-identical controls | Vocabulary versus A6a on dispatched questions +34.1pp (95% CI +17.9 to +50.0); traversal versus vocabulary +9.1pp (95% CI 0 to +20.9). | Promote fixed microbiology vocabulary only; traversal remains unresolved. |
 | A11 V/T/E path-required | `confirmatory_supported_not_promotion_gated` | 120 constructed questions / 96 answerable path-required cases | T and E recovered terminal evidence on 96/96 answerable cases versus 0/96 for V. E versus T was +0.83pp with 95% CI 0 to +2.56. | Bounded traversal worked on the constructed multi-hop task. Do not promote event grouping: its single gain is not isolated from the bundled answerability receipt. |
-| A11b causal isolation | `sealed_pending` | 64 development Patients + 384 untouched efficacy Patients; one efficacy question per Patient; 1,152 answer slots | No registered efficacy result and zero official executor calls. A separately labeled unregistered subscription preview was launched only after transport preflight exposed that the sealed oneOf/uniqueItems answer schema is rejected by the current backend. | No claim can be licensed from the preview. A registered or future API run requires a newly sealed backend-compatible transport schema with the full original contract enforced offline. |
+| A11b causal isolation | `exploratory_not_promoted` | 64 development Patients + 384 untouched efficacy Patients; one efficacy question per Patient; 1,152 answer slots | Unregistered r3 preview: T0, T1, and E1 each scored 288/384 (75.0%). Both paired contrasts were 0.0pp with cluster 95% CI 0.0 to 0.0. All arms were 288/288 on answerable cases and 0/96 on unanswerable cases because every arm answered instead of abstaining. | Exploratory do-not-promote. The corpus ceilinged on supported cases and exposed a shared abstention failure on unsupported cases. No registered claim is licensed; the used efficacy Patients are spent, and any confirmatory/API run needs a fresh holdout plus a newly sealed backend-compatible schema. |
 
 ## Claim register
 
@@ -51,7 +51,7 @@ Evidence: `qt4-valid374-v2`, `a11-vte-120`.
 
 Disposition: **pending**.
 
-A11 bundled grouping with temporal rank and an answerability receipt. A11b is the first causal isolation test and has not run.
+A11 bundled grouping with temporal rank and an answerability receipt. The unregistered A11b r3 preview found an exact T0/T1/E1 tie, but the run cannot license a confirmatory claim and the corpus had no answerable-case headroom. A fresh discriminating holdout is required before this claim can be resolved.
 
 Evidence: `a11-vte-120`, `a11b-causal-isolation-384`.
 
@@ -84,13 +84,14 @@ Evidence: `qt4-valid374-v2`, `a11-vte-120`.
 | QT-4 micro42 mechanism screen | 5672506 | 5672506 | Three answer arms; zero failed attempts. Panel usage is not included in this subtotal. |
 | QT-4 valid374 holdout | 60760432 | 63737565 | Panel used 1,820,656 tokens; aborted v1 protocol overhead was 3,546,961 tokens and is reported separately. |
 | A11 V/T/E path-required | 4728676 | 4728676 | Answer arms only; panel added 445,171 tokens. Zero retries. |
-| A11b causal isolation | not retained | not retained | Official run pending. Unregistered preview economics remain separate until completion. |
+| A11b causal isolation | 24481563 | 24568225 | Unregistered answer preview only; all-attempt usage is a lower bound because three pre-inference rejects lacked usable usage. Panel added 1,987,299 tokens. |
 
 ## Known evidence gaps
 
 - The exploratory model/effort grid must be regraded on its registered 99-question subset before any generality statement.
 - A6a and QT-1 through QT-3 retained subscription token receipts but not provider-priced monetary cost.
 - The A11 panel used the same model family as the answerer; a cross-family sensitivity judge remains useful.
-- A11b post-result no-cheating claims require raw prompt and event inspection in addition to aggregate finalization receipts.
+- The A11b preview completion replay validated prompt, answer, schema, event, usage, and artifact receipts, but a separately implemented independent raw-audit adapter and cross-family panel sensitivity remain undone.
 - A11b r3 is not runnable as sealed against the current Codex backend: oneOf and uniqueItems are rejected in response-format schemas; an official run requires a new seal.
+- The 384 A11b efficacy Patients are spent for confirmatory use; a replacement must demonstrate nonzero paired discordance on separate development data before a fresh holdout or cross-API matrix is opened.
 - No native graph database, Postgres recursive-query, or natural clinical chart comparison has been run.

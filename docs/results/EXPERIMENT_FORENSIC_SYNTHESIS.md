@@ -13,12 +13,14 @@ The program supports two product claims and one bounded mechanism claim:
 3. Bounded traversal recovered terminal evidence on A11's constructed
    path-required benchmark.
 
-The evidence does **not** yet establish that event grouping improves accuracy,
+The evidence does **not** establish that event grouping improves accuracy,
 that the effects generalize across model families or APIs, or that Bonfire
-should use a native graph database. A11b is the registered causal isolation
-test for event grouping. It has 64 development Patients, 384 untouched efficacy
-Patients, one efficacy question per Patient, and 1,152 answer slots across T0,
-T1, and E1. It has not made a model call.
+should use a native graph database. An explicitly unregistered A11b r3 preview
+completed 1,152 answer slots across T0, T1, and E1. All three arms tied at
+288/384: perfect on the 288 answerable cases and wrong on all 96 unanswerable
+cases because every arm answered instead of abstaining. The exploratory
+decision was `do_not_promote`. The used efficacy Patients are now spent for
+confirmatory claims.
 
 The canonical machine-readable record is
 [`EXPERIMENT_EVIDENCE_LEDGER.json`](EXPERIMENT_EVIDENCE_LEDGER.json). Its
@@ -35,7 +37,7 @@ generated human view is
 | QT-4 micro42 | Mechanism screen only. | It justified untouched confirmation, not promotion by itself. |
 | QT-4 valid374 | Confirmatory for the 44-question dispatched stratum with 330 byte-identical controls. | Fixed microbiology vocabulary; traversal remained unresolved. |
 | A11 V/T/E | Strong constructed-task mechanism evidence, but E bundled event grouping with other aids. | Bounded path traversal, not an isolated event-grouping gain. |
-| A11b | r3 is sealed but its response schema is rejected by the current backend before inference. An explicitly unregistered preview uses a structural transport schema and enforces the full registered schema offline. | No claim from the preview; an official/API run requires a new compatible seal. |
+| A11b | The unregistered r3 preview completed with an exact three-arm tie: 75.0% per arm, zero discordant pairs, and no answerable-case headroom. All arms failed the same unsupported-answer cases. | Do not promote from the preview. A future confirmatory/API run requires a fresh discriminating holdout and compatible seal. |
 
 ## Adversarial findings
 
@@ -78,18 +80,32 @@ accepted slot, rejects tool or non-message events, validates retry histories,
 and reconciles event, executor, and final-result token totals by arm. It emits
 only hashes and counts. Hidden chain-of-thought is neither available nor needed.
 
-Live transport preflight on 2026-07-16 found that r3 cannot execute as sealed:
+Live transport preflight on 2026-07-16 found that r3 could not execute as sealed:
 the backend rejects root `oneOf` and `uniqueItems` in response-format schemas.
 All rejected probes ended before inference with zero recorded token usage. The
 unregistered preview therefore sends only the supported structural subset to
 the backend and applies the complete original `oneOf`, uniqueness, pattern,
 nonempty-field, and citation constraints offline before accepting an answer.
-This is evidence about transport compatibility, not an A11b protocol result.
+It also applied 219 narrowly defined deterministic normalizations that cleared
+only a contradictory insufficiency-reason field while preserving the
+substantive answer. This is evidence about transport compatibility, not a
+registered A11b protocol result.
 
-After the machine gate passes, a human reviewer should inspect the discordant
-question set plus a stratified sample of agreements for visible-evidence error
-classification. That review is descriptive and cannot override the registered
-promotion decision.
+The completed preview replay revalidated all 1,152 marker-selected prompt,
+schema, answer, event, and usage receipts against controller SHA-256
+`86f1bf8e3d8500c76504154f1c1c25d5b31afb499006317d9e2deb104bae8caf`.
+The final result SHA-256
+`0599d68ae8a344d154b9bb0b6051cb2fc27c63eb9f69b17972066909a6585d68`
+matches its immutable manifest. The arm-blind panel made 132 first-attempt
+calls and produced 864 unanimous 3-of-3 verdicts with tools disabled. No
+recorded artifact indicates gold leakage into the answerer. These checks make
+the exploratory aggregate reliable; they do not cure its registration defect
+or same-model-family judging limitation.
+
+Because the preview had no discordant questions, a human reviewer can inspect a
+stratified sample of supported agreements and unsupported failures for
+visible-evidence error classification. That review is descriptive and cannot
+turn the run into a registered result or override its no-promotion boundary.
 
 ## Economics interpretation
 
@@ -103,23 +119,29 @@ promotion decision.
   overhead was 3,546,961 and remains separate.
 - A11 used 4,728,676 accepted answer tokens with zero retries; its panel used
   another 445,171.
+- The A11b unregistered preview used 24,481,563 accepted answer tokens and at
+  least 24,568,225 across all attempts; its panel used another 1,987,299. T1
+  cost 2.2% more accepted tokens than T0 and E1 cost 3.6% more than T1 with no
+  correctness gain.
 
 These are per-run receipts. They must not be naively summed when a comparator
 artifact was reused rather than rerun.
 
 ## Next decision sequence
 
-1. Treat the running subscription preview as exploratory only; approval cannot
-   retroactively promote it.
-2. Build and seal a backend-compatible official/API transport schema while
-   retaining full offline validation of the registered answer contract.
-3. Export the completed trusted-executor run and execute the prepared
-   `raw-audit` before opening gold or interpreting correctness.
-4. Finalize registered grading, then execute `final-report`. Promote E1, promote
-   T1 only, or stop the event-grouping accuracy thesis exactly as registered.
+1. Do not replay this exact A11b corpus across APIs. Its answerable cases are
+   ceilinged and its unsupported cases isolate a shared abstention failure.
+2. Build a backend-compatible schema and an arm-identical explicit abstention
+   contract, with no post-acceptance normalization needed.
+3. Construct a fresh patient-disjoint development/holdout corpus where T0 has
+   measurable answerable-case errors and a development pilot demonstrates
+   nonzero paired discordance before the holdout is opened.
+4. Run a separately implemented content-free raw-audit adapter and a
+   cross-family panel sensitivity check before making any stronger reliability
+   claim.
 5. Regrade the existing six-cell generality grid without model calls.
-6. Only then freeze the portable cross-API harness and spend API budget on the
-   winning exact packet comparison.
+6. Freeze the portable cross-API harness only after a packet contrast has
+   nonzero headroom; then spend API budget on that exact sealed comparison.
 
 Cross-API hardness benchmarking is intentionally deferred. A native graph
 storage-engine comparison is a separate systems experiment and should not be
