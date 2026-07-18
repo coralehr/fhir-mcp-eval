@@ -1,0 +1,63 @@
+{
+  "answer_calls": 192,
+  "approval": {
+    "exact_head_approval_required": true,
+    "status": "pending"
+  },
+  "artifacts": {
+    "anchor_request": {
+      "bytes": 34062,
+      "path": "anchors/a11b-successor-development-controller-2026-07-18.json",
+      "sha256": "8ce6678978da6a843cd94e8e92dc668c2f0240f5cc91897bdaa12a78f4b68843"
+    },
+    "bundle": {
+      "bytes": 8331752,
+      "sha256": "7e386659a0c000ab22d6fc9954235c23dc74beec885ebcbe6562ce766dcfcb48"
+    },
+    "controller": {
+      "bytes": 98536,
+      "sha256": "daca25e7ed4efbb1a7c27c8d3f1e79fa19bfd5adfddb41e619ff223018c68478"
+    },
+    "install_manifest": {
+      "bytes": 391368,
+      "sha256": "d8d5ebcfab34b06b8b5021df560679040768f95652b0f48f6275ae283d17f026"
+    },
+    "python_tree_receipt": {
+      "bytes": 383059,
+      "sha256": "f70d911c10b3994ca0d07e67d1c707595f32f3049855c19186a8c7e2879887ed"
+    }
+  },
+  "build": {
+    "controller_builds_byte_identical": true,
+    "independent_corpus_builds": [
+      "c",
+      "d"
+    ],
+    "install_package_builds_byte_identical": true,
+    "model_calls": 0,
+    "retired_controller_or_manifest_reused": false,
+    "source_commit": "01e42ead1c0787df25aca65199d8eb80050b02fe"
+  },
+  "corpus": {
+    "audit_manifest_sha256": "b233b4bdfe9411ccf2720acd3e7850a01f340b73bce46bdc07adda0260362dcc",
+    "efficacy_materialized": false,
+    "public_manifest_sha256": "9bf09379d93db80c430b59a59ca79f522e185de6baef048bed40f29017f3e74d",
+    "reserved_efficacy_patients": 384
+  },
+  "kind": "a11b_successor_development_seal_receipt",
+  "profile": "a11b-successor-development-v1",
+  "python_runtime": {
+    "bytes": 43158771,
+    "files": 1646,
+    "tree_sha256": "318439753cc0b2ce85ad573a6dfdd8739e63433e2613ff2d094e19b9ccd6af4b",
+    "version": "Python 3.14.5"
+  },
+  "question_count": 64,
+  "run_id": "8005f860fdebcbab717e62a7bea35291b6570769d7091db00712a896e2afa034",
+  "runtime": {
+    "bytes": 260405808,
+    "sha256": "29915529b97697def1a957b0505e770aa6a45744435d62fc263e98d7619e167a",
+    "version": "codex-cli 0.144.1"
+  },
+  "schema_version": "a11b-successor-development-seal-receipt-v1"
+}
