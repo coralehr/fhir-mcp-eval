@@ -181,16 +181,37 @@ def validate_inputs(
             "bytes": subject["bytes"],
         }:
             raise DeploymentError("package differs from anchored service code")
-    for snapshot_name, package_name in (
-        ("a11_grading", "a11b_grading"),
-        ("a11b_postprocess", "a11b_postprocess"),
-        ("paired_stats", "paired_stats"),
-        ("panel_grade", "panel_grade"),
-        ("run_a11_panel", "run_a11b_panel"),
-        ("run_lock", "run_lock"),
-        ("a11b_nightly_bootstrap", "a11b_nightly_bootstrap"),
-        ("a11b_nightly_runner", "a11b_nightly_runner"),
-    ):
+    snapshot_packages = (
+        (
+            ("a11_evidence_core", "a11_evidence_core"),
+            ("a11b_answer_contract", "a11b_answer_contract"),
+            ("a11b_postprocess", "a11b_postprocess"),
+            ("a11b_successor_dev_gate", "a11b_successor_dev_gate"),
+            (
+                "a11b_successor_development_grading",
+                "a11b_successor_development_grading",
+            ),
+            (
+                "a11b_successor_development_postprocess",
+                "a11b_successor_development_postprocess",
+            ),
+            ("run_lock", "run_lock"),
+            ("a11b_nightly_bootstrap", "a11b_nightly_bootstrap"),
+            ("a11b_nightly_runner", "a11b_nightly_runner"),
+        )
+        if controller["experiment_profile"] == "a11b-successor-development-v1"
+        else (
+            ("a11_grading", "a11b_grading"),
+            ("a11b_postprocess", "a11b_postprocess"),
+            ("paired_stats", "paired_stats"),
+            ("panel_grade", "panel_grade"),
+            ("run_a11_panel", "run_a11b_panel"),
+            ("run_lock", "run_lock"),
+            ("a11b_nightly_bootstrap", "a11b_nightly_bootstrap"),
+            ("a11b_nightly_runner", "a11b_nightly_runner"),
+        )
+    )
+    for snapshot_name, package_name in snapshot_packages:
         snapshot = controller["snapshots"][snapshot_name]
         if package_receipts.get(package_name) != {
             "sha256": snapshot["sha256"],

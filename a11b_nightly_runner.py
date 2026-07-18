@@ -15,6 +15,7 @@ from typing import Any
 
 import a11b_postprocess
 import a11b_launch_protocol as launch_protocol
+import a11b_successor_development_postprocess
 import experiment_executor_service as service
 import run_lock
 
@@ -332,11 +333,22 @@ def _run_locked() -> None:
                 "updated_at": _clock(),
             }
         )
-        final_manifest = a11b_postprocess.run_all(
-            bundle_root=BUNDLE_ROOT,
-            audit_root=AUDIT_ROOT,
-            trusted_executor=executor,
-        )
+        if controller["experiment_profile"] == (
+            a11b_successor_development_postprocess.PROFILE
+        ):
+            final_manifest = a11b_successor_development_postprocess.run_all(
+                bundle_root=BUNDLE_ROOT,
+                audit_root=AUDIT_ROOT,
+                trusted_executor=executor,
+                controller=controller,
+                controller_sha256=controller_sha,
+            )
+        else:
+            final_manifest = a11b_postprocess.run_all(
+                bundle_root=BUNDLE_ROOT,
+                audit_root=AUDIT_ROOT,
+                trusted_executor=executor,
+            )
         _write_status(
             {
                 "schema_version": launch_protocol.STATUS_VERSION,

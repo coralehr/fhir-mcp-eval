@@ -44,6 +44,7 @@ class A11bNightlyRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             controller = {
+                "experiment_profile": "a11b-causal-isolation-v2",
                 "run_id": "a" * 64,
                 "inputs": {"answer_calls": 1152},
                 "outputs": {},
@@ -277,6 +278,7 @@ class A11bNightlyRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             controller = {
+                "experiment_profile": "a11b-causal-isolation-v2",
                 "run_id": "a" * 64,
                 "inputs": {"answer_calls": 1152},
                 "outputs": {},

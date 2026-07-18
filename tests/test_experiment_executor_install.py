@@ -161,11 +161,16 @@ class ExperimentExecutorInstallTests(unittest.TestCase):
             self.assertEqual(
                 set(first_manifest["code_subjects"]),
                 {
+                    "a11_evidence_core",
+                    "a11b_answer_contract",
                     "a11b_nightly_bootstrap",
                     "a11b_nightly_runner",
                     "a11b_launch_protocol",
                     "a11b_grading",
                     "a11b_postprocess",
+                    "a11b_successor_dev_gate",
+                    "a11b_successor_development_grading",
+                    "a11b_successor_development_postprocess",
                     "anchor",
                     "bootstrap",
                     "codex_harness",
