@@ -20,6 +20,7 @@ licensed only at the scope shown below.
 | QT-4 valid374 holdout | `confirmatory_promoted` | 374 questions: 44 dispatched / 330 byte-identical controls | Vocabulary versus A6a on dispatched questions +34.1pp (95% CI +17.9 to +50.0); traversal versus vocabulary +9.1pp (95% CI 0 to +20.9). | Promote fixed microbiology vocabulary only; traversal remains unresolved. |
 | A11 V/T/E path-required | `confirmatory_supported_not_promotion_gated` | 120 constructed questions / 96 answerable path-required cases | T and E recovered terminal evidence on 96/96 answerable cases versus 0/96 for V. E versus T was +0.83pp with 95% CI 0 to +2.56. | Bounded traversal worked on the constructed multi-hop task. Do not promote event grouping: its single gain is not isolated from the bundled answerability receipt. |
 | A11b causal isolation | `exploratory_not_promoted` | 64 development Patients + 384 untouched efficacy Patients at run start; one efficacy question per Patient; 1,152 answer slots | Strict normalized artifacts: 288/384 in every arm with paired-difference 97.5% intervals 0.0 to 0.0. Raw insufficiency behavior: 26/96 T0, 96/96 T1, 96/96 E1. Conservative post-hoc sensitivity: 314/384, 384/384, 384/384. | Preserve the strict artifact but supersede its behavioral null. T1 merits a fresh prospective test; E1 showed no benefit beyond T1. No promotion is licensed; the Patients are spent. |
+| A11b successor zero-model build | `development_ready_not_answered` | 448 fresh synthetic Patients; 64 development packets materialized; 384 efficacy Patients reserved and unopened | Two clean roots produced byte-identical generation receipts and development public/audit trees under the v2 categorical answer contract. | Seal and independently approve the 192-answer development probe. Do not open efficacy unless both registered correctness contrasts have nonzero discordance. |
 
 ## Claim register
 
@@ -85,6 +86,7 @@ Evidence: `qt4-valid374-v2`, `a11-vte-120`.
 | QT-4 valid374 holdout | 60760432 | 63737565 | Panel used 1,820,656 tokens; aborted v1 protocol overhead was 3,546,961 tokens and is reported separately. |
 | A11 V/T/E path-required | 4728676 | 4728676 | Answer arms only; panel added 445,171 tokens. Zero retries. |
 | A11b causal isolation | 24481563 | 24568225 | Unregistered answer preview only; all-attempt usage is a lower bound because three pre-inference rejects lacked usable usage. Panel added 1,987,299 tokens. |
+| A11b successor zero-model build | 0 | 0 | Source generation, packet compilation, and receipt verification only; no answer or judge call. |
 
 ## Known evidence gaps
 
@@ -92,6 +94,6 @@ Evidence: `qt4-valid374-v2`, `a11-vte-120`.
 - A6a and QT-1 through QT-3 retained subscription token receipts but not provider-priced monetary cost.
 - The A11 panel used the same model family as the answerer; a cross-family sensitivity judge remains useful.
 - The A11b preview completion replay validated prompt, answer, schema, event, usage, and artifact receipts. Its exposure booleans were self-asserted rather than independent measurements.
-- A11b r3 is not runnable as sealed against the current Codex backend. The successor has a versioned categorical answer contract but still requires a fresh corpus, prospective development discordance, and a new seal.
-- The 384 A11b efficacy Patients are spent for confirmatory use; a replacement must demonstrate nonzero paired discordance on separate development data before a fresh holdout or cross-API matrix is opened.
+- A11b r3 is not runnable as sealed against the current Codex backend. Its successor now has a fresh reproducible development corpus and categorical answer contract, but still requires a new development controller seal and prospective nonzero discordance.
+- The 384 A11b r3 efficacy Patients are spent. The successor's separately reserved 384 efficacy Patients remain unopened and cannot be materialized before the development gate passes.
 - No native graph database, Postgres recursive-query, or natural clinical chart comparison has been run.

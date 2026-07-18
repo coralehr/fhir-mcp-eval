@@ -80,10 +80,12 @@ The evidence through 2026-07-16 changes the order of work:
 5. **Build the graph-neutral compiler and materialized-edge benchmark in
    parallel.** This is a byte-equivalence, authorization, correction, and latency
    program, not an answer-accuracy arm or a storage-engine selection.
-6. **Build a fresh A11b successor only after development proves it can
-   discriminate.** Fix the transport/abstention contract, hold T1 aids constant
-   in E1, and require nonzero paired discordance on separate development data
-   before sealing a new patient-disjoint holdout.
+6. **Run the fresh A11b successor development gate before opening efficacy.**
+   The transport/abstention contract and independently reproduced 64-Patient
+   development corpus are ready. Seal the 192-answer development probe, hold T1
+   aids constant in E1, and require nonzero paired correctness discordance in
+   both registered contrasts before materializing the reserved patient-disjoint
+   efficacy split.
 7. **Prioritize A12 error fidelity, then A14 authorization in parallel.** Both
    target production substrate guarantees that the completed graph experiments
    did not measure and do not need to wait for another A11b answer run.

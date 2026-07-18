@@ -133,9 +133,11 @@ Implementation status as of 2026-07-15:
   verifier infrastructure,
   not a completed source pin or generation; see
   [A11B_GENERATION_RECEIPT.md](A11B_GENERATION_RECEIPT.md).
-- [ ] Pin and independently approve the real Synthea/JAR/Java/configuration
-  spec, generate two clean 448-Patient roots, and require byte-identical
-  generation receipts before assigning the 64/384 splits.
+- [x] Pin the real Synthea/JAR/Java/configuration successor spec, generate two
+  clean 448-Patient roots, and require byte-identical generation receipts. Two
+  independent development-only builds are also byte-identical and contain no
+  efficacy path. Independent exact-head approval remains part of the
+  development controller seal, not a reason to rerun generation.
 - [ ] Deploy the witness/executor under a principal the run account cannot
   mutate, bind its public key and schedule into a new externally approved
   controller, and mediate the Codex credential before any A11b live call.

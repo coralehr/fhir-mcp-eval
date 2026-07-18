@@ -155,6 +155,29 @@
         {"kind": "repo_file", "path": "docs/results/A11B_R3_FORENSIC_SENSITIVITY.json", "sha256": "1ab8ad623174bd99f12f6a48f5b6a0cea10bf224316509928ab4799cf3e94a4f"},
         {"kind": "external_aggregate", "path": "macmini-cory:/Users/cory/a11b-stage-0716/a11b-unregistered-preview-r3-structural-schema-0716/result-unregistered-v1/result.json", "sha256": "0599d68ae8a344d154b9bb0b6051cb2fc27c63eb9f69b17972066909a6585d68", "verified_at": "2026-07-16"}
       ]
+    },
+    {
+      "id": "a11b-successor-zero-model-build",
+      "name": "A11b successor zero-model build",
+      "status": "development_ready_not_answered",
+      "population": "448 fresh synthetic Patients; 64 development packets materialized; 384 efficacy Patients reserved and unopened",
+      "result": "Two clean roots produced byte-identical generation receipts and development public/audit trees under the v2 categorical answer contract.",
+      "decision": "Seal and independently approve the 192-answer development probe. Do not open efficacy unless both registered correctness contrasts have nonzero discordance.",
+      "economics": {
+        "accepted_tokens": 0,
+        "all_attempt_tokens": 0,
+        "notes": "Source generation, packet compilation, and receipt verification only; no answer or judge call."
+      },
+      "sources": [
+        {"kind": "repo_file", "path": "docs/results/a11b-successor-artifacts/source-c-spec.json", "sha256": "2c4ecf7ea44f42452799576da7b0d0814ddf933cbb054311d555d56bc20261d4"},
+        {"kind": "repo_file", "path": "docs/results/a11b-successor-artifacts/source-d-spec.json", "sha256": "2c4ecf7ea44f42452799576da7b0d0814ddf933cbb054311d555d56bc20261d4"},
+        {"kind": "repo_file", "path": "docs/results/a11b-successor-artifacts/source-c-receipt.json", "sha256": "acb5ad3ba2ba8032507d69afc8375d181dc49376392e39564343490f718df0d8"},
+        {"kind": "repo_file", "path": "docs/results/a11b-successor-artifacts/source-d-receipt.json", "sha256": "acb5ad3ba2ba8032507d69afc8375d181dc49376392e39564343490f718df0d8"},
+        {"kind": "repo_file", "path": "docs/results/a11b-successor-artifacts/development-c-public-manifest.json", "sha256": "9bf09379d93db80c430b59a59ca79f522e185de6baef048bed40f29017f3e74d"},
+        {"kind": "repo_file", "path": "docs/results/a11b-successor-artifacts/development-d-public-manifest.json", "sha256": "9bf09379d93db80c430b59a59ca79f522e185de6baef048bed40f29017f3e74d"},
+        {"kind": "repo_file", "path": "docs/results/a11b-successor-artifacts/development-c-audit-manifest.json", "sha256": "b233b4bdfe9411ccf2720acd3e7850a01f340b73bce46bdc07adda0260362dcc"},
+        {"kind": "repo_file", "path": "docs/results/a11b-successor-artifacts/development-d-audit-manifest.json", "sha256": "b233b4bdfe9411ccf2720acd3e7850a01f340b73bce46bdc07adda0260362dcc"}
+      ]
     }
   ],
   "claim_register": [
@@ -200,8 +223,8 @@
     "A6a and QT-1 through QT-3 retained subscription token receipts but not provider-priced monetary cost.",
     "The A11 panel used the same model family as the answerer; a cross-family sensitivity judge remains useful.",
     "The A11b preview completion replay validated prompt, answer, schema, event, usage, and artifact receipts. Its exposure booleans were self-asserted rather than independent measurements.",
-    "A11b r3 is not runnable as sealed against the current Codex backend. The successor has a versioned categorical answer contract but still requires a fresh corpus, prospective development discordance, and a new seal.",
-    "The 384 A11b efficacy Patients are spent for confirmatory use; a replacement must demonstrate nonzero paired discordance on separate development data before a fresh holdout or cross-API matrix is opened.",
+    "A11b r3 is not runnable as sealed against the current Codex backend. Its successor now has a fresh reproducible development corpus and categorical answer contract, but still requires a new development controller seal and prospective nonzero discordance.",
+    "The 384 A11b r3 efficacy Patients are spent. The successor's separately reserved 384 efficacy Patients remain unopened and cannot be materialized before the development gate passes.",
     "No native graph database, Postgres recursive-query, or natural clinical chart comparison has been run."
   ]
 }
