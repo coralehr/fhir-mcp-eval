@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import a11b_postprocess
 import a11b_successor_development_postprocess as postprocess
@@ -65,6 +66,58 @@ class _Executor:
 
 
 class SuccessorDevelopmentPostprocessTests(unittest.TestCase):
+    def test_valid_no_headroom_gate_is_published_as_failed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            controller = {
+                "experiment_profile": postprocess.PROFILE,
+                "run_id": "a" * 64,
+                "inputs": {
+                    "answer_calls": 192,
+                    "audit_manifest_sha256": "c" * 64,
+                },
+                "schedule": {"items": []},
+                "outputs": {"result": str(root / "results/final")},
+            }
+            grading_result = {
+                "assignments": [],
+                "outcomes": [],
+                "manifest": {},
+            }
+            failed_gate = {
+                "status": "failed",
+                "development_result_manifest_sha256": "d" * 64,
+                "model_calls": 0,
+            }
+            with mock.patch.object(
+                postprocess, "_export_rows", return_value=([], [])
+            ), mock.patch.object(
+                postprocess.a11b_postprocess,
+                "_verify_audit_tree",
+                return_value={"artifacts": {}},
+            ), mock.patch.object(
+                postprocess.a11b_postprocess, "_read_jsonl", return_value=[]
+            ), mock.patch.object(
+                postprocess.a11b_successor_development_grading,
+                "compile_result",
+                return_value=grading_result,
+            ), mock.patch.object(
+                postprocess.a11b_successor_dev_gate,
+                "compile_gate_receipt",
+                return_value=failed_gate,
+            ):
+                result = postprocess.run_all(
+                    bundle_root=root,
+                    audit_root=root / "audit-input",
+                    trusted_executor=object(),
+                    controller=controller,
+                    controller_sha256="b" * 64,
+                )
+
+            self.assertEqual(result["promotion"], "development_gate_failed")
+            gate = json.loads((root / "results/final/gate.json").read_bytes())
+            self.assertEqual(gate["status"], "failed")
+
     def test_exact_completed_export_runs_zero_model_gate(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

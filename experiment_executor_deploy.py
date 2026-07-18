@@ -413,30 +413,37 @@ def _sshd_drop_in_check_command(
 
 
 def _ensure_executor_account() -> tuple[int, int]:
+    created = False
+    record_path = f"/Users/{install.EXECUTOR_ACCOUNT}"
     try:
-        account = pwd.getpwnam(install.EXECUTOR_ACCOUNT)
-    except KeyError:
-        listing = _run(["/usr/bin/dscl", ".", "-list", "/Users", "UniqueID"])
-        used = {
-            int(line.rsplit(None, 1)[1])
-            for line in listing.stdout.splitlines()
-            if line.rsplit(None, 1)[-1].isdigit()
-        }
-        uid = next((candidate for candidate in range(499, 400, -1) if candidate not in used), None)
-        if uid is None:
-            raise DeploymentError("no unused system UID is available")
-        records = {
-            "UniqueID": str(uid),
-            "PrimaryGroupID": str(grp.getgrnam("staff").gr_gid),
-            "NFSHomeDirectory": str(service.PRODUCTION_BUNDLE_DIR),
-            "UserShell": "/bin/sh",
-            "RealName": "CoralEHR Experiment Executor",
-            "IsHidden": "1",
-            "AuthenticationAuthority": ";DisabledUser;",
-        }
-        record_path = f"/Users/{install.EXECUTOR_ACCOUNT}"
-        created = False
         try:
+            account = pwd.getpwnam(install.EXECUTOR_ACCOUNT)
+        except KeyError:
+            listing = _run(["/usr/bin/dscl", ".", "-list", "/Users", "UniqueID"])
+            used = {
+                int(line.rsplit(None, 1)[1])
+                for line in listing.stdout.splitlines()
+                if line.rsplit(None, 1)[-1].isdigit()
+            }
+            uid = next(
+                (
+                    candidate
+                    for candidate in range(499, 400, -1)
+                    if candidate not in used
+                ),
+                None,
+            )
+            if uid is None:
+                raise DeploymentError("no unused system UID is available")
+            records = {
+                "UniqueID": str(uid),
+                "PrimaryGroupID": str(grp.getgrnam("staff").gr_gid),
+                "NFSHomeDirectory": str(service.PRODUCTION_BUNDLE_DIR),
+                "UserShell": "/bin/sh",
+                "RealName": "CoralEHR Experiment Executor",
+                "IsHidden": "1",
+                "AuthenticationAuthority": ";DisabledUser;",
+            }
             _run(["/usr/bin/dscl", ".", "-create", record_path])
             created = True
             for field, value in records.items():
@@ -451,23 +458,25 @@ def _ensure_executor_account() -> tuple[int, int]:
                     ]
                 )
             account = pwd.getpwnam(install.EXECUTOR_ACCOUNT)
-        except BaseException as original:
-            if created:
-                try:
-                    _run(["/usr/bin/dscl", ".", "-delete", record_path])
-                except BaseException:
-                    original.add_note(
-                        "transaction-owned executor account cleanup failed"
-                    )
-            raise
-    if (
-        account.pw_dir != str(service.PRODUCTION_BUNDLE_DIR)
-        or account.pw_shell != "/bin/sh"
-        or account.pw_uid == 0
-        or account.pw_name in grp.getgrnam("admin").gr_mem
-    ):
-        raise DeploymentError("executor account differs from the sealed principal")
-    return account.pw_uid, account.pw_gid
+        if (
+            account.pw_dir != str(service.PRODUCTION_BUNDLE_DIR)
+            or account.pw_shell != "/bin/sh"
+            or account.pw_uid == 0
+            or account.pw_name in grp.getgrnam("admin").gr_mem
+        ):
+            raise DeploymentError(
+                "executor account differs from the sealed principal"
+            )
+        return account.pw_uid, account.pw_gid
+    except BaseException as original:
+        if created:
+            try:
+                _run(["/usr/bin/dscl", ".", "-delete", record_path])
+            except BaseException:
+                original.add_note(
+                    "transaction-owned executor account cleanup failed"
+                )
+        raise
 
 
 def _mkdir(path: Path, *, mode: int, uid: int, gid: int) -> None:

@@ -82,8 +82,10 @@ contrasts contain at least one discordant correctness pair:
 
 This is a headroom check, not an efficacy estimate. Direction and magnitude are
 ignored. If either contrast has zero discordant pairs, the three-arm efficacy
-run stops. The team may redesign using a new prospective source generation, but
-may not tune against or relabel the reserved 384 Patients.
+run publishes a deterministic `status="failed"` gate receipt with the grading
+and token-economics commitments, then stops. The team may redesign using a new
+prospective source generation, but may not tune against or relabel the reserved
+384 Patients.
 
 Passing the development gate does not itself authorize model calls on efficacy.
 It permits a separate zero-model, independently reproduced efficacy build and a

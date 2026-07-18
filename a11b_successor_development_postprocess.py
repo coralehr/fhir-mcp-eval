@@ -126,7 +126,11 @@ def run_all(
         "development_result_manifest_sha256": gate[
             "development_result_manifest_sha256"
         ],
-        "promotion": "development_gate_passed",
+        "promotion": (
+            "development_gate_passed"
+            if gate["status"] == "passed"
+            else "development_gate_failed"
+        ),
         "model_calls": 0,
     }
     artifacts = {

@@ -72,12 +72,16 @@ class A11bSuccessorDevelopmentGateTests(unittest.TestCase):
     def test_rejects_a_development_probe_with_no_correctness_discordance(self) -> None:
         assignments = _assignments()
         outcomes = _outcomes()
-        with self.assertRaisesRegex(ValueError, "primary.*no discordant"):
-            gate.compile_gate_receipt(
-                assignments=assignments,
-                outcomes=outcomes,
-                development_result_manifest=_manifest(assignments, outcomes),
-            )
+        receipt = gate.compile_gate_receipt(
+            assignments=assignments,
+            outcomes=outcomes,
+            development_result_manifest=_manifest(assignments, outcomes),
+        )
+
+        self.assertEqual(receipt["status"], "failed")
+        self.assertEqual(
+            receipt["contrasts"]["primary_e1_minus_t1"]["discordant"], 0
+        )
 
     def test_requires_nonzero_discordance_for_both_registered_contrasts(self) -> None:
         outcomes = _outcomes()
@@ -107,12 +111,16 @@ class A11bSuccessorDevelopmentGateTests(unittest.TestCase):
         outcomes = _outcomes()
         outcomes[2]["correct"] = False
 
-        with self.assertRaisesRegex(ValueError, "secondary.*no discordant"):
-            gate.compile_gate_receipt(
-                assignments=assignments,
-                outcomes=outcomes,
-                development_result_manifest=_manifest(assignments, outcomes),
-            )
+        receipt = gate.compile_gate_receipt(
+            assignments=assignments,
+            outcomes=outcomes,
+            development_result_manifest=_manifest(assignments, outcomes),
+        )
+
+        self.assertEqual(receipt["status"], "failed")
+        self.assertEqual(
+            receipt["contrasts"]["secondary_t1_minus_t0"]["discordant"], 0
+        )
 
     def test_rejects_missing_duplicate_or_mismatched_patient_outcomes(self) -> None:
         assignments = _assignments()
