@@ -36,6 +36,32 @@ PANEL_EFFORT = "high"
 PANEL_VOTES = 3
 PANEL_BATCH_SIZE = 20
 PANEL_TIMEOUT_SECONDS = 600
+
+
+def judge_model_family(model: str) -> str:
+    """Return the provider family prefix of one model identifier."""
+
+    if not isinstance(model, str):
+        raise ValueError("judge model identifier must be a string")
+    family = model.strip().lower().split("-", 1)[0]
+    if not family:
+        raise ValueError("judge model identifier is empty")
+    return family
+
+
+def require_cross_family_judge(answer_model: str, judge_model: str) -> None:
+    """Reject panel configurations that self-grade within one model family.
+
+    A judge from the answer model's own family shares its failure modes and
+    is susceptible to the same prompt-injection phrasing the answer arm can
+    emit, so panel grading requires an independent model family (issue #63).
+    """
+
+    if judge_model_family(answer_model) == judge_model_family(judge_model):
+        raise ValueError(
+            "panel judge model family matches the answer model family; "
+            "an independent model family is required for panel grading"
+        )
 REGISTERED_DATASET_MANIFEST_SHA256 = (
     "c779c1e0c4e090a2f17c8856fef2999332f0ab1fd3106831dd945b0ef0863e0a"
 )
