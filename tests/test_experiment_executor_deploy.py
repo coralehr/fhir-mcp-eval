@@ -213,6 +213,36 @@ class ExperimentExecutorDeployTests(unittest.TestCase):
             calls,
         )
 
+    def test_invalid_new_executor_account_is_deleted_before_retry(self) -> None:
+        calls: list[list[str]] = []
+        account = mock.Mock(
+            pw_dir="/unexpected",
+            pw_shell="/bin/sh",
+            pw_uid=499,
+            pw_gid=os.getgid(),
+            pw_name="_coralexp",
+        )
+
+        def run(command: list[str]) -> object:
+            calls.append(command)
+            return mock.Mock(stdout="root 0\n" if command[2] == "-list" else "")
+
+        with mock.patch.object(
+            deploy.pwd, "getpwnam", side_effect=(KeyError("absent"), account)
+        ), mock.patch.object(
+            deploy.grp,
+            "getgrnam",
+            return_value=mock.Mock(gr_gid=os.getgid(), gr_mem=[]),
+        ), mock.patch.object(
+            deploy, "_run", side_effect=run
+        ), self.assertRaisesRegex(deploy.DeploymentError, "sealed principal"):
+            deploy._ensure_executor_account()
+
+        self.assertIn(
+            ["/usr/bin/dscl", ".", "-delete", "/Users/_coralexp"],
+            calls,
+        )
+
     def test_readiness_failure_terminates_the_waiting_child_before_rollback(self) -> None:
         process = mock.Mock(pid=12345)
         process.poll.return_value = None
