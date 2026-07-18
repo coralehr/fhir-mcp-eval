@@ -56,9 +56,9 @@ hard-coded to this fork's shapes). **Every arm's pre-registration must address i
 [docs/reviews/2026-07-11-adversarial-roadmap-review.md](reviews/2026-07-11-adversarial-roadmap-review.md)
 before it runs.**
 
-## Current execution order after QT-4 and A11
+## Current execution order after QT-4, A11, and the A11b r3 preview
 
-The evidence through 2026-07-15 changes the order of work:
+The evidence through 2026-07-16 changes the order of work:
 
 1. **Keep and operationalize the promoted vocabulary recipe.** QT-4 valid374
    promoted fixed question-only microbiology vocabulary while its 330 negative
@@ -70,15 +70,23 @@ The evidence through 2026-07-15 changes the order of work:
    Traversal supplied all deliberately hidden terminal evidence, but event
    grouping did not earn promotion and was confounded with explicit temporal
    selection and an answerability receipt.
-4. **Run A11b next only after no-model protocol and corpus gates close.** Compare
-   flat traversal, flat traversal plus the same selection/completeness aids, and
-   event grouping plus those identical aids on a harder untouched holdout.
+4. **Do not promote or cross-API replay the A11b r3 corpus.** Its normalized
+   artifacts tied T0/T1/E1 at 288/384, but the raw logs show that T1/E1 used
+   one of two explicit insufficiency prefixes on all 96 unsupported cases
+   while T0 did so on 26.
+   The compatibility normalizer erased that signal. T1 therefore deserves a
+   fresh prospective test; E1 still showed no incremental grouping benefit.
+   The exact corpus has no answerable-case headroom and is now spent.
 5. **Build the graph-neutral compiler and materialized-edge benchmark in
    parallel.** This is a byte-equivalence, authorization, correction, and latency
    program, not an answer-accuracy arm or a storage-engine selection.
-6. **After A11b, prioritize A12 error fidelity, then A14 authorization.** Both
+6. **Build a fresh A11b successor only after development proves it can
+   discriminate.** Fix the transport/abstention contract, hold T1 aids constant
+   in E1, and require nonzero paired discordance on separate development data
+   before sealing a new patient-disjoint holdout.
+7. **Prioritize A12 error fidelity, then A14 authorization in parallel.** Both
    target production substrate guarantees that the completed graph experiments
-   did not measure.
+   did not measure and do not need to wait for another A11b answer run.
 
 The executable gates, stop rules, and product/research split are in
 [NEXT_EXPERIMENT_PLAN.md](NEXT_EXPERIMENT_PLAN.md).
@@ -114,8 +122,12 @@ vocabulary on the 374-question holdout while bounded exact-reference traversal
 was not accuracy-promoted ([result](results/QT4_VALID374_RESULT.md)). A11 then
 showed that traversal solves deliberately path-hidden evidence, but its event-
 group arm bundled temporal selection and an answerability receipt and did not
-earn promotion ([result](results/A11_RESULT.md)). A11b must now hold those aids
-constant to isolate grouping. Any index-vs-query-time comparison remains a
+earn promotion ([result](results/A11_RESULT.md)). The unregistered A11b r3
+preview then held those treatments apart. Its normalized labels tied, but a
+forensic amendment found that the compatibility normalizer erased T1/E1's raw
+insufficiency signal
+([amendment](results/A11B_R3_FORENSIC_AMENDMENT.md)). A successor must
+first demonstrate nonzero development discordance. Any index-vs-query-time comparison remains a
 byte-equivalence engineering benchmark, never an accuracy arm; neither QT-4 nor
 A11 tested or selected a persistent graph database.
 
@@ -305,9 +317,10 @@ graph-store advantage. E's only gain occurred on an unanswerable case and E
 bundled grouping with canonical temporal selection and a deterministic
 answerability receipt.
 
-**Successor A11b question:** When selection and completeness aids are held
-constant, does event grouping improve correctness beyond flat traversal on a
-harder untouched multi-event holdout?
+**Successor A11b question:** After fixing the backend-compatible abstention
+contract and proving nonzero development discordance, does event grouping
+improve correctness beyond flat traversal with identical selection and
+completeness aids on a fresh untouched multi-event holdout?
 
 **A11b arms:**
 

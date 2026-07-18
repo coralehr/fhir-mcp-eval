@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "A11b FHIR Agent Answer v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "status",
+    "answer",
+    "source_resource_ids",
+    "evidence_summary",
+    "insufficiency_reason"
+  ],
+  "properties": {
+    "status": {
+      "enum": [
+        "answered",
+        "insufficient"
+      ]
+    },
+    "answer": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_resource_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^[A-Z][A-Za-z0-9]*/[A-Za-z0-9.-]{1,64}$"
+      },
+      "uniqueItems": true
+    },
+    "evidence_summary": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": ".*\\S.*"
+    },
+    "insufficiency_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "oneOf": [
+    {
+      "properties": {
+        "status": {
+          "const": "answered"
+        },
+        "answer": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": ".*\\S.*"
+        },
+        "source_resource_ids": {
+          "minItems": 1
+        },
+        "insufficiency_reason": {
+          "type": "null"
+        }
+      }
+    },
+    {
+      "properties": {
+        "status": {
+          "const": "insufficient"
+        },
+        "answer": {
+          "type": "null"
+        },
+        "insufficiency_reason": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": ".*\\S.*"
+        }
+      }
+    }
+  ]
+}

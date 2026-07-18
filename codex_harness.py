@@ -28,12 +28,26 @@ from typing import Any, Iterator
 
 GOLD_FIELD_NAMES = {
     "answer",
+    "answerable",
+    "audit",
+    "checker",
     "expected_answer",
+    "expected_event_root",
+    "expected_evidence",
+    "expected_evidence_refs",
+    "expected_root",
+    "failure_mode",
     "gold",
     "gold_answer",
     "label",
+    "nonselected_reference_answer",
+    "nonselected_terminal_resource_ref",
     "proc_query",
+    "reference_answer",
+    "selected_root_ref",
+    "selected_terminal_resource_ref",
     "sql_query",
+    "terminal_resource_ref",
     "true_answer",
     "true_fhir_ids",
 }
@@ -57,11 +71,27 @@ MODEL_HIDDEN_PACKET_FIELDS = {
 }
 
 FORBIDDEN_MODEL_PACKET_KEYS = {
+    "answer",
+    "answerable",
+    "audit",
+    "checker",
     "expected_answer",
+    "expected_event_root",
+    "expected_evidence",
+    "expected_evidence_refs",
+    "expected_root",
+    "failure_mode",
     "gold",
     "gold_answer",
+    "label",
+    "nonselected_reference_answer",
+    "nonselected_terminal_resource_ref",
     "proc_query",
+    "reference_answer",
+    "selected_root_ref",
+    "selected_terminal_resource_ref",
     "sql_query",
+    "terminal_resource_ref",
     "true_answer",
     "true_fhir_ids",
 }
@@ -396,9 +426,23 @@ def model_visible_packet(packet: dict[str, Any]) -> dict[str, Any]:
     evaluation bookkeeping. A fetched/already-present edge is retained as a
     compact path citation because that relationship is part of the treatment.
     """
+    def normalized_field(value: str) -> str:
+        snake = re.sub(r"(?<!^)(?=[A-Z])", "_", value)
+        return re.sub(r"[^a-z0-9]+", "_", snake.lower()).strip("_")
+
     def reject_forbidden(value: Any, path: str = "packet") -> None:
         if isinstance(value, dict):
-            forbidden = FORBIDDEN_MODEL_PACKET_KEYS & set(value)
+            forbidden = set()
+            for raw_key in value:
+                if not isinstance(raw_key, str):
+                    raise ValueError(
+                        f"non-string model packet key at {path}: {raw_key!r}"
+                    )
+                key = normalized_field(raw_key)
+                if key in FORBIDDEN_MODEL_PACKET_KEYS or key.startswith(
+                    ("audit_", "checker_", "gold_", "expected_", "true_")
+                ):
+                    forbidden.add(raw_key)
             if forbidden:
                 raise ValueError(
                     f"forbidden benchmark key in model packet at {path}: "

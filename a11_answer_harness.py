@@ -20,11 +20,14 @@ import re
 from pathlib import Path
 from typing import Any, Iterable
 
+import a11b_answer_contract
 import codex_harness
 
 
 PROMPT_PROTOCOL_VERSION = "a11-exact-payload-prompt-v1"
 PROMPT_RECORD_VERSION = "a11-answer-prompt-record-v1"
+SUCCESSOR_PROMPT_PROTOCOL_VERSION = "a11b-exact-payload-prompt-v2"
+SUCCESSOR_PROMPT_RECORD_VERSION = "a11b-answer-prompt-record-v2-unsealed"
 INPUT_FIELDS = frozenset({"question_id", "question", "assumption"})
 PROMPT_RECORD_FIELDS = frozenset(
     {
@@ -36,6 +39,9 @@ PROMPT_RECORD_FIELDS = frozenset(
         "prompt_text",
         "prompt_sha256",
     }
+)
+SUCCESSOR_PROMPT_RECORD_FIELDS = PROMPT_RECORD_FIELDS | frozenset(
+    {"answer_contract_version", "prompt_protocol_version"}
 )
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -273,6 +279,103 @@ def render_prompt_bytes(row: dict[str, Any], model_payload_json: str) -> bytes:
         raise ValueError("model_payload_json must be a string")
     payload_bytes = model_payload_json.encode("utf-8", errors="strict")
     return _prompt_prefix(row) + payload_bytes + _PROMPT_SUFFIX
+
+
+def render_successor_prompt_bytes(
+    row: dict[str, Any], model_payload_json: str
+) -> bytes:
+    """Render a future-run prompt without changing the sealed v1 envelope."""
+
+    safe = _validate_input_row(row)
+    if not isinstance(model_payload_json, str):
+        raise ValueError("model_payload_json must be a string")
+    payload_bytes = model_payload_json.encode("utf-8", errors="strict")
+    prefix = (
+        "You are running a reproducible FHIR-AgentBench A11 successor "
+        "evaluation as the answering agent.\n"
+        "Return only the JSON object required by the provided output schema.\n"
+        "Do not use hidden knowledge, training-memory facts, or guesses. Answer "
+        "only from the supplied packet.\n"
+        f"{a11b_answer_contract.prompt_instructions()}\n"
+        "Every source_resource_ids entry must be an exact ResourceType/id "
+        "reference visible in the packet.\n"
+        f"Answer contract: {a11b_answer_contract.CONTRACT_VERSION}\n"
+        f"Prompt protocol: {SUCCESSOR_PROMPT_PROTOCOL_VERSION}\n\n"
+        f"Question ID: {safe['question_id']}\n\n"
+        f"Question:\n{safe['question']}\n\n"
+        f"Assumption (authoritative):\n{safe['assumption']}\n\n"
+        "Frozen clinical packet:\n"
+    ).encode("utf-8")
+    return prefix + payload_bytes + _PROMPT_SUFFIX
+
+
+def make_successor_prompt_record(
+    row: dict[str, Any], model_payload_json: str
+) -> dict[str, Any]:
+    """Build one unsealed, self-verifying successor prompt record."""
+
+    safe = _validate_input_row(row)
+    if not isinstance(model_payload_json, str):
+        raise ValueError("model_payload_json must be a string")
+    parsed = _loads_json(model_payload_json, label="model_payload_json")
+    if not isinstance(parsed, dict):
+        raise ValueError("A11 successor model payload must be a JSON object")
+    _reject_payload_leakage(parsed)
+    payload_bytes = model_payload_json.encode("utf-8", errors="strict")
+    prompt = render_successor_prompt_bytes(safe, model_payload_json)
+    return {
+        "schema_version": SUCCESSOR_PROMPT_RECORD_VERSION,
+        "question_id": safe["question_id"],
+        "model_payload_json": model_payload_json,
+        "model_payload_sha256": _sha256(payload_bytes),
+        "model_payload_utf8_bytes": len(payload_bytes),
+        "prompt_text": prompt.decode("utf-8", errors="strict"),
+        "prompt_sha256": _sha256(prompt),
+        "answer_contract_version": a11b_answer_contract.CONTRACT_VERSION,
+        "prompt_protocol_version": SUCCESSOR_PROMPT_PROTOCOL_VERSION,
+    }
+
+
+def build_verified_successor_prompt(
+    row: dict[str, Any], record: dict[str, Any]
+) -> bytes:
+    """Verify every successor record binding and return exact prompt bytes."""
+
+    safe = _validate_input_row(row)
+    if not isinstance(record, dict) or set(record) != SUCCESSOR_PROMPT_RECORD_FIELDS:
+        raise ValueError("A11 successor prompt record fields changed")
+    if (
+        record.get("schema_version") != SUCCESSOR_PROMPT_RECORD_VERSION
+        or record.get("answer_contract_version")
+        != a11b_answer_contract.CONTRACT_VERSION
+        or record.get("prompt_protocol_version")
+        != SUCCESSOR_PROMPT_PROTOCOL_VERSION
+    ):
+        raise ValueError("A11 successor prompt protocol changed")
+    if record.get("question_id") != safe["question_id"]:
+        raise ValueError("A11 successor question binding changed")
+    payload = record.get("model_payload_json")
+    if not isinstance(payload, str):
+        raise ValueError("A11 successor payload must be a string")
+    parsed = _loads_json(payload, label="model_payload_json")
+    if not isinstance(parsed, dict):
+        raise ValueError("A11 successor model payload must be a JSON object")
+    _reject_payload_leakage(parsed)
+    payload_bytes = payload.encode("utf-8", errors="strict")
+    if (
+        record.get("model_payload_sha256") != _sha256(payload_bytes)
+        or record.get("model_payload_utf8_bytes") != len(payload_bytes)
+    ):
+        raise ValueError("A11 successor payload receipt changed")
+    prompt_text = record.get("prompt_text")
+    if not isinstance(prompt_text, str):
+        raise ValueError("A11 successor prompt text is invalid")
+    prompt = prompt_text.encode("utf-8", errors="strict")
+    if record.get("prompt_sha256") != _sha256(prompt):
+        raise ValueError("A11 successor prompt hash changed")
+    if prompt != render_successor_prompt_bytes(safe, payload):
+        raise ValueError("A11 successor prompt bytes changed")
+    return prompt
 
 
 def build_verified_prompt(

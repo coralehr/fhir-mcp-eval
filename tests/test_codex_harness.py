@@ -111,6 +111,33 @@ class CodexHarnessTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "forbidden benchmark key"):
             codex_harness.build_prompt(record, mode="packet")
 
+    def test_packet_renderer_rejects_all_answerability_and_audit_synonyms(self):
+        for field in (
+            "answerable",
+            "reference_answer",
+            "referenceAnswer",
+            "Reference_Answer",
+            "failure_mode",
+            "selected_root_ref",
+            "SelectedRootRef",
+            "selected_terminal_resource_ref",
+            "expected_evidence_refs",
+            "expectedEvidenceRefs",
+        ):
+            packet = {
+                "resources": [
+                    {
+                        "resourceType": "Observation",
+                        "id": "o1",
+                        "metadata": {field: "leaked"},
+                    }
+                ]
+            }
+            with self.subTest(field=field), self.assertRaisesRegex(
+                ValueError, "forbidden benchmark key"
+            ):
+                codex_harness.render_model_visible_packet(packet)
+
     def test_noop_packet_metadata_and_sha_do_not_change_model_prompt(self):
         clinical_packet = {
             "kind": "bounded_fhir_packet",

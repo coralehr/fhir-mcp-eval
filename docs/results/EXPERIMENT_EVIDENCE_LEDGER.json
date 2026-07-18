@@ -1,0 +1,207 @@
+{
+  "schema_version": "fhir-context-evidence-ledger-v1",
+  "updated_at": "2026-07-17",
+  "experiments": [
+    {
+      "id": "a6a-initial409",
+      "name": "A6a initial 409",
+      "status": "confirmatory_promoted",
+      "population": "409 questions / 90 patient clusters",
+      "result": "Question-only selection 54.3% versus blunt projection 44.7%; +9.5pp, cluster 95% CI +5.4 to +13.7, McNemar p=1.3e-5.",
+      "decision": "License the paired selection claim; absolute accuracies are lower bounds because the shared time assumption was omitted from both prompts.",
+      "economics": {
+        "accepted_tokens": null,
+        "all_attempt_tokens": null,
+        "notes": "Packet payload was 36.7M versus 64.0M characters; historical token receipts were not consolidated in the committed result."
+      },
+      "sources": [
+        {"kind": "repo_file", "path": "runs/a6a-confirmatory-grading/final_result.json", "sha256": "db764319462c8f3d855f0f18e49b6cd295fdd013df7d0d798a1e7856405b2221"},
+        {"kind": "repo_file", "path": "docs/A6A_RESULT.md", "sha256": "f87aa81e427bda549edc2d7fec3e1dc506cd0fc175e4ab752a4ceda406818c65"}
+      ]
+    },
+    {
+      "id": "a6a-run2-assumption-fixed",
+      "name": "A6a run 2",
+      "status": "confirmatory_promoted",
+      "population": "409 questions / 90 patient clusters",
+      "result": "Question-only selection 54.5% versus blunt projection 46.2%; +8.3pp, cluster 95% CI +3.8 to +12.9, McNemar p=0.000183.",
+      "decision": "The selection result survives the repaired time-assumption prompt and pinned model runtime.",
+      "economics": {
+        "accepted_tokens": 66818190,
+        "all_attempt_tokens": 67635039,
+        "notes": "Across both arms. Selection used 26,207,434 accepted tokens versus 40,610,756 for blunt projection; all-attempt totals were 26,668,834 versus 40,966,205."
+      },
+      "sources": [
+        {"kind": "external_aggregate", "path": "fhir-mcp-eval-qt/runs/run2-final-grading/final_result.json", "sha256": "0cc60b73c9ed3bc6e1615ede82acc1c0da8de0c553a59979256bf4349fd15112", "verified_at": "2026-07-16T04:22:00-07:00"}
+      ]
+    },
+    {
+      "id": "qt1-include-pinning",
+      "name": "QT-1 include pinning",
+      "status": "null_not_promoted",
+      "population": "409 paired questions",
+      "result": "Include pinning 54.0% versus A6a 53.8%; +0.24pp, cluster 95% CI -1.44 to +1.99, McNemar p=1.0.",
+      "decision": "Preserving referenced resources alone did not improve correctness.",
+      "economics": {
+        "accepted_tokens": 25718285,
+        "all_attempt_tokens": 25718285,
+        "notes": "A6a comparator accepted 26,207,434 tokens in run 2."
+      },
+      "sources": [
+        {"kind": "external_aggregate", "path": "fhir-mcp-eval-qt/runs/qt-include-pinning-grading/final_result.json", "sha256": "2ba56536494ba2f9ec952913582ead66d1ba7d6c7dc6d0a6749aa07fa3798708", "verified_at": "2026-07-16T04:22:00-07:00"}
+      ]
+    },
+    {
+      "id": "qt2-aggregate-summary",
+      "name": "QT-2 aggregate summary",
+      "status": "null_not_promoted",
+      "population": "409 paired questions",
+      "result": "Aggregate summary 54.5% versus A6a 54.8%; -0.24pp, cluster 95% CI -2.36 to +2.06, McNemar p=1.0.",
+      "decision": "Summaries reduced abstention but did not reduce errors, so the feature was not promoted.",
+      "economics": {
+        "accepted_tokens": 26213539,
+        "all_attempt_tokens": 26213539,
+        "notes": "A6a comparator accepted 26,207,434 tokens in run 2."
+      },
+      "sources": [
+        {"kind": "external_aggregate", "path": "fhir-mcp-eval-qt/runs/qt-agg-summary-grading/final_result.json", "sha256": "3dc7e67c8eaae9b5a2c58eb40cd60d4af7abbb52ba877da14a4d5b798eb622d6", "verified_at": "2026-07-16T04:22:00-07:00"}
+      ]
+    },
+    {
+      "id": "qt3-endpoint-reserve",
+      "name": "QT-3 endpoint reserve",
+      "status": "null_not_promoted",
+      "population": "409 paired questions",
+      "result": "Endpoint reserve tied A6a at 54.8%; 0.0pp, cluster 95% CI -1.44 to +1.37, McNemar p=1.0.",
+      "decision": "Endpoint reservation alone was null and was not promoted.",
+      "economics": {
+        "accepted_tokens": 25641382,
+        "all_attempt_tokens": 25641382,
+        "notes": "A6a comparator accepted 26,207,434 tokens in run 2; one non-JSON warning line was ignored when summing complete usage receipts."
+      },
+      "sources": [
+        {"kind": "external_aggregate", "path": "fhir-mcp-eval-qt/runs/qt-endpoint-reserve-grading/final_result.json", "sha256": "1530d6525bfdb3ca48fab49459453f6260b4af8e94a49884257895f765293790", "verified_at": "2026-07-16T04:22:00-07:00"}
+      ]
+    },
+    {
+      "id": "generality-grid-99",
+      "name": "Exploratory model/effort grid",
+      "status": "invalid_for_claims",
+      "population": "99 questions per cell / six model-effort cells",
+      "result": "Archived aggregates are internally inconsistent: every cell records 99 answered items but uses n=409 as the accuracy denominator.",
+      "decision": "Exclude the grid from every generality claim until it is deterministically regraded with the registered 99-question denominator.",
+      "economics": {"accepted_tokens": null, "all_attempt_tokens": null, "notes": "Not consolidated because the analysis denominator is invalid."},
+      "sources": [
+        {"kind": "external_aggregate", "path": "fhir-mcp-eval-qt/grid_spec.json", "sha256": "6201bf705079a9bae146107d65dd62bad8e95689d8f93a3cbc0ffceff5c60417", "verified_at": "2026-07-16T04:22:00-07:00"},
+        {"kind": "external_aggregate", "path": "fhir-mcp-eval-qt/runs/grid-gpt-56-luna-high-grading/final_result.json", "sha256": "2969b95e2226a79d75b57d79e6c29ecdc0332fbaa0bd03b06fbe60b1e3e64f03", "verified_at": "2026-07-16T04:22:00-07:00"},
+        {"kind": "external_aggregate", "path": "fhir-mcp-eval-qt/runs/grid-gpt-56-luna-medium-grading/final_result.json", "sha256": "3c1ce6310175cef78d0d2090965bd775e7dcac757f625af897e21c3041755cad", "verified_at": "2026-07-16T04:22:00-07:00"},
+        {"kind": "external_aggregate", "path": "fhir-mcp-eval-qt/runs/grid-gpt-56-sol-high-grading/final_result.json", "sha256": "5123107264b7c2e49032a1b4a41420c1a9a3c48ff250fedbf45bbd4ac33c591e", "verified_at": "2026-07-16T04:22:00-07:00"},
+        {"kind": "external_aggregate", "path": "fhir-mcp-eval-qt/runs/grid-gpt-56-sol-medium-grading/final_result.json", "sha256": "059f3561fd1cbfe1ccd9a8af2b0bb49b7a3186fd3910bbd27f3cda3e0d18906c", "verified_at": "2026-07-16T04:22:00-07:00"},
+        {"kind": "external_aggregate", "path": "fhir-mcp-eval-qt/runs/grid-gpt-56-terra-high-grading/final_result.json", "sha256": "aae4d37f81f8a099788dc8571489a0322a726a5cfc364fbee15c4f3a41abf81a", "verified_at": "2026-07-16T04:22:00-07:00"},
+        {"kind": "external_aggregate", "path": "fhir-mcp-eval-qt/runs/grid-gpt-56-terra-medium-grading/final_result.json", "sha256": "85daca24b655fef130c1d96f00254adf7e27b925e73d518fac8cd0ac5c97be85", "verified_at": "2026-07-16T04:22:00-07:00"}
+      ]
+    },
+    {
+      "id": "qt4-micro42-v3b",
+      "name": "QT-4 micro42 mechanism screen",
+      "status": "exploratory_advanced_to_confirmation",
+      "population": "42 inspected microbiology questions",
+      "result": "Vocabulary versus A6a +42.9pp (95% CI +20.5 to +63.6); traversal versus vocabulary +7.1pp (95% CI 0 to +15.9).",
+      "decision": "Advance vocabulary to untouched confirmation; do not promote traversal from the same-set screen.",
+      "economics": {"accepted_tokens": 5672506, "all_attempt_tokens": 5672506, "notes": "Three answer arms; zero failed attempts. Panel usage is not included in this subtotal."},
+      "sources": [
+        {"kind": "repo_file", "path": "docs/results/QT4_V3B_MICRO42.md", "sha256": "6e77d6b05c63d61cf5318c0c4a62324855ed0960a04328d6eefc2458a817d1d3"}
+      ]
+    },
+    {
+      "id": "qt4-valid374-v2",
+      "name": "QT-4 valid374 holdout",
+      "status": "confirmatory_promoted",
+      "population": "374 questions: 44 dispatched / 330 byte-identical controls",
+      "result": "Vocabulary versus A6a on dispatched questions +34.1pp (95% CI +17.9 to +50.0); traversal versus vocabulary +9.1pp (95% CI 0 to +20.9).",
+      "decision": "Promote fixed microbiology vocabulary only; traversal remains unresolved.",
+      "economics": {"accepted_tokens": 60760432, "all_attempt_tokens": 63737565, "notes": "Panel used 1,820,656 tokens; aborted v1 protocol overhead was 3,546,961 tokens and is reported separately."},
+      "sources": [
+        {"kind": "repo_file", "path": "docs/results/QT4_VALID374_RESULT.json", "sha256": "079e156ffc135132ebea004e051f3e24e38920714d200177cbd41a3584a6673f"},
+        {"kind": "repo_file", "path": "docs/results/QT4_VALID374_FORENSIC_AUDIT.md", "sha256": "4822150e3ce92bce233d75b3ea65e800e3e6cd83dc034dc9d1fa32d57e12168a"}
+      ]
+    },
+    {
+      "id": "a11-vte-120",
+      "name": "A11 V/T/E path-required",
+      "status": "confirmatory_supported_not_promotion_gated",
+      "population": "120 constructed questions / 96 answerable path-required cases",
+      "result": "T and E recovered terminal evidence on 96/96 answerable cases versus 0/96 for V. E versus T was +0.83pp with 95% CI 0 to +2.56.",
+      "decision": "Bounded traversal worked on the constructed multi-hop task. Do not promote event grouping: its single gain is not isolated from the bundled answerability receipt.",
+      "economics": {"accepted_tokens": 4728676, "all_attempt_tokens": 4728676, "notes": "Answer arms only; panel added 445,171 tokens. Zero retries."},
+      "sources": [
+        {"kind": "repo_file", "path": "docs/results/A11_RESULT.json", "sha256": "95e0dfddbba5aeddd9822f9a9c0d6e3a20c7333fe82b0386d0e26467b6c3b27d"},
+        {"kind": "repo_file", "path": "docs/results/A11_FORENSIC_AUDIT.md", "sha256": "dab56eb2b02c0e9d5c92c83a6ff8f77f0ac1f1270788f4101ea716a3f3ca0873"}
+      ]
+    },
+    {
+      "id": "a11b-causal-isolation-384",
+      "name": "A11b causal isolation",
+      "status": "exploratory_not_promoted",
+      "population": "64 development Patients + 384 untouched efficacy Patients at run start; one efficacy question per Patient; 1,152 answer slots",
+      "result": "Strict normalized artifacts: 288/384 in every arm with paired-difference 97.5% intervals 0.0 to 0.0. Raw insufficiency behavior: 26/96 T0, 96/96 T1, 96/96 E1. Conservative post-hoc sensitivity: 314/384, 384/384, 384/384.",
+      "decision": "Preserve the strict artifact but supersede its behavioral null. T1 merits a fresh prospective test; E1 showed no benefit beyond T1. No promotion is licensed; the Patients are spent.",
+      "economics": {"accepted_tokens": 24481563, "all_attempt_tokens": 24568225, "notes": "Unregistered answer preview only; all-attempt usage is a lower bound because three pre-inference rejects lacked usable usage. Panel added 1,987,299 tokens."},
+      "sources": [
+        {"kind": "repo_file", "path": "docs/prereg/A11B_PREREGISTRATION.md", "sha256": "b27242503f7d18344c30f580107e32a4a8c8fdc7030510e9d64442c6737b77a6"},
+        {"kind": "repo_file", "path": "docs/results/A11B_POWER_GATE.md", "sha256": "1ff38186295847f8a3ea0a9570473b19313595453666e51f2f991ebc54b90df3"},
+        {"kind": "repo_file", "path": "docs/results/A11B_R3_UNREGISTERED_EXPLORATORY_RESULT.md", "sha256": "83c2c37f9b0d3052a9e01e9e1fc2c2c71b5b50bb9e3a0d8acedaca0e793797ac"},
+        {"kind": "repo_file", "path": "docs/results/A11B_R3_FORENSIC_AMENDMENT.md", "sha256": "489ed563e2eb640906327d1d03d2acdf45ce2e485c1a59497628abd366b2bcd7"},
+        {"kind": "repo_file", "path": "docs/results/A11B_R3_FORENSIC_SENSITIVITY.json", "sha256": "1ab8ad623174bd99f12f6a48f5b6a0cea10bf224316509928ab4799cf3e94a4f"},
+        {"kind": "external_aggregate", "path": "macmini-cory:/Users/cory/a11b-stage-0716/a11b-unregistered-preview-r3-structural-schema-0716/result-unregistered-v1/result.json", "sha256": "0599d68ae8a344d154b9bb0b6051cb2fc27c63eb9f69b17972066909a6585d68", "verified_at": "2026-07-16"}
+      ]
+    }
+  ],
+  "claim_register": [
+    {
+      "claim": "Deterministic question-aware selection beats query-blind projection on this FHIR benchmark.",
+      "disposition": "licensed",
+      "boundary": "Supported twice on the 409-question paired corpus, including the repaired time-assumption run. It is not yet a cross-model, cross-server, or natural-chart claim.",
+      "evidence": ["a6a-initial409", "a6a-run2-assumption-fixed"]
+    },
+    {
+      "claim": "A fixed microbiology vocabulary improves the selected evidence packet.",
+      "disposition": "licensed",
+      "boundary": "Confirmed on the untouched valid-split dispatched stratum with byte-identical negative controls. The claim is terminology- and benchmark-specific.",
+      "evidence": ["qt4-micro42-v3b", "qt4-valid374-v2"]
+    },
+    {
+      "claim": "Bounded traversal can recover terminal evidence required by constructed multi-hop FHIR questions.",
+      "disposition": "bounded_support",
+      "boundary": "A11 establishes the mechanism on its synthetic path-required benchmark. It does not establish a native graph database, universal graph superiority, or natural-chart generality.",
+      "evidence": ["qt4-valid374-v2", "a11-vte-120"]
+    },
+    {
+      "claim": "Typed event grouping improves accuracy beyond identical evidence and deterministic aids.",
+      "disposition": "pending",
+      "boundary": "A11 bundled grouping with temporal rank and an answerability receipt. A11b's normalized labels tied, but its forensic amendment found that normalization erased T1/E1's raw insufficiency behavior. E1 still showed no incremental benefit beyond T1. The run cannot license a confirmatory claim, and a fresh discriminating holdout is required.",
+      "evidence": ["a11-vte-120", "a11b-causal-isolation-384"]
+    },
+    {
+      "claim": "The effect generalizes across model sizes and reasoning levels.",
+      "disposition": "not_established",
+      "boundary": "The exploratory grid aggregate used the wrong denominator and is excluded. Cross-API/model generality remains untested.",
+      "evidence": ["generality-grid-99"]
+    },
+    {
+      "claim": "Bonfire should replace its canonical store with a native graph database.",
+      "disposition": "not_established",
+      "boundary": "No experiment compared storage engines. Current evidence concerns packet selection, terminology, traversal, and presentation only.",
+      "evidence": ["qt4-valid374-v2", "a11-vte-120"]
+    }
+  ],
+  "known_gaps": [
+    "The exploratory model/effort grid must be regraded on its registered 99-question subset before any generality statement.",
+    "A6a and QT-1 through QT-3 retained subscription token receipts but not provider-priced monetary cost.",
+    "The A11 panel used the same model family as the answerer; a cross-family sensitivity judge remains useful.",
+    "The A11b preview completion replay validated prompt, answer, schema, event, usage, and artifact receipts. Its exposure booleans were self-asserted rather than independent measurements.",
+    "A11b r3 is not runnable as sealed against the current Codex backend. The successor has a versioned categorical answer contract but still requires a fresh corpus, prospective development discordance, and a new seal.",
+    "The 384 A11b efficacy Patients are spent for confirmatory use; a replacement must demonstrate nonzero paired discordance on separate development data before a fresh holdout or cross-API matrix is opened.",
+    "No native graph database, Postgres recursive-query, or natural clinical chart comparison has been run."
+  ]
+}

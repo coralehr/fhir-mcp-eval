@@ -1,8 +1,8 @@
 # Post-QT-4 / A11 execution plan
 
-Status: **active planning baseline**
+Status: **revised after completed A11b r3 exploratory preview**
 
-Updated: 2026-07-15
+Updated: 2026-07-17
 
 Inputs:
 
@@ -10,6 +10,7 @@ Inputs:
 - [QT-4 forensic audit](results/QT4_VALID374_FORENSIC_AUDIT.md)
 - [A11 result](results/A11_RESULT.md)
 - [A11 forensic audit](results/A11_FORENSIC_AUDIT.md)
+- [A11b r3 unregistered exploratory result](results/A11B_R3_UNREGISTERED_EXPLORATORY_RESULT.md)
 
 ## Decision
 
@@ -24,6 +25,15 @@ The program has resolved three questions:
 3. **Do not promote event grouping yet.** A11 had one E-over-T correctness flip,
    and E bundled event grouping with temporal selection and an answerability
    receipt. The causal feature remains unidentified.
+4. **Do not promote from the A11b r3 preview.** Its normalized artifacts tie at
+   288/384, but the forensic amendment shows that normalization erased 219
+   structured insufficiency reasons. Raw T1/E1 answers used one of two explicit
+   insufficiency prefixes on all 96 unsupported cases versus 26 for T0. This
+   supports a fresh
+   prospective T1 test, not retroactive promotion; E1 still added no observable
+   benefit beyond T1. Supported cases were ceilinged, and the preview was
+   explicitly unregistered because the sealed response schema was incompatible
+   with the backend.
 
 No experiment selected a persistent graph database. Storage-engine work remains
 an engineering benchmark until it changes an agent-visible packet or a measured
@@ -35,12 +45,13 @@ production constraint.
 completed evidence
   QT-4: vocabulary promoted; traversal not promoted
   A11: path retrieval works; event grouping not promoted
+  A11b r3 preview: strict tie; contract-erased T1 insufficiency signal
                  |
                  v
-P0  close protocol hardening and build an untouched A11b corpus
+P0  fix transport/abstention contract and build a fresh discriminating corpus
                  |
                  v
-P1  run T0 vs T1 vs E1 causal isolation
+P1  require nonzero development discordance, then seal a fresh T0/T1/E1 holdout
                  |
        +---------+----------+
        |                    |
@@ -50,8 +61,11 @@ P2 research              P2 product engineering
    then A14 authz           byte-equivalence + latency benchmark
 ```
 
-The P0 work consumes no answer-model quota. No A11b answer call should start
-until every P0 gate is green.
+The next P0 work consumes no answer-model quota. Do not start another A11b or
+cross-API answer call until the schema needs no normalization, the unsupported
+behavior contract passes development probes, and a separate development set
+shows nonzero paired discordance. The 384 efficacy Patients used by the r3
+preview are spent for future confirmatory claims.
 
 The witness threat model, interface, crash rules, and deployment gate are in
 [EXPERIMENT_WITNESS_PROTOCOL.md](EXPERIMENT_WITNESS_PROTOCOL.md).
@@ -169,6 +183,12 @@ The controller must fail closed before answering unless:
 
 ## P0: construct the untouched A11b holdout
 
+Historical note: this section records the design requirements used for r3. The
+resulting 384 efficacy Patients were consumed by the unregistered preview and
+must not be reused as an untouched confirmatory holdout. Treat the requirements
+below as a floor for a newly generated successor, with the additional nonzero
+development-discordance gate stated above.
+
 A11 left almost no error headroom: T was already 119/120. Repeating that corpus
 cannot identify an event-group effect. A11b must be harder without using efficacy
 answers to tune difficulty.
@@ -199,6 +219,12 @@ The generator/runtime/output trust boundary and remaining real-pin work are
 recorded in [A11B_GENERATION_RECEIPT.md](A11B_GENERATION_RECEIPT.md).
 
 ## P1: A11b causal isolation
+
+The r3 preview executed this arm structure but tied on every paired item under
+the strict normalized endpoint. A
+future registered execution may reuse the causal definitions below only with a
+fresh holdout, a backend-compatible sealed schema, and demonstrated development
+headroom.
 
 Run three paired arms over the identical governed retrieval result:
 
