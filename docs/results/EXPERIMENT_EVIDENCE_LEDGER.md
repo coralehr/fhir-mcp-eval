@@ -1,6 +1,6 @@
 # Canonical experiment evidence ledger
 
-Updated: 2026-07-16
+Updated: 2026-07-17
 
 This is an aggregate-only claim ledger. It does not contain answer text, raw
 clinical records, credentials, or hidden chain-of-thought. Numeric claims are
@@ -19,7 +19,7 @@ licensed only at the scope shown below.
 | QT-4 micro42 mechanism screen | `exploratory_advanced_to_confirmation` | 42 inspected microbiology questions | Vocabulary versus A6a +42.9pp (95% CI +20.5 to +63.6); traversal versus vocabulary +7.1pp (95% CI 0 to +15.9). | Advance vocabulary to untouched confirmation; do not promote traversal from the same-set screen. |
 | QT-4 valid374 holdout | `confirmatory_promoted` | 374 questions: 44 dispatched / 330 byte-identical controls | Vocabulary versus A6a on dispatched questions +34.1pp (95% CI +17.9 to +50.0); traversal versus vocabulary +9.1pp (95% CI 0 to +20.9). | Promote fixed microbiology vocabulary only; traversal remains unresolved. |
 | A11 V/T/E path-required | `confirmatory_supported_not_promotion_gated` | 120 constructed questions / 96 answerable path-required cases | T and E recovered terminal evidence on 96/96 answerable cases versus 0/96 for V. E versus T was +0.83pp with 95% CI 0 to +2.56. | Bounded traversal worked on the constructed multi-hop task. Do not promote event grouping: its single gain is not isolated from the bundled answerability receipt. |
-| A11b causal isolation | `exploratory_not_promoted` | 64 development Patients + 384 untouched efficacy Patients; one efficacy question per Patient; 1,152 answer slots | Unregistered r3 preview: T0, T1, and E1 each scored 288/384 (75.0%). Both paired contrasts were 0.0pp with cluster 95% CI 0.0 to 0.0. All arms were 288/288 on answerable cases and 0/96 on unanswerable cases because every arm answered instead of abstaining. | Exploratory do-not-promote. The corpus ceilinged on supported cases and exposed a shared abstention failure on unsupported cases. No registered claim is licensed; the used efficacy Patients are spent, and any confirmatory/API run needs a fresh holdout plus a newly sealed backend-compatible schema. |
+| A11b causal isolation | `exploratory_not_promoted` | 64 development Patients + 384 untouched efficacy Patients at run start; one efficacy question per Patient; 1,152 answer slots | Strict normalized artifacts: 288/384 in every arm with paired-difference 97.5% intervals 0.0 to 0.0. Raw insufficiency behavior: 26/96 T0, 96/96 T1, 96/96 E1. Conservative post-hoc sensitivity: 314/384, 384/384, 384/384. | Preserve the strict artifact but supersede its behavioral null. T1 merits a fresh prospective test; E1 showed no benefit beyond T1. No promotion is licensed; the Patients are spent. |
 
 ## Claim register
 
@@ -51,7 +51,7 @@ Evidence: `qt4-valid374-v2`, `a11-vte-120`.
 
 Disposition: **pending**.
 
-A11 bundled grouping with temporal rank and an answerability receipt. The unregistered A11b r3 preview found an exact T0/T1/E1 tie, but the run cannot license a confirmatory claim and the corpus had no answerable-case headroom. A fresh discriminating holdout is required before this claim can be resolved.
+A11 bundled grouping with temporal rank and an answerability receipt. A11b's normalized labels tied, but its forensic amendment found that normalization erased T1/E1's raw insufficiency behavior. E1 still showed no incremental benefit beyond T1. The run cannot license a confirmatory claim, and a fresh discriminating holdout is required.
 
 Evidence: `a11-vte-120`, `a11b-causal-isolation-384`.
 
@@ -91,7 +91,7 @@ Evidence: `qt4-valid374-v2`, `a11-vte-120`.
 - The exploratory model/effort grid must be regraded on its registered 99-question subset before any generality statement.
 - A6a and QT-1 through QT-3 retained subscription token receipts but not provider-priced monetary cost.
 - The A11 panel used the same model family as the answerer; a cross-family sensitivity judge remains useful.
-- The A11b preview completion replay validated prompt, answer, schema, event, usage, and artifact receipts, but a separately implemented independent raw-audit adapter and cross-family panel sensitivity remain undone.
-- A11b r3 is not runnable as sealed against the current Codex backend: oneOf and uniqueItems are rejected in response-format schemas; an official run requires a new seal.
+- The A11b preview completion replay validated prompt, answer, schema, event, usage, and artifact receipts. Its exposure booleans were self-asserted rather than independent measurements.
+- A11b r3 is not runnable as sealed against the current Codex backend. The successor has a versioned categorical answer contract but still requires a fresh corpus, prospective development discordance, and a new seal.
 - The 384 A11b efficacy Patients are spent for confirmatory use; a replacement must demonstrate nonzero paired discordance on separate development data before a fresh holdout or cross-API matrix is opened.
 - No native graph database, Postgres recursive-query, or natural clinical chart comparison has been run.

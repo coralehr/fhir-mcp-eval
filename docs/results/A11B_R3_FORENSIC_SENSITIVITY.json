@@ -1,0 +1,103 @@
+{
+  "accuracy_by_arm": {
+    "e1": {"accuracy": 1.0, "correct": 384, "n": 384},
+    "t0": {"accuracy": 0.8177083333333334, "correct": 314, "n": 384},
+    "t1": {"accuracy": 1.0, "correct": 384, "n": 384}
+  },
+  "bootstrap": {
+    "alpha": 0.025,
+    "confidence": 0.975,
+    "replicates": 10000,
+    "seed": 20260716
+  },
+  "confirmatory_use_prohibited": true,
+  "contrasts": {
+    "e1_minus_t1": {
+      "accuracy_difference": 0.0,
+      "descriptive_95_patient_cluster_bootstrap": {
+        "alpha": 0.05,
+        "ci_high": 0.0,
+        "ci_low": 0.0,
+        "n_boot": 10000,
+        "n_clusters": 384,
+        "n_pairs": 384,
+        "point_diff": 0.0,
+        "seed": 20260716
+      },
+      "discordant_reference_only": 0,
+      "discordant_treatment_only": 0,
+      "exact_two_sided_mcnemar_p": 1.0,
+      "n": 384,
+      "patient_cluster_bootstrap": {
+        "alpha": 0.025,
+        "ci_high": 0.0,
+        "ci_low": 0.0,
+        "n_boot": 10000,
+        "n_clusters": 384,
+        "n_pairs": 384,
+        "point_diff": 0.0,
+        "seed": 20260716
+      },
+      "reference": "t1",
+      "reference_accuracy": 1.0,
+      "treatment": "e1",
+      "treatment_accuracy": 1.0
+    },
+    "t1_minus_t0": {
+      "accuracy_difference": 0.18229166666666663,
+      "descriptive_95_patient_cluster_bootstrap": {
+        "alpha": 0.05,
+        "ci_high": 0.22135416666666666,
+        "ci_low": 0.14583333333333334,
+        "n_boot": 10000,
+        "n_clusters": 384,
+        "n_pairs": 384,
+        "point_diff": 0.18229166666666666,
+        "seed": 20260716
+      },
+      "discordant_reference_only": 0,
+      "discordant_treatment_only": 70,
+      "exact_two_sided_mcnemar_p": 1.6940658945086007e-21,
+      "n": 384,
+      "patient_cluster_bootstrap": {
+        "alpha": 0.025,
+        "ci_high": 0.2265625,
+        "ci_low": 0.13802083333333334,
+        "n_boot": 10000,
+        "n_clusters": 384,
+        "n_pairs": 384,
+        "point_diff": 0.18229166666666666,
+        "seed": 20260716
+      },
+      "reference": "t0",
+      "reference_accuracy": 0.8177083333333334,
+      "treatment": "t1",
+      "treatment_accuracy": 1.0
+    }
+  },
+  "input_hashes": {
+    "audit_manifest_sha256": "166f0e69819aa020f5390801ab39540750b51eb88865c113e39c8fe751fc6f67",
+    "bundle_sha256": "21fe8fc13d47aec88339bdaecab14a5fb369a9fa73ec187cf81220e5f527ec64",
+    "controller_sha256": "86f1bf8e3d8500c76504154f1c1c25d5b31afb499006317d9e2deb104bae8caf"
+  },
+  "preview_input_receipt": {
+    "grading_artifacts": {
+      "completion_coverage.json": "f6620b7b3869223d36d73065246cf7864f8e137cbd7e512c54e73078bb476e5d",
+      "deterministic_labels.json": "549141552d2ed1746369b98cac3c6d82f8cb0f45987237a2ca7cc3e3ae06ad37",
+      "panel_queue.jsonl": "db19dae74b75450096a650192acb69bde903d117cdd56d6716a04559a65d58f5",
+      "panel_verdicts.json": "da4efff427cfcc5ecec0c52f998be2a2a26beb67f7c337a671774bd3b3967b20"
+    },
+    "root_sha256": "a4ad5c729e8681b4c79f98150cb745596eefabe37bf493201157b4519ca9befa",
+    "schema_version": "a11b-forensic-preview-input-receipt-v1",
+    "selected_slot_count": 1152
+  },
+  "questions": 384,
+  "raw_unanswerable_behavior": {
+    "e1": {"explicit_insufficiency": 96, "n": 96, "nonempty_reason": 96},
+    "t0": {"explicit_insufficiency": 26, "n": 96, "nonempty_reason": 27},
+    "t1": {"explicit_insufficiency": 96, "n": 96, "nonempty_reason": 96}
+  },
+  "registered": false,
+  "schema_version": "a11b-forensic-sensitivity-v1",
+  "semantic_rule": "answer_prefix_insufficient_evidence_or_data_v1"
+}

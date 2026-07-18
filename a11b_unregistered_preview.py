@@ -424,6 +424,11 @@ def _accepted_marker_valid(
         elif acceptance_mode == "deterministic_normalization":
             if receipt.get("outcome") not in {"accepted", "provider_failure"}:
                 return False
+            if (
+                receipt.get("outcome") == "provider_failure"
+                and receipt.get("error") != NORMALIZABLE_SCHEMA_ERROR
+            ):
+                return False
             normalization = _read_object(attempt_dir / "normalization.json")
             raw_answer = _read_object(attempt_dir / "answer.json")
             normalized_payload = (attempt_dir / "normalized-answer.json").read_bytes()
@@ -525,7 +530,7 @@ def _status(root: Path, schedule: list[dict[str, Any]]) -> dict[str, Any]:
                             accepted_tokens[key] += usage[key]
     return {
         "kind": "a11b_unregistered_exploratory_status",
-        "schema_version": "a11b-unregistered-preview-status-v1",
+        "schema_version": "a11b-unregistered-preview-status-v2",
         "registered": False,
         "controller_sha256": CONTROLLER_SHA256,
         "bundle_sha256": BUNDLE_SHA256,
@@ -539,7 +544,7 @@ def _status(root: Path, schedule: list[dict[str, Any]]) -> dict[str, Any]:
         "all_attempt_tokens": all_attempt_tokens,
         "unknown_usage_attempts": unknown_usage_attempts,
         "complete": accepted == EXPECTED_CALLS,
-        "answers_exposed": False,
+        "off_channel_answer_exposure": "not_measured",
     }
 
 

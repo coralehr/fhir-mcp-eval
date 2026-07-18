@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 import a11_answer_harness as harness
+import a11b_answer_contract
 
 
 def _sha(value: str | bytes) -> str:
@@ -36,6 +37,32 @@ def _record(payload: str, *, row: dict[str, str] | None = None) -> dict[str, str
 
 
 class A11AnswerHarnessTests(unittest.TestCase):
+    def test_successor_prompt_binds_the_categorical_answer_contract(self):
+        prompt = harness.render_successor_prompt_bytes(
+            _input_row(), '{"evidence":{"resources":[]}}'
+        )
+
+        self.assertIn(
+            a11b_answer_contract.prompt_instructions().encode("utf-8"), prompt
+        )
+        self.assertIn(b"a11b-answer-contract-v2", prompt)
+        self.assertNotIn(b"set answer to an explicit insufficiency statement", prompt)
+
+    def test_successor_prompt_record_binds_payload_and_rejects_leakage(self):
+        payload = json.dumps(
+            {"resources": [{"resourceType": "Observation", "id": "o1"}]},
+            sort_keys=True,
+        )
+        record = harness.make_successor_prompt_record(_input_row(), payload)
+
+        prompt = harness.build_verified_successor_prompt(_input_row(), record)
+
+        self.assertEqual(prompt.decode("utf-8"), record["prompt_text"])
+        with self.assertRaisesRegex(ValueError, "forbidden model payload"):
+            harness.make_successor_prompt_record(
+                _input_row(), json.dumps({"referenceAnswer": "O-ABC"})
+            )
+
     def test_prompt_requires_canonical_visible_fhir_references(self):
         prompt = harness.render_prompt_bytes(_input_row(), '{"evidence":{"resources":[]}}')
 

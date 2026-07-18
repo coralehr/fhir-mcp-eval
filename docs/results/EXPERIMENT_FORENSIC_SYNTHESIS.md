@@ -1,6 +1,6 @@
 # Experiment program forensic synthesis
 
-Date: 2026-07-16
+Updated: 2026-07-17
 
 ## Bottom line
 
@@ -16,11 +16,13 @@ The program supports two product claims and one bounded mechanism claim:
 The evidence does **not** establish that event grouping improves accuracy,
 that the effects generalize across model families or APIs, or that Bonfire
 should use a native graph database. An explicitly unregistered A11b r3 preview
-completed 1,152 answer slots across T0, T1, and E1. All three arms tied at
-288/384: perfect on the 288 answerable cases and wrong on all 96 unanswerable
-cases because every arm answered instead of abstaining. The exploratory
-decision was `do_not_promote`. The used efficacy Patients are now spent for
-confirmatory claims.
+completed 1,152 answer slots across T0, T1, and E1. Its normalized artifacts
+tied at 288/384, but raw-log review found that the compatibility normalizer
+erased 219 structured insufficiency reasons. T1/E1 used one of two explicit
+insufficiency prefixes on all 96 unsupported cases versus 26 for T0. This is a
+large post-hoc signal warranting a fresh prospective T1 test, not retroactive
+promotion. E1 still added no observable grouping benefit beyond T1. The used
+efficacy Patients are now spent for confirmatory claims.
 
 The canonical machine-readable record is
 [`EXPERIMENT_EVIDENCE_LEDGER.json`](EXPERIMENT_EVIDENCE_LEDGER.json). Its
@@ -37,7 +39,7 @@ generated human view is
 | QT-4 micro42 | Mechanism screen only. | It justified untouched confirmation, not promotion by itself. |
 | QT-4 valid374 | Confirmatory for the 44-question dispatched stratum with 330 byte-identical controls. | Fixed microbiology vocabulary; traversal remained unresolved. |
 | A11 V/T/E | Strong constructed-task mechanism evidence, but E bundled event grouping with other aids. | Bounded path traversal, not an isolated event-grouping gain. |
-| A11b | The unregistered r3 preview completed with an exact three-arm tie: 75.0% per arm, zero discordant pairs, and no answerable-case headroom. All arms failed the same unsupported-answer cases. | Do not promote from the preview. A future confirmatory/API run requires a fresh discriminating holdout and compatible seal. |
+| A11b | The strict normalized artifacts tie at 75.0%, but the normalizer erased T1/E1's raw insufficiency signal. Supported cases had no headroom and the semantic sensitivity is post-result. | Do not promote. Prospectively retest T1 on a fresh discriminating holdout; E1 grouping remains unsupported. |
 
 ## Adversarial findings
 
@@ -73,7 +75,8 @@ used tools during answering, or changed the registered grading rule. That is a
 bounded statement, not a universal proof: aggregate receipts alone cannot
 prove the absence of prompt leakage in every historical run.
 
-A11b closes that gap prospectively. The prepared content-free audit verifies
+A11b closes the recorded in-band receipt gap prospectively, not the
+off-channel exposure gap. The prepared content-free audit verifies
 all 1,152 prompt hashes, scans sealed prompt bytes for audit-only fields and arm
 identities, requires exactly one agent message and one usage receipt per
 accepted slot, rejects tool or non-message events, validates retry histories,
@@ -87,9 +90,10 @@ unregistered preview therefore sends only the supported structural subset to
 the backend and applies the complete original `oneOf`, uniqueness, pattern,
 nonempty-field, and citation constraints offline before accepting an answer.
 It also applied 219 narrowly defined deterministic normalizations that cleared
-only a contradictory insufficiency-reason field while preserving the
-substantive answer. This is evidence about transport compatibility, not a
-registered A11b protocol result.
+the insufficiency-reason field while preserving answer text and citations.
+Many preserved answers were explicit insufficiency statements that the adapter
+then misclassified as substantive. This is evidence about transport
+compatibility, not a registered A11b protocol result.
 
 The completed preview replay revalidated all 1,152 marker-selected prompt,
 schema, answer, event, and usage receipts against controller SHA-256
@@ -102,7 +106,8 @@ recorded artifact indicates gold leakage into the answerer. These checks make
 the exploratory aggregate reliable; they do not cure its registration defect
 or same-model-family judging limitation.
 
-Because the preview had no discordant questions, a human reviewer can inspect a
+Because the strict normalized endpoint had no discordant questions, a human
+reviewer can inspect a
 stratified sample of supported agreements and unsupported failures for
 visible-evidence error classification. That review is descriptive and cannot
 turn the run into a registered result or override its no-promotion boundary.
@@ -121,8 +126,9 @@ turn the run into a registered result or override its no-promotion boundary.
   another 445,171.
 - The A11b unregistered preview used 24,481,563 accepted answer tokens and at
   least 24,568,225 across all attempts; its panel used another 1,987,299. T1
-  cost 2.2% more accepted tokens than T0 and E1 cost 3.6% more than T1 with no
-  correctness gain.
+  cost 2.2% more selected-artifact tokens than T0 while showing a large
+  post-hoc semantic-insufficiency gain. E1 cost 3.6% more than T1 without
+  incremental observable benefit.
 
 These are per-run receipts. They must not be naively summed when a comparator
 artifact was reused rather than rerun.
@@ -130,9 +136,10 @@ artifact was reused rather than rerun.
 ## Next decision sequence
 
 1. Do not replay this exact A11b corpus across APIs. Its answerable cases are
-   ceilinged and its unsupported cases isolate a shared abstention failure.
-2. Build a backend-compatible schema and an arm-identical explicit abstention
-   contract, with no post-acceptance normalization needed.
+   ceilinged, its Patients are spent, and its response contract erased the
+   measured insufficiency signal.
+2. Use the versioned categorical answered/insufficient contract, with no
+   post-acceptance semantic normalization.
 3. Construct a fresh patient-disjoint development/holdout corpus where T0 has
    measurable answerable-case errors and a development pilot demonstrates
    nonzero paired discordance before the holdout is opened.

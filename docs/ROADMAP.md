@@ -70,10 +70,13 @@ The evidence through 2026-07-16 changes the order of work:
    Traversal supplied all deliberately hidden terminal evidence, but event
    grouping did not earn promotion and was confounded with explicit temporal
    selection and an answerability receipt.
-4. **Do not promote or cross-API replay the A11b r3 corpus.** Its explicitly
-   unregistered preview tied T0/T1/E1 at 288/384. Every arm was perfect on the
-   288 answerable cases and made unsupported answers on all 96 unanswerable
-   cases. The exact corpus has no representation headroom and is now spent.
+4. **Do not promote or cross-API replay the A11b r3 corpus.** Its normalized
+   artifacts tied T0/T1/E1 at 288/384, but the raw logs show that T1/E1 used
+   one of two explicit insufficiency prefixes on all 96 unsupported cases
+   while T0 did so on 26.
+   The compatibility normalizer erased that signal. T1 therefore deserves a
+   fresh prospective test; E1 still showed no incremental grouping benefit.
+   The exact corpus has no answerable-case headroom and is now spent.
 5. **Build the graph-neutral compiler and materialized-edge benchmark in
    parallel.** This is a byte-equivalence, authorization, correction, and latency
    program, not an answer-accuracy arm or a storage-engine selection.
@@ -120,9 +123,10 @@ was not accuracy-promoted ([result](results/QT4_VALID374_RESULT.md)). A11 then
 showed that traversal solves deliberately path-hidden evidence, but its event-
 group arm bundled temporal selection and an answerability receipt and did not
 earn promotion ([result](results/A11_RESULT.md)). The unregistered A11b r3
-preview then held those treatments apart but tied all three arms exactly because
-the supported cases ceilinged and every arm failed the same unsupported cases
-([result](results/A11B_R3_UNREGISTERED_EXPLORATORY_RESULT.md)). A successor must
+preview then held those treatments apart. Its normalized labels tied, but a
+forensic amendment found that the compatibility normalizer erased T1/E1's raw
+insufficiency signal
+([amendment](results/A11B_R3_FORENSIC_AMENDMENT.md)). A successor must
 first demonstrate nonzero development discordance. Any index-vs-query-time comparison remains a
 byte-equivalence engineering benchmark, never an accuracy arm; neither QT-4 nor
 A11 tested or selected a persistent graph database.

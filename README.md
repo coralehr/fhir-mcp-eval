@@ -41,17 +41,17 @@
 > artifacts, and forensic review: [A11_RESULT.md](docs/results/A11_RESULT.md) and
 > [A11_FORENSIC_AUDIT.md](docs/results/A11_FORENSIC_AUDIT.md).
 
-> **New (2026-07-16): the explicitly unregistered A11b r3 preview completed,
-> and it is a clean null.** T0, T1, and E1 each scored 288/384 (75.0%), with
-> zero paired discordances and cluster 95% intervals fixed at [0, 0]. All arms
-> were perfect on the 288 answerable cases and all failed the same 96
-> unanswerable cases by answering instead of abstaining. T1 used 2.2% more
-> accepted answer tokens than T0, and E1 used 3.6% more than T1, with no gain.
-> The run is reliable exploratory evidence but not confirmatory: r3's sealed
-> response schema was backend-incompatible, so a reduced transport schema and
-> full offline validation were declared before execution. Result, receipts,
-> limitations, and next-run requirements:
-> [A11B_R3_UNREGISTERED_EXPLORATORY_RESULT.md](docs/results/A11B_R3_UNREGISTERED_EXPLORATORY_RESULT.md).
+> **Updated (2026-07-17): A11b r3's strict tie survives, but its behavioral
+> null does not.** The normalized artifacts reproducibly score T0/T1/E1 at
+> 288/384, but raw logs show explicit insufficiency behavior on 26/96 T0,
+> 96/96 T1, and 96/96 E1 unsupported cases. A compatibility normalizer erased
+> all 219 nonempty insufficiency reasons before grading. A conservative
+> post-hoc sensitivity scores T0 314/384 and T1/E1 384/384: a large post-hoc
+> signal warranting a prospective test of T1's deterministic aids, with
+> no incremental E1 grouping benefit. Nothing is promoted because the run was
+> unregistered and the sensitivity is post-result. Read the preserved
+> [strict result](docs/results/A11B_R3_UNREGISTERED_EXPLORATORY_RESULT.md) with
+> its [forensic amendment](docs/results/A11B_R3_FORENSIC_AMENDMENT.md).
 
 > **New (2026-07-14): the promoted recipe and A11 event-group gate are executable.** New packet builds
 > can use `compile_evidence.py`, which defaults to the holdout-promoted vocabulary recipe while preserving
@@ -153,11 +153,11 @@ apparent win is a context-overflow artifact (a null at matched budget), not a re
   substituted a later complete event for an earlier incomplete one. E prevented
   it, but E bundled event grouping, temporal rank, and an answerability receipt,
   so the causal feature is unresolved.
-- **A11b r3 exploratory result: no arm won.** T0/T1/E1 tied at 75.0% with
-  identical labels on all 384 Patients. The supported set was ceilinged and the
-  only errors were shared unsupported answers on all 96 unanswerable cases.
-  The grouping treatment added packet bytes and tokens without accuracy value.
-  Because the preview required a declared post-seal transport adaptation, it
+- **A11b r3 exploratory result: the strict labels tie, but T1 changed raw
+  insufficiency behavior.** The normalizer erased 219 structured reasons,
+  producing a 75.0% tie that is reproducible for normalized artifacts but not
+  a faithful behavioral null. Post-hoc sensitivity places T1/E1 above T0 and
+  still finds no E1-over-T1 grouping benefit. The preview and sensitivity
   cannot license a confirmatory claim.
 - ⚠️ **Reproducibility is split.** For the trustworthy re-grade, the committed artifacts are the aggregate
   summary (`medplum-eval/full409_summary.json`) and a durable per-question answer backup
@@ -168,9 +168,10 @@ apparent win is a context-overflow artifact (a null at matched budget), not a re
   locally recomputable when those dumps are present; [FINAL_REPORT.md](docs/FINAL_REPORT.md) records the exact scope.
   **Opus tool-ablation numbers are not** (run on torn-down EC2). See
   [Reproducibility status](#where-this-was-actually-run--reproducibility-status).
-- **Start here: [A11B_R3_UNREGISTERED_EXPLORATORY_RESULT.md](docs/results/A11B_R3_UNREGISTERED_EXPLORATORY_RESULT.md)**
-  for the latest causal-isolation readout and its strict non-confirmatory
-  boundary. Then read [A11_RESULT.md](docs/results/A11_RESULT.md) and
+- **Start here: [A11B_R3_FORENSIC_AMENDMENT.md](docs/results/A11B_R3_FORENSIC_AMENDMENT.md)**
+  for the corrected causal-isolation interpretation, then the preserved
+  [strict result](docs/results/A11B_R3_UNREGISTERED_EXPLORATORY_RESULT.md).
+  Then read [A11_RESULT.md](docs/results/A11_RESULT.md) and
   [A11_FORENSIC_AUDIT.md](docs/results/A11_FORENSIC_AUDIT.md), followed by the
   [QT-4 holdout result](docs/results/QT4_VALID374_RESULT.md),
   [FINDINGS.md](docs/FINDINGS.md) (the earlier capstone conclusion), the tool-ablation deep-dive

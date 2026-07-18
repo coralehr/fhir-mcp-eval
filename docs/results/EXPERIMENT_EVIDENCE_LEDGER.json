@@ -1,6 +1,6 @@
 {
   "schema_version": "fhir-context-evidence-ledger-v1",
-  "updated_at": "2026-07-16",
+  "updated_at": "2026-07-17",
   "experiments": [
     {
       "id": "a6a-initial409",
@@ -143,14 +143,16 @@
       "id": "a11b-causal-isolation-384",
       "name": "A11b causal isolation",
       "status": "exploratory_not_promoted",
-      "population": "64 development Patients + 384 untouched efficacy Patients; one efficacy question per Patient; 1,152 answer slots",
-      "result": "Unregistered r3 preview: T0, T1, and E1 each scored 288/384 (75.0%). Both paired contrasts were 0.0pp with cluster 95% CI 0.0 to 0.0. All arms were 288/288 on answerable cases and 0/96 on unanswerable cases because every arm answered instead of abstaining.",
-      "decision": "Exploratory do-not-promote. The corpus ceilinged on supported cases and exposed a shared abstention failure on unsupported cases. No registered claim is licensed; the used efficacy Patients are spent, and any confirmatory/API run needs a fresh holdout plus a newly sealed backend-compatible schema.",
+      "population": "64 development Patients + 384 untouched efficacy Patients at run start; one efficacy question per Patient; 1,152 answer slots",
+      "result": "Strict normalized artifacts: 288/384 in every arm with paired-difference 97.5% intervals 0.0 to 0.0. Raw insufficiency behavior: 26/96 T0, 96/96 T1, 96/96 E1. Conservative post-hoc sensitivity: 314/384, 384/384, 384/384.",
+      "decision": "Preserve the strict artifact but supersede its behavioral null. T1 merits a fresh prospective test; E1 showed no benefit beyond T1. No promotion is licensed; the Patients are spent.",
       "economics": {"accepted_tokens": 24481563, "all_attempt_tokens": 24568225, "notes": "Unregistered answer preview only; all-attempt usage is a lower bound because three pre-inference rejects lacked usable usage. Panel added 1,987,299 tokens."},
       "sources": [
         {"kind": "repo_file", "path": "docs/prereg/A11B_PREREGISTRATION.md", "sha256": "b27242503f7d18344c30f580107e32a4a8c8fdc7030510e9d64442c6737b77a6"},
         {"kind": "repo_file", "path": "docs/results/A11B_POWER_GATE.md", "sha256": "1ff38186295847f8a3ea0a9570473b19313595453666e51f2f991ebc54b90df3"},
-        {"kind": "repo_file", "path": "docs/results/A11B_R3_UNREGISTERED_EXPLORATORY_RESULT.md", "sha256": "799f9b47c175fbb3d242e040997273ba8b5e63ab000473f3981e9034c1469e42"},
+        {"kind": "repo_file", "path": "docs/results/A11B_R3_UNREGISTERED_EXPLORATORY_RESULT.md", "sha256": "83c2c37f9b0d3052a9e01e9e1fc2c2c71b5b50bb9e3a0d8acedaca0e793797ac"},
+        {"kind": "repo_file", "path": "docs/results/A11B_R3_FORENSIC_AMENDMENT.md", "sha256": "489ed563e2eb640906327d1d03d2acdf45ce2e485c1a59497628abd366b2bcd7"},
+        {"kind": "repo_file", "path": "docs/results/A11B_R3_FORENSIC_SENSITIVITY.json", "sha256": "1ab8ad623174bd99f12f6a48f5b6a0cea10bf224316509928ab4799cf3e94a4f"},
         {"kind": "external_aggregate", "path": "macmini-cory:/Users/cory/a11b-stage-0716/a11b-unregistered-preview-r3-structural-schema-0716/result-unregistered-v1/result.json", "sha256": "0599d68ae8a344d154b9bb0b6051cb2fc27c63eb9f69b17972066909a6585d68", "verified_at": "2026-07-16"}
       ]
     }
@@ -177,7 +179,7 @@
     {
       "claim": "Typed event grouping improves accuracy beyond identical evidence and deterministic aids.",
       "disposition": "pending",
-      "boundary": "A11 bundled grouping with temporal rank and an answerability receipt. The unregistered A11b r3 preview found an exact T0/T1/E1 tie, but the run cannot license a confirmatory claim and the corpus had no answerable-case headroom. A fresh discriminating holdout is required before this claim can be resolved.",
+      "boundary": "A11 bundled grouping with temporal rank and an answerability receipt. A11b's normalized labels tied, but its forensic amendment found that normalization erased T1/E1's raw insufficiency behavior. E1 still showed no incremental benefit beyond T1. The run cannot license a confirmatory claim, and a fresh discriminating holdout is required.",
       "evidence": ["a11-vte-120", "a11b-causal-isolation-384"]
     },
     {
@@ -197,8 +199,8 @@
     "The exploratory model/effort grid must be regraded on its registered 99-question subset before any generality statement.",
     "A6a and QT-1 through QT-3 retained subscription token receipts but not provider-priced monetary cost.",
     "The A11 panel used the same model family as the answerer; a cross-family sensitivity judge remains useful.",
-    "The A11b preview completion replay validated prompt, answer, schema, event, usage, and artifact receipts, but a separately implemented independent raw-audit adapter and cross-family panel sensitivity remain undone.",
-    "A11b r3 is not runnable as sealed against the current Codex backend: oneOf and uniqueItems are rejected in response-format schemas; an official run requires a new seal.",
+    "The A11b preview completion replay validated prompt, answer, schema, event, usage, and artifact receipts. Its exposure booleans were self-asserted rather than independent measurements.",
+    "A11b r3 is not runnable as sealed against the current Codex backend. The successor has a versioned categorical answer contract but still requires a fresh corpus, prospective development discordance, and a new seal.",
     "The 384 A11b efficacy Patients are spent for confirmatory use; a replacement must demonstrate nonzero paired discordance on separate development data before a fresh holdout or cross-API matrix is opened.",
     "No native graph database, Postgres recursive-query, or natural clinical chart comparison has been run."
   ]

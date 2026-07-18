@@ -11,6 +11,13 @@ import codex_harness
 
 
 class A11bUnregisteredPreviewTests(unittest.TestCase):
+    def test_status_does_not_claim_unmeasured_answer_exposure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            status = preview._status(Path(directory), [])
+
+        self.assertNotIn("answers_exposed", status)
+        self.assertEqual(status["off_channel_answer_exposure"], "not_measured")
+
     def test_transport_schema_is_structural_and_full_contract_stays_offline(self):
         schema_path = Path("schemas/a11b_answer.schema.json")
         original = schema_path.read_bytes()
@@ -138,6 +145,19 @@ class A11bUnregisteredPreviewTests(unittest.TestCase):
             self.assertTrue(
                 preview._accepted_marker_valid(slot_dir, 0, "a" * 64)
             )
+            changed_receipt = json.loads(
+                (attempt_dir / "receipt.json").read_text(encoding="utf-8")
+            )
+            changed_receipt["error"] = "different provider failure"
+            (attempt_dir / "receipt.json").chmod(0o600)
+            (attempt_dir / "receipt.json").write_text(
+                json.dumps(changed_receipt, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            self.assertFalse(
+                preview._accepted_marker_valid(slot_dir, 0, "a" * 64)
+            )
+            preview._atomic_write(attempt_dir / "receipt.json", receipt)
             normalized_path = attempt_dir / "normalized-answer.json"
             normalized_path.chmod(0o600)
             normalized_path.write_text("{}\n", encoding="utf-8")

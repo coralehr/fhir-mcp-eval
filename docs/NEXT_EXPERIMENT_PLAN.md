@@ -2,7 +2,7 @@
 
 Status: **revised after completed A11b r3 exploratory preview**
 
-Updated: 2026-07-16
+Updated: 2026-07-17
 
 Inputs:
 
@@ -25,9 +25,13 @@ The program has resolved three questions:
 3. **Do not promote event grouping yet.** A11 had one E-over-T correctness flip,
    and E bundled event grouping with temporal selection and an answerability
    receipt. The causal feature remains unidentified.
-4. **Do not promote from the A11b r3 preview.** T0, T1, and E1 tied exactly at
-   288/384. Supported cases were ceilinged at 100% in every arm, while every arm
-   answered all 96 unsupported cases instead of abstaining. The preview was
+4. **Do not promote from the A11b r3 preview.** Its normalized artifacts tie at
+   288/384, but the forensic amendment shows that normalization erased 219
+   structured insufficiency reasons. Raw T1/E1 answers used one of two explicit
+   insufficiency prefixes on all 96 unsupported cases versus 26 for T0. This
+   supports a fresh
+   prospective T1 test, not retroactive promotion; E1 still added no observable
+   benefit beyond T1. Supported cases were ceilinged, and the preview was
    explicitly unregistered because the sealed response schema was incompatible
    with the backend.
 
@@ -41,7 +45,7 @@ production constraint.
 completed evidence
   QT-4: vocabulary promoted; traversal not promoted
   A11: path retrieval works; event grouping not promoted
-  A11b r3 preview: exact tie; corpus ceiling + abstention failure
+  A11b r3 preview: strict tie; contract-erased T1 insufficiency signal
                  |
                  v
 P0  fix transport/abstention contract and build a fresh discriminating corpus
@@ -216,7 +220,8 @@ recorded in [A11B_GENERATION_RECEIPT.md](A11B_GENERATION_RECEIPT.md).
 
 ## P1: A11b causal isolation
 
-The r3 preview executed this arm structure but tied on every paired item. A
+The r3 preview executed this arm structure but tied on every paired item under
+the strict normalized endpoint. A
 future registered execution may reuse the causal definitions below only with a
 fresh holdout, a backend-compatible sealed schema, and demonstrated development
 headroom.
