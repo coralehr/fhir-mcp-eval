@@ -181,8 +181,11 @@ def _path_receipt(
     return {"path": path, **receipt}
 
 
-def _model_configuration(value: object) -> dict[str, dict[str, object]]:
-    if not isinstance(value, Mapping) or set(value) != {"answer", "panel"}:
+def _model_configuration(
+    value: object, *, panel_required: bool = True
+) -> dict[str, dict[str, object]]:
+    expected_fields = {"answer", "panel"} if panel_required else {"answer"}
+    if not isinstance(value, Mapping) or set(value) != expected_fields:
         raise ValueError("model configuration fields are invalid")
     answer = value.get("answer")
     panel = value.get("panel")
@@ -192,13 +195,17 @@ def _model_configuration(value: object) -> dict[str, dict[str, object]]:
         "timeout_seconds",
     }:
         raise ValueError("answer model configuration is invalid")
-    if not isinstance(panel, Mapping) or set(panel) != {
-        "model",
-        "reasoning_effort",
-        "votes",
-        "batch_size",
-        "timeout_seconds",
-    }:
+    if panel_required and (
+        not isinstance(panel, Mapping)
+        or set(panel)
+        != {
+            "model",
+            "reasoning_effort",
+            "votes",
+            "batch_size",
+            "timeout_seconds",
+        }
+    ):
         raise ValueError("panel model configuration is invalid")
 
     def require_model(item: Mapping[str, object], label: str) -> str:
@@ -223,15 +230,18 @@ def _model_configuration(value: object) -> dict[str, dict[str, object]]:
             raise ValueError(f"{label} model configuration is invalid")
         return result
 
-    return {
+    result = {
         "answer": {
             "model": require_model(answer, "answer"),
             "reasoning_effort": require_reasoning(answer, "answer"),
             "timeout_seconds": require_positive_integer(
                 answer, "timeout_seconds", "answer", 3600
             ),
-        },
-        "panel": {
+        }
+    }
+    if panel_required:
+        assert isinstance(panel, Mapping)
+        result["panel"] = {
             "model": require_model(panel, "panel"),
             "reasoning_effort": require_reasoning(panel, "panel"),
             "votes": require_positive_integer(panel, "votes", "panel", 9),
@@ -241,8 +251,8 @@ def _model_configuration(value: object) -> dict[str, dict[str, object]]:
             "timeout_seconds": require_positive_integer(
                 panel, "timeout_seconds", "panel", 3600
             ),
-        },
-    }
+        }
+    return result
 
 
 def _trusted_executor_binding(
@@ -257,6 +267,7 @@ def _trusted_executor_binding(
         "service",
         "witness",
     ),
+    panel_required: bool = True,
 ) -> dict[str, Any]:
     fields = {
         "bundle_commitment",
@@ -420,7 +431,9 @@ def _trusted_executor_binding(
         "sandbox": sandbox,
         "executables": executables,
         "code_subjects": code_subjects,
-        "model_configuration": _model_configuration(value.get("model_configuration")),
+        "model_configuration": _model_configuration(
+            value.get("model_configuration"), panel_required=panel_required
+        ),
         "anchor_verifier": _anchor_verifier(value.get("anchor_verifier")),
     }
 
@@ -1239,16 +1252,24 @@ def build_anchor_request(controller_manifest: Path) -> dict[str, Any]:
     codex = execution.get("codex")
     native = codex.get("native") if isinstance(codex, dict) else None
     panel = grading.get("panel") if isinstance(grading, dict) else None
-    if not isinstance(panel, dict):
+    profile = manifest.get("experiment_profile")
+    successor = profile == "a11b-successor-development-v1"
+    if successor:
+        if (
+            not isinstance(grading, dict)
+            or grading.get("panel_model_calls") != 0
+            or panel is not None
+        ):
+            raise ValueError("successor controller must be explicitly panel-free")
+    elif not isinstance(panel, dict):
         raise ValueError("controller panel configuration is missing")
 
-    profile = manifest.get("experiment_profile")
     subject_map = (
         {
             "preregistration": "preregistration",
-            "packet_t0": "packet_t0",
-            "packet_t1": "packet_t1",
-            "packet_e1": "packet_e1",
+            "packet_t0": "packet_v",
+            "packet_t1": "packet_t",
+            "packet_e1": "packet_e",
             "answer_schema": "schema",
             "answer_contract": "a11b_answer_contract",
             "evidence_core": "a11_evidence_core",
@@ -1302,23 +1323,26 @@ def build_anchor_request(controller_manifest: Path) -> dict[str, Any]:
             subjects["install_manifest"] = install_manifest
     subjects["native_codex"] = _receipt(native, label="native_codex")
 
-    model_configuration = _model_configuration(
-        {
-            "answer": {
-                key: execution.get(key)
-                for key in ("model", "reasoning_effort", "timeout_seconds")
-            },
-            "panel": {
-                key: panel.get(key)
-                for key in (
-                    "model",
-                    "reasoning_effort",
-                    "votes",
-                    "batch_size",
-                    "timeout_seconds",
-                )
-            },
+    model_configuration_input = {
+        "answer": {
+            key: execution.get(key)
+            for key in ("model", "reasoning_effort", "timeout_seconds")
         }
+    }
+    if not successor:
+        assert isinstance(panel, dict)
+        model_configuration_input["panel"] = {
+            key: panel.get(key)
+            for key in (
+                "model",
+                "reasoning_effort",
+                "votes",
+                "batch_size",
+                "timeout_seconds",
+            )
+        }
+    model_configuration = _model_configuration(
+        model_configuration_input, panel_required=not successor
     )
     request = {
         "kind": ANCHOR_REQUEST_KIND,
@@ -1337,6 +1361,8 @@ def build_anchor_request(controller_manifest: Path) -> dict[str, Any]:
         "subjects": subjects,
         "model_configuration": model_configuration,
     }
+    if successor:
+        request["panel_model_calls"] = 0
     if controller_version == "a11-controller-v4":
         profile = manifest.get("experiment_profile")
         if profile in {
@@ -1368,6 +1394,7 @@ def build_anchor_request(controller_manifest: Path) -> dict[str, Any]:
         trusted_executor = _trusted_executor_binding(
             execution.get("trusted_executor"),
             expected_code_names=expected_code_names,
+            panel_required=not successor,
         )
         if trusted_executor["model_configuration"] != model_configuration:
             raise ValueError(

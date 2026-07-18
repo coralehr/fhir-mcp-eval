@@ -451,24 +451,40 @@ def load_input_rows(
     return rows
 
 
-def load_prompt_records(path: Path) -> dict[str, dict[str, Any]]:
+def _load_prompt_records_with_fields(
+    path: Path, *, expected_fields: frozenset[str]
+) -> dict[str, dict[str, Any]]:
     records: dict[str, dict[str, Any]] = {}
     with path.open(encoding="utf-8") as handle:
         for line_number, line in enumerate(handle, start=1):
             if not line.strip():
                 continue
             value = _loads_json(line, label=f"{path}:{line_number}")
-            if not isinstance(value, dict) or set(value) != PROMPT_RECORD_FIELDS:
-                raise ValueError(f"A11 prompt record fields changed at line {line_number}")
+            if not isinstance(value, dict) or set(value) != expected_fields:
+                raise ValueError(
+                    f"A11 prompt record fields changed at line {line_number}"
+                )
             question_id = value.get("question_id")
             if not isinstance(question_id, str) or not question_id:
-                raise ValueError(f"A11 prompt record has no question_id at line {line_number}")
+                raise ValueError(
+                    f"A11 prompt record has no question_id at line {line_number}"
+                )
             if question_id in records:
                 raise ValueError(f"duplicate A11 prompt record: {question_id}")
             records[question_id] = value
     if not records:
         raise ValueError("A11 prompt record file is empty")
     return records
+
+
+def load_prompt_records(path: Path) -> dict[str, dict[str, Any]]:
+    return _load_prompt_records_with_fields(path, expected_fields=PROMPT_RECORD_FIELDS)
+
+
+def load_successor_prompt_records(path: Path) -> dict[str, dict[str, Any]]:
+    return _load_prompt_records_with_fields(
+        path, expected_fields=SUCCESSOR_PROMPT_RECORD_FIELDS
+    )
 
 
 def _write_json_atomic(path: Path, value: Any) -> None:

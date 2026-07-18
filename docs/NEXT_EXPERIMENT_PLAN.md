@@ -70,6 +70,13 @@ preview are spent for future confirmatory claims.
 The witness threat model, interface, crash rules, and deployment gate are in
 [EXPERIMENT_WITNESS_PROTOCOL.md](EXPERIMENT_WITNESS_PROTOCOL.md).
 
+The successor development release's single authoritative completed/pending
+checklist, exact artifact hashes, approval blocker, and interpretation boundary
+are in
+[A11B_SUCCESSOR_DEVELOPMENT_SEAL.md](results/A11B_SUCCESSOR_DEVELOPMENT_SEAL.md).
+The component checklist below is retained as implementation history; it does
+not authorize a model call.
+
 ## P0: harden the protocol before another answer run
 
 Implementation status as of 2026-07-15:
@@ -110,9 +117,11 @@ Implementation status as of 2026-07-15:
   payloads, and standalone-Python receipt. This is a review artifact only: it
   has not created the executor account, installed files, reloaded sshd, or
   provisioned credentials on the Mac mini.
-- [ ] Build and independently approve the actual A11b bundle/controller, install
-  that localhost-only forced-command surface, and run a fresh zero-model RPC dry
-  run; no deployed service owns a live credential yet.
+- [x] Build and independently reproduce the actual successor development
+  bundle/controller and publish its sealed candidate with exact hashes. Exact-
+  head approval, merge, commit-pinned external-anchor verification,
+  installation, and a fresh zero-model RPC dry run remain pending; no model
+  call is authorized by the candidate alone.
 - [x] Implement and adversarially review the zero-model A11b T0/T1/E1
   representation compiler on physically separated synthetic development source
   and audit gold. It rederives the plan from the raw question, replays FHIR

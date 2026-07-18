@@ -228,11 +228,13 @@ The evidence-driven execution plan is
 [NEXT_EXPERIMENT_PLAN.md](docs/NEXT_EXPERIMENT_PLAN.md); the full issue-ready
 backlog remains in [ROADMAP.md](docs/ROADMAP.md):
 
-- Before another answer run, seal the completed backend-compatible v2 transport
-  and arm-identical categorical abstention contract into a development
-  controller. The fresh 64-Patient development packets now reproduce exactly;
-  require nonzero paired correctness discordance in both contrasts before
-  opening the reserved 384-Patient efficacy split.
+- The successor 64-Patient development controller is a sealed candidate, not a
+  released or launched experiment. Its
+  [authoritative completed/pending checklist and interpretation boundary](docs/results/A11B_SUCCESSOR_DEVELOPMENT_SEAL.md)
+  require independent exact-head approval, post-merge external-anchor
+  verification, and a zero-call readiness handshake before any of its 192
+  answer calls. Require nonzero paired correctness discordance in both
+  contrasts before opening the reserved 384-Patient efficacy split.
 - Do not replay the spent 384-Patient r3 corpus across APIs: it has no
   answerable-case headroom. Freeze the cross-API harness only after a fresh
   T0/T1/E1 contrast is demonstrably discriminating.
