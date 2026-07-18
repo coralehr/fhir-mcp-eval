@@ -170,6 +170,55 @@ def write_v4_controller(root: Path) -> Path:
     return path
 
 
+def write_successor_v4_controller(root: Path) -> Path:
+    path = write_v4_controller(root)
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest["experiment_profile"] = "a11b-successor-development-v1"
+    manifest["grading"] = {
+        "method": "a11b-successor-development-exact-alias-grading-v1",
+        "panel_model_calls": 0,
+    }
+    for name in (
+        "a11_evidence_core",
+        "a11b_answer_contract",
+        "a11b_postprocess",
+        "a11b_successor_dev_gate",
+        "a11b_successor_development_grading",
+        "a11b_successor_development_postprocess",
+        "answer_input",
+        "a11b_nightly_bootstrap",
+        "a11b_nightly_runner",
+    ):
+        manifest["snapshots"][name] = {
+            "sha256": sha(name.encode()),
+            "bytes": len(name),
+        }
+    trusted = manifest["execution"]["trusted_executor"]
+    trusted["model_configuration"].pop("panel")
+    trusted["witness"]["schedule"] = [trusted["witness"]["schedule"][0]]
+    code_names = (
+        "a11b_launch_protocol",
+        "a11b_nightly_bootstrap",
+        "a11b_nightly_runner",
+        "anchor",
+        "bootstrap",
+        "codex_harness",
+        "driver",
+        "executor",
+        "service",
+        "witness",
+    )
+    trusted["code_subjects"] = [
+        {"name": name, "sha256": f"{index:x}" * 64, "bytes": index + 1}
+        for index, name in enumerate(code_names)
+    ]
+    path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
 def verified_remote_fetch(
     expected: bytes,
     commit: str,
@@ -326,6 +375,39 @@ class ExperimentAnchorTests(unittest.TestCase):
             self.assertEqual(
                 request["controller"]["schema_version"], "a11-controller-v4"
             )
+
+    def test_successor_v4_anchor_is_explicitly_panel_free(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            controller = write_successor_v4_controller(Path(directory))
+
+            request = experiment_anchor.build_anchor_request(controller)
+
+            self.assertEqual(request["panel_model_calls"], 0)
+            self.assertEqual(set(request["model_configuration"]), {"answer"})
+            self.assertEqual(
+                set(request["trusted_executor"]["model_configuration"]), {"answer"}
+            )
+            manifest = json.loads(controller.read_text(encoding="utf-8"))
+            for mutation in ("nonzero", "panel_present"):
+                changed = json.loads(json.dumps(manifest))
+                if mutation == "nonzero":
+                    changed["grading"]["panel_model_calls"] = 1
+                else:
+                    changed["grading"]["panel"] = {
+                        "model": "judge-test",
+                        "reasoning_effort": "high",
+                        "votes": 3,
+                        "batch_size": 20,
+                        "timeout_seconds": 600,
+                    }
+                controller.write_text(
+                    json.dumps(changed, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+                with self.subTest(mutation=mutation), self.assertRaisesRegex(
+                    ValueError, "explicitly panel-free"
+                ):
+                    experiment_anchor.build_anchor_request(controller)
 
     def test_v4_trusted_executor_binding_rejects_noncanonical_or_unsafe_fields(
         self,
