@@ -3,8 +3,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from a11_path_required_benchmark import (
     ARM_STAR,
     ARM_TRAVERSAL,
@@ -138,5 +136,9 @@ def test_fixture_rejects_duplicate_resource_keys(tmp_path: Path) -> None:
     path = tmp_path / "bad.json"
     path.write_text(json.dumps(raw))
 
-    with pytest.raises(ValueError, match="duplicate resource key"):
+    try:
         load_fixture(path)
+    except ValueError as exc:
+        assert "duplicate resource key" in str(exc)
+    else:
+        raise AssertionError("duplicate resource key was accepted")

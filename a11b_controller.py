@@ -46,6 +46,7 @@ PRODUCTION_SNAPSHOT_ROOT = service.PRODUCTION_BUNDLE_DIR / "snapshots"
 CODE_SUBJECT_FILES = {
     "a11b_nightly_bootstrap": "a11b_nightly_bootstrap.py",
     "a11b_nightly_runner": "a11b_nightly_runner.py",
+    "a11b_launch_protocol": "a11b_launch_protocol.py",
     "anchor": "experiment_anchor.py",
     "bootstrap": "experiment_executor_bootstrap.py",
     "codex_harness": "codex_harness.py",

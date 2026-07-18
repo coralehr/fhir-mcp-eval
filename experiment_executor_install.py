@@ -42,6 +42,7 @@ PRODUCTION_SSHD_DROP_IN_PATH = Path(
 _CODE_FILES = {
     "a11b_nightly_bootstrap": "a11b_nightly_bootstrap.py",
     "a11b_nightly_runner": "a11b_nightly_runner.py",
+    "a11b_launch_protocol": "a11b_launch_protocol.py",
     "a11b_grading": "a11b_grading.py",
     "a11b_postprocess": "a11b_postprocess.py",
     "anchor": "experiment_anchor.py",

@@ -1321,6 +1321,7 @@ def build_anchor_request(controller_manifest: Path) -> dict[str, Any]:
         profile = manifest.get("experiment_profile")
         expected_code_names = (
             (
+                "a11b_launch_protocol",
                 "a11b_nightly_bootstrap",
                 "a11b_nightly_runner",
                 "anchor",

@@ -163,6 +163,7 @@ class ExperimentExecutorInstallTests(unittest.TestCase):
                 {
                     "a11b_nightly_bootstrap",
                     "a11b_nightly_runner",
+                    "a11b_launch_protocol",
                     "a11b_grading",
                     "a11b_postprocess",
                     "anchor",
