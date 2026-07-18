@@ -14,7 +14,12 @@ concurrency:
 
 jobs:
   deterministic-suite:
-    runs-on: ubuntu-24.04
+    # The frozen power receipt binds exact Python/libm output generated on
+    # macOS. Running receipt verification on glibc changes raw power summaries
+    # by a few ULPs and correctly fails the exact-byte seal. A platform-neutral
+    # power algorithm requires a new versioned receipt and belongs in the
+    # successor reseal, not an in-place mutation of historical evidence.
+    runs-on: macos-14
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
