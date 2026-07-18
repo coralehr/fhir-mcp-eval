@@ -1,0 +1,79 @@
+{
+  "schema_version": "a11b-successor-development-spec-v1",
+  "phase": "development",
+  "seal_state": "candidate_unanchored",
+  "model_calls_authorized": false,
+  "source": {
+    "generation_spec_sha256": "2c4ecf7ea44f42452799576da7b0d0814ddf933cbb054311d555d56bc20261d4",
+    "generation_receipt_sha256": "acb5ad3ba2ba8032507d69afc8375d181dc49376392e39564343490f718df0d8",
+    "raw_output_content_sha256": "57830fe09242d215fac90a7ccdebba24188af290f11290ce1f9cb66a99ab27b4",
+    "patient_manifest_sha256": "76c3ffba9f4d2703e4e24b754ac850db9852f04637b38f0717de836a590c8844",
+    "partition_manifest_sha256": "ac08e626576706d53a5c28cbaca02df1c14b50d820968d61680327701531e3eb",
+    "clean_root_receipts_byte_identical": true
+  },
+  "corpus": {
+    "public_manifest_sha256": "9bf09379d93db80c430b59a59ca79f522e185de6baef048bed40f29017f3e74d",
+    "audit_manifest_sha256": "b233b4bdfe9411ccf2720acd3e7850a01f340b73bce46bdc07adda0260362dcc",
+    "clean_root_trees_byte_identical": true,
+    "development_patients": 64,
+    "reserved_efficacy_patients": 384,
+    "efficacy_materialized": false
+  },
+  "answer_protocol": {
+    "answer_contract_version": "a11b-answer-contract-v2",
+    "prompt_protocol_version": "a11b-exact-payload-prompt-v2",
+    "prompt_record_version": "a11b-answer-prompt-record-v2-unsealed",
+    "registered_schema_sha256": "03e481ef40d58d91645bdbc7e6f57d193e12415cce292e9435b03d5530132306",
+    "transport_schema_sha256": "0b7a2b3e6f25ad2f198628b10d8a710dd361fdd91a3248d0488c15421233837b",
+    "offline_validation_required": true,
+    "normalization_permitted": false
+  },
+  "design": {
+    "arms": [
+      "t0",
+      "t1",
+      "e1"
+    ],
+    "questions_per_arm": 64,
+    "planned_answer_calls": 192,
+    "paired_by_patient": true,
+    "model": "gpt-5.6-sol",
+    "reasoning_effort": "high",
+    "runtime": "codex_cli_subscription",
+    "maximum_attempts_per_question_arm": 3
+  },
+  "gate": {
+    "version": "a11b-successor-development-discordance-gate-v1",
+    "result_manifest_version": "a11b-successor-development-result-manifest-v1",
+    "result_manifest_binds": [
+      "assignments_sha256",
+      "outcomes_sha256",
+      "question_count",
+      "arms",
+      "accepted_attempts",
+      "all_attempts",
+      "accepted_token_usage_complete",
+      "all_attempt_token_usage_complete"
+    ],
+    "required_contrasts": [
+      "primary_e1_minus_t1",
+      "secondary_t1_minus_t0"
+    ],
+    "minimum_discordant_correctness_pairs_per_contrast": 1,
+    "direction_and_magnitude_used_for_gate": false,
+    "failure_action": "stop_without_materializing_efficacy"
+  },
+  "accounting": {
+    "accepted_attempt_tokens_required": true,
+    "all_attempt_tokens_required": true,
+    "retry_yield_required": true,
+    "transport_failures_reported_separately": true
+  },
+  "remaining_seal_requirements": [
+    "exact native runtime and executable hashes",
+    "exact rotating 192-call schedule",
+    "witness and credential-mediating executor bindings",
+    "content-free dry-run receipt",
+    "external commit-pinned exact-head approval anchor"
+  ]
+}

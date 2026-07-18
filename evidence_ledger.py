@@ -20,6 +20,7 @@ STATUS_VALUES = {
     "null_not_promoted",
     "invalid_for_claims",
     "exploratory_not_promoted",
+    "development_ready_not_answered",
     "sealed_pending",
 }
 SHA256 = re.compile(r"^[0-9a-f]{64}$")

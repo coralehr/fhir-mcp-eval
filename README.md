@@ -228,10 +228,11 @@ The evidence-driven execution plan is
 [NEXT_EXPERIMENT_PLAN.md](docs/NEXT_EXPERIMENT_PLAN.md); the full issue-ready
 backlog remains in [ROADMAP.md](docs/ROADMAP.md):
 
-- Before another answer run, seal a backend-compatible transport schema with an
-  explicit arm-identical abstention contract, remove the need for deterministic
-  output normalization, and build a fresh patient-disjoint A11b holdout. Require
-  nonzero paired discordance on separate development data first.
+- Before another answer run, seal the completed backend-compatible v2 transport
+  and arm-identical categorical abstention contract into a development
+  controller. The fresh 64-Patient development packets now reproduce exactly;
+  require nonzero paired correctness discordance in both contrasts before
+  opening the reserved 384-Patient efficacy split.
 - Do not replay the spent 384-Patient r3 corpus across APIs: it has no
   answerable-case headroom. Freeze the cross-API harness only after a fresh
   T0/T1/E1 contrast is demonstrably discriminating.
@@ -243,14 +244,16 @@ backlog remains in [ROADMAP.md](docs/ROADMAP.md):
 - The zero-model A11b prospective power gate is also implemented and
   adversarially clean. Its original 384-efficacy/64-development design did not
   produce any paired correctness discordance in the preview, so the old power
-  assumption cannot justify a rerun. A successor needs a development-observed
-  discordance model and a fresh receipt. See
+  assumption cannot justify a rerun. The successor now has a fresh receipt and
+  a fail-closed prospective development-discordance gate; the gate still needs
+  witnessed development outcomes. See
   [docs/results/A11B_POWER_GATE.md](docs/results/A11B_POWER_GATE.md).
 - The zero-model Synthea generation-receipt verifier is implemented. It binds
   the power-derived 448-Patient population to a pinned generator/JAR, complete
   staged Java runtime and probe, exact argv/environment, registered
   config/modules, and the complete raw-output tree. Preserve the original r3
-  receipt, but generate a new patient-disjoint source for any successor; see
+  receipt. Two clean successor roots now reproduce a distinct 448-Patient
+  receipt and byte-identical development-only public/audit trees; see
   [docs/A11B_GENERATION_RECEIPT.md](docs/A11B_GENERATION_RECEIPT.md).
 - In parallel, benchmark query-time traversal against a materialized Postgres
   edge projection for byte equivalence, policy behavior, correction/rebuild
