@@ -23,9 +23,18 @@
     "answer_contract_version": "a11b-answer-contract-v2",
     "prompt_protocol_version": "a11b-exact-payload-prompt-v2",
     "prompt_record_version": "a11b-answer-prompt-record-v2-unsealed",
-    "registered_schema_sha256": "03e481ef40d58d91645bdbc7e6f57d193e12415cce292e9435b03d5530132306",
-    "transport_schema_sha256": "0b7a2b3e6f25ad2f198628b10d8a710dd361fdd91a3248d0488c15421233837b",
+    "registered_schema_sha256": "d33fc4d158865ddc9b3381556b203afd452b93f10829b7d0f743f28beb3d7a05",
+    "transport_schema_sha256": "e43ccacd51b8f828da38e22e723bf8dcb420c9ca2fac4a440e9ff147ed89760f",
+    "model_controlled_field_limits": {
+      "answer_utf8_bytes": 128,
+      "evidence_summary_utf8_bytes": 1024,
+      "insufficiency_reason_utf8_bytes": 1024,
+      "source_resource_ids": 16,
+      "source_resource_id_utf8_bytes": 128
+    },
     "offline_validation_required": true,
+    "schema_length_unit": "unicode_code_points",
+    "offline_length_unit": "utf8_bytes_stricter_fail_closed",
     "normalization_permitted": false
   },
   "design": {
@@ -44,16 +53,21 @@
   },
   "gate": {
     "version": "a11b-successor-development-discordance-gate-v1",
-    "result_manifest_version": "a11b-successor-development-result-manifest-v1",
+    "result_manifest_version": "a11b-successor-development-result-manifest-v2",
     "result_manifest_binds": [
       "assignments_sha256",
       "outcomes_sha256",
+      "audit_manifest_sha256",
+      "gold_rows_sha256",
+      "accepted_token_receipts_sha256",
+      "all_attempt_token_receipts_sha256",
       "question_count",
       "arms",
       "accepted_attempts",
       "all_attempts",
       "accepted_token_usage_complete",
-      "all_attempt_token_usage_complete"
+      "all_attempt_token_usage_complete",
+      "token_economics"
     ],
     "required_contrasts": [
       "primary_e1_minus_t1",
@@ -62,6 +76,14 @@
     "minimum_discordant_correctness_pairs_per_contrast": 1,
     "direction_and_magnitude_used_for_gate": false,
     "failure_action": "stop_without_materializing_efficacy"
+  },
+  "grading": {
+    "version": "a11b-successor-development-exact-alias-grading-v1",
+    "panel_model_calls": 0,
+    "answerable_correctness": "validated status=answered and Unicode-NFKC whitespace-collapsed casefolded answer equals exactly the registered code or display alias",
+    "unanswerable_correctness": "validated status=insufficient",
+    "explanatory_prose_around_an_alias_is_incorrect": true,
+    "post_hoc_normalization_permitted": false
   },
   "accounting": {
     "accepted_attempt_tokens_required": true,

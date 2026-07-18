@@ -28,20 +28,47 @@ class A11bSuccessorDevelopmentSpecTests(unittest.TestCase):
         )
         self.assertEqual(
             spec["gate"]["result_manifest_version"],
-            "a11b-successor-development-result-manifest-v1",
+            "a11b-successor-development-result-manifest-v2",
         )
         self.assertEqual(
             set(spec["gate"]["result_manifest_binds"]),
             {
                 "assignments_sha256",
                 "outcomes_sha256",
+                "audit_manifest_sha256",
+                "gold_rows_sha256",
+                "accepted_token_receipts_sha256",
+                "all_attempt_token_receipts_sha256",
                 "question_count",
                 "arms",
                 "accepted_attempts",
                 "all_attempts",
                 "accepted_token_usage_complete",
                 "all_attempt_token_usage_complete",
+                "token_economics",
             },
+        )
+        self.assertEqual(
+            spec["grading"]["version"],
+            "a11b-successor-development-exact-alias-grading-v1",
+        )
+        self.assertEqual(spec["grading"]["panel_model_calls"], 0)
+        self.assertTrue(
+            spec["grading"]["explanatory_prose_around_an_alias_is_incorrect"]
+        )
+        self.assertEqual(
+            spec["answer_protocol"]["model_controlled_field_limits"],
+            {
+                "answer_utf8_bytes": 128,
+                "evidence_summary_utf8_bytes": 1024,
+                "insufficiency_reason_utf8_bytes": 1024,
+                "source_resource_ids": 16,
+                "source_resource_id_utf8_bytes": 128,
+            },
+        )
+        self.assertEqual(
+            spec["answer_protocol"]["offline_length_unit"],
+            "utf8_bytes_stricter_fail_closed",
         )
         self.assertEqual(
             spec["answer_protocol"]["registered_schema_sha256"],

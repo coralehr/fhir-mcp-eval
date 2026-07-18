@@ -18,22 +18,27 @@
       "type": [
         "string",
         "null"
-      ]
+      ],
+      "maxLength": 128
     },
     "source_resource_ids": {
       "type": "array",
       "items": {
-        "type": "string"
-      }
+        "type": "string",
+        "maxLength": 128
+      },
+      "maxItems": 16
     },
     "evidence_summary": {
-      "type": "string"
+      "type": "string",
+      "maxLength": 1024
     },
     "insufficiency_reason": {
       "type": [
         "string",
         "null"
-      ]
+      ],
+      "maxLength": 1024
     }
   }
 }

@@ -27,18 +27,23 @@ CONTRASTS = (
 )
 QUESTION_COUNT = 64
 MINIMUM_DISCORDANT_PAIRS = 1
-RESULT_MANIFEST_VERSION = "a11b-successor-development-result-manifest-v1"
+RESULT_MANIFEST_VERSION = "a11b-successor-development-result-manifest-v2"
 RESULT_MANIFEST_FIELDS = frozenset(
     {
         "schema_version",
+        "audit_manifest_sha256",
+        "gold_rows_sha256",
         "assignments_sha256",
         "outcomes_sha256",
+        "accepted_token_receipts_sha256",
+        "all_attempt_token_receipts_sha256",
         "question_count",
         "arms",
         "accepted_attempts",
         "all_attempts",
         "accepted_token_usage_complete",
         "all_attempt_token_usage_complete",
+        "token_economics",
     }
 )
 _SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -145,11 +150,41 @@ def compile_gate_receipt(
 
     assignment_values = list(assignments)
     outcome_values = list(outcomes)
+    token_economics = (
+        development_result_manifest.get("token_economics")
+        if isinstance(development_result_manifest, Mapping)
+        else None
+    )
+    token_groups_valid = (
+        isinstance(token_economics, Mapping)
+        and set(token_economics)
+        == {
+            "accepted_by_arm",
+            "all_attempts_by_arm",
+            "provider_failures_by_arm",
+            "accepted_after_retry_by_arm",
+        }
+        and all(
+            isinstance(token_economics.get(group), Mapping)
+            and set(token_economics[group]) == set(ARMS)
+            for group in token_economics
+        )
+    )
     if (
         not isinstance(development_result_manifest, Mapping)
         or set(development_result_manifest) != RESULT_MANIFEST_FIELDS
         or development_result_manifest.get("schema_version")
         != RESULT_MANIFEST_VERSION
+        or any(
+            _SHA256.fullmatch(str(development_result_manifest.get(field, "")))
+            is None
+            for field in (
+                "audit_manifest_sha256",
+                "gold_rows_sha256",
+                "accepted_token_receipts_sha256",
+                "all_attempt_token_receipts_sha256",
+            )
+        )
         or development_result_manifest.get("assignments_sha256")
         != sha256(canonical_bytes(assignment_values))
         or development_result_manifest.get("outcomes_sha256")
@@ -166,8 +201,44 @@ def compile_gate_receipt(
         is not True
         or development_result_manifest.get("all_attempt_token_usage_complete")
         is not True
+        or not token_groups_valid
     ):
         raise ValueError("development result manifest binding is invalid")
+    assert isinstance(token_economics, Mapping)
+    for arm in ARMS:
+        accepted_usage = token_economics["accepted_by_arm"][arm]
+        all_attempt_usage = token_economics["all_attempts_by_arm"][arm]
+        if (
+            not isinstance(accepted_usage, Mapping)
+            or not isinstance(all_attempt_usage, Mapping)
+            or set(accepted_usage)
+            != {"input", "cached", "output", "reasoning", "total"}
+            or set(all_attempt_usage) != set(accepted_usage)
+            or any(
+                type(value) is not int or value < 0
+                for value in accepted_usage.values()
+            )
+            or any(
+                type(value) is not int or value < 0
+                for value in all_attempt_usage.values()
+            )
+            or any(
+                all_attempt_usage[field] < accepted_usage[field]
+                for field in accepted_usage
+            )
+            or type(token_economics["provider_failures_by_arm"][arm]) is not int
+            or token_economics["provider_failures_by_arm"][arm] < 0
+            or type(token_economics["accepted_after_retry_by_arm"][arm]) is not int
+            or not 0
+            <= token_economics["accepted_after_retry_by_arm"][arm]
+            <= QUESTION_COUNT
+        ):
+            raise ValueError("development token economics are invalid")
+    if sum(token_economics["provider_failures_by_arm"].values()) != (
+        development_result_manifest["all_attempts"]
+        - development_result_manifest["accepted_attempts"]
+    ):
+        raise ValueError("development retry economics do not reconcile")
     assignment_index = _assignment_index(assignment_values)
     outcome_index = _outcome_index(
         outcome_values,

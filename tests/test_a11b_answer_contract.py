@@ -64,6 +64,57 @@ class A11bAnswerContractTests(unittest.TestCase):
             with self.subTest(answer=answer), self.assertRaises(ValueError):
                 contract.validate_answer(answer)
 
+    def test_oversized_model_controlled_fields_fail_closed(self) -> None:
+        base = {
+            "status": "answered",
+            "answer": "O-ABC",
+            "source_resource_ids": ["Observation/example"],
+            "evidence_summary": "Visible evidence.",
+            "insufficiency_reason": None,
+        }
+        mutations = (
+            {"answer": "a" * (contract.MAX_ANSWER_BYTES + 1)},
+            {
+                "evidence_summary": "a"
+                * (contract.MAX_EVIDENCE_SUMMARY_BYTES + 1)
+            },
+            {
+                "source_resource_ids": [
+                    f"Observation/example-{index}"
+                    for index in range(contract.MAX_SOURCE_RESOURCE_IDS + 1)
+                ]
+            },
+        )
+        for mutation in mutations:
+            answer = {**base, **mutation}
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                contract.validate_answer(answer)
+
+        insufficient = {
+            **base,
+            "status": "insufficient",
+            "answer": None,
+            "insufficiency_reason": "a"
+            * (contract.MAX_INSUFFICIENCY_REASON_BYTES + 1),
+        }
+        with self.assertRaises(ValueError):
+            contract.validate_answer(insufficient)
+
+    def test_multibyte_schema_pass_is_rejected_by_offline_utf8_cap(self) -> None:
+        answer = {
+            "status": "answered",
+            "answer": "🪸" * contract.MAX_ANSWER_BYTES,
+            "source_resource_ids": ["Observation/example"],
+            "evidence_summary": "Visible evidence.",
+            "insufficiency_reason": None,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "answer.json"
+            path.write_text(json.dumps(answer), encoding="utf-8")
+            self.assertTrue(codex_harness.answer_matches_schema(path, SCHEMA))
+        with self.assertRaises(ValueError):
+            contract.validate_answer(answer)
+
     def test_json_schema_matches_the_runtime_contract(self) -> None:
         cases = (
             {
@@ -107,6 +158,14 @@ class A11bAnswerContractTests(unittest.TestCase):
         self.assertEqual(
             set(transport["required"]),
             contract.FIELDS,
+        )
+        self.assertEqual(
+            transport["properties"]["answer"]["maxLength"],
+            contract.MAX_ANSWER_BYTES,
+        )
+        self.assertEqual(
+            transport["properties"]["source_resource_ids"]["maxItems"],
+            contract.MAX_SOURCE_RESOURCE_IDS,
         )
 
 

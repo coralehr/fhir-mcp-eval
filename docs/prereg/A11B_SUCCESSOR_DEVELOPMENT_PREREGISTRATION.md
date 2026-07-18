@@ -48,17 +48,33 @@ calls before transport retries:
 
 All arms use `a11b-answer-contract-v2`, the successor prompt protocol, and a
 native structural response schema. No prose sentinel or post-hoc response
-normalization may change answer state. Deterministic grading runs before any
-arm-blind panel.
+normalization may change answer state. Development correctness is entirely
+deterministic and authorizes zero panel calls: an answerable response is correct
+only when its validated categorical state is `answered` and its Unicode-NFKC,
+whitespace-collapsed, case-folded answer equals exactly the registered code or
+display alias. Explanatory prose around an alias is incorrect. An unanswerable
+response is correct only when its validated categorical state is `insufficient`.
+This conservative endpoint prevents answer text from becoming judge-prompt
+instructions and prevents same-model self-grading.
+
+All model-controlled fields fail closed at registered bounds before grading:
+the answer is at most 128 UTF-8 bytes, the evidence summary and insufficiency
+reason are at most 1,024 UTF-8 bytes each, and there are at most 16 cited
+resource IDs of at most 128 UTF-8 bytes each.
+JSON Schema `maxLength` is a transport/code-point ceiling; the mandatory
+offline contract applies the stricter UTF-8 byte ceiling. A multibyte value can
+therefore pass transport validation and still fail closed before grading.
 
 ## Fail-closed decision rule
 
 Correctness discordance is evaluated only after all 192 development outcomes
 are complete and bound to one witnessed
-`a11b-successor-development-result-manifest-v1`. That manifest commits to the
-exact assignment and outcome arrays, question count, ordered arms, accepted and
-all-attempt counts, and completeness of both accepted-attempt and all-attempt
-token receipts. The efficacy split may be opened only if both registered paired
+`a11b-successor-development-result-manifest-v2`. That manifest commits to the
+exact audit manifest and gold rows, assignment and outcome arrays, question
+count, ordered arms, accepted and all-attempt token receipts, per-arm token
+economics, provider-failure counts, retry yield, and completeness of both
+accepted-attempt and all-attempt token receipts. The efficacy split may be
+opened only if both registered paired
 contrasts contain at least one discordant correctness pair:
 
 - primary: E1 versus T1;

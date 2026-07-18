@@ -21,27 +21,32 @@
       "type": [
         "string",
         "null"
-      ]
+      ],
+      "maxLength": 128
     },
     "source_resource_ids": {
       "type": "array",
       "items": {
         "type": "string",
         "minLength": 1,
+        "maxLength": 128,
         "pattern": "^[A-Z][A-Za-z0-9]*/[A-Za-z0-9.-]{1,64}$"
       },
+      "maxItems": 16,
       "uniqueItems": true
     },
     "evidence_summary": {
       "type": "string",
       "minLength": 1,
+      "maxLength": 1024,
       "pattern": ".*\\S.*"
     },
     "insufficiency_reason": {
       "type": [
         "string",
         "null"
-      ]
+      ],
+      "maxLength": 1024
     }
   },
   "oneOf": [
