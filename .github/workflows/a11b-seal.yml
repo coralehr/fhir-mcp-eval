@@ -14,18 +14,16 @@ concurrency:
 
 jobs:
   deterministic-suite:
-    # The frozen power receipt binds exact Python/libm output generated on
-    # macOS. Running receipt verification on glibc changes raw power summaries
-    # by a few ULPs and correctly fails the exact-byte seal. A platform-neutral
-    # power algorithm requires a new versioned receipt and belongs in the
-    # successor reseal, not an in-place mutation of historical evidence.
+    # The executor protocol and frozen power receipt bind the Python 3.14 patch
+    # runtime and Darwin libm. Other runtimes change raw power summaries by a
+    # few ULPs and correctly fail the exact-byte seal.
     runs-on: macos-14
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.14.5"
       - name: Compile tracked Python
         run: python -m compileall -q .
       - name: Run deterministic test suite
@@ -38,7 +36,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.14.5"
       - name: Exercise installer and runner protocol boundaries
         run: >-
           python -m unittest -v
