@@ -40,10 +40,20 @@ PRODUCTION_SSHD_DROP_IN_PATH = Path(
     "/etc/ssh/sshd_config.d/200-coralehr-experiment-executor.conf"
 )
 _CODE_FILES = {
+    "a11_evidence_core": "a11_evidence_core.py",
+    "a11b_answer_contract": "a11b_answer_contract.py",
     "a11b_nightly_bootstrap": "a11b_nightly_bootstrap.py",
     "a11b_nightly_runner": "a11b_nightly_runner.py",
+    "a11b_launch_protocol": "a11b_launch_protocol.py",
     "a11b_grading": "a11b_grading.py",
     "a11b_postprocess": "a11b_postprocess.py",
+    "a11b_successor_dev_gate": "a11b_successor_dev_gate.py",
+    "a11b_successor_development_grading": (
+        "a11b_successor_development_grading.py"
+    ),
+    "a11b_successor_development_postprocess": (
+        "a11b_successor_development_postprocess.py"
+    ),
     "anchor": "experiment_anchor.py",
     "bootstrap": "experiment_executor_bootstrap.py",
     "codex_harness": "codex_harness.py",

@@ -53,6 +53,10 @@ class A11bSuccessorDevelopmentSpecTests(unittest.TestCase):
             "a11b-successor-development-exact-alias-grading-v1",
         )
         self.assertEqual(spec["grading"]["panel_model_calls"], 0)
+        self.assertEqual(
+            spec["gate"]["valid_no_headroom_status"],
+            "failed_receipt_published",
+        )
         self.assertTrue(
             spec["grading"]["explanatory_prose_around_an_alias_is_incorrect"]
         )

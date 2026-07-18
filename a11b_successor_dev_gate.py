@@ -245,6 +245,7 @@ def compile_gate_receipt(
         assignments=assignment_index,
     )
     contrast_receipts: dict[str, dict[str, Any]] = {}
+    passed = True
     for name, treatment, reference in CONTRASTS:
         counts = _contrast_counts(
             outcome_index,
@@ -252,7 +253,7 @@ def compile_gate_receipt(
             reference=reference,
         )
         if counts["discordant"] < MINIMUM_DISCORDANT_PAIRS:
-            raise ValueError(f"{name} has no discordant correctness pairs")
+            passed = False
         contrast_receipts[name] = {
             "treatment_arm": treatment,
             "reference_arm": reference,
@@ -260,7 +261,7 @@ def compile_gate_receipt(
         }
     return {
         "schema_version": GATE_VERSION,
-        "status": "passed",
+        "status": "passed" if passed else "failed",
         "development_result_manifest_sha256": (
             sha256(canonical_bytes(development_result_manifest))
         ),

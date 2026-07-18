@@ -74,6 +74,7 @@
       "secondary_t1_minus_t0"
     ],
     "minimum_discordant_correctness_pairs_per_contrast": 1,
+    "valid_no_headroom_status": "failed_receipt_published",
     "direction_and_magnitude_used_for_gate": false,
     "failure_action": "stop_without_materializing_efficacy"
   },

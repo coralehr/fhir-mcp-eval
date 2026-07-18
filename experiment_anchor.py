@@ -1242,11 +1242,31 @@ def build_anchor_request(controller_manifest: Path) -> dict[str, Any]:
     if not isinstance(panel, dict):
         raise ValueError("controller panel configuration is missing")
 
+    profile = manifest.get("experiment_profile")
+    subject_map = (
+        {
+            "preregistration": "preregistration",
+            "packet_t0": "packet_t0",
+            "packet_t1": "packet_t1",
+            "packet_e1": "packet_e1",
+            "answer_schema": "schema",
+            "answer_contract": "a11b_answer_contract",
+            "evidence_core": "a11_evidence_core",
+            "successor_grading": "a11b_successor_development_grading",
+            "successor_gate": "a11b_successor_dev_gate",
+            "successor_postprocess": "a11b_successor_development_postprocess",
+        }
+        if profile == "a11b-successor-development-v1"
+        else _SNAPSHOT_SUBJECTS
+    )
     subjects = {
         public_name: _receipt(snapshots.get(snapshot_name), label=public_name)
-        for public_name, snapshot_name in _SNAPSHOT_SUBJECTS.items()
+        for public_name, snapshot_name in subject_map.items()
     }
-    if manifest.get("experiment_profile") == "a11b-causal-isolation-v2":
+    if profile in {
+        "a11b-causal-isolation-v2",
+        "a11b-successor-development-v1",
+    }:
         subjects["a11b_postprocess"] = _receipt(
             snapshots.get("a11b_postprocess"), label="a11b_postprocess"
         )
@@ -1319,8 +1339,12 @@ def build_anchor_request(controller_manifest: Path) -> dict[str, Any]:
     }
     if controller_version == "a11-controller-v4":
         profile = manifest.get("experiment_profile")
-        expected_code_names = (
-            (
+        if profile in {
+            "a11b-causal-isolation-v2",
+            "a11b-successor-development-v1",
+        }:
+            expected_code_names = (
+                "a11b_launch_protocol",
                 "a11b_nightly_bootstrap",
                 "a11b_nightly_runner",
                 "anchor",
@@ -1331,8 +1355,8 @@ def build_anchor_request(controller_manifest: Path) -> dict[str, Any]:
                 "service",
                 "witness",
             )
-            if profile == "a11b-causal-isolation-v2"
-            else (
+        else:
+            expected_code_names = (
                 "anchor",
                 "bootstrap",
                 "codex_harness",
@@ -1341,7 +1365,6 @@ def build_anchor_request(controller_manifest: Path) -> dict[str, Any]:
                 "service",
                 "witness",
             )
-        )
         trusted_executor = _trusted_executor_binding(
             execution.get("trusted_executor"),
             expected_code_names=expected_code_names,

@@ -323,6 +323,9 @@ class SealedBundleLoaderTests(unittest.TestCase):
 
     def _code_subjects(self) -> list[dict[str, object]]:
         paths = {
+            "a11b_launch_protocol": Path(service_module.__file__).with_name(
+                "a11b_launch_protocol.py"
+            ),
             "a11b_nightly_bootstrap": Path(service_module.__file__).with_name(
                 "a11b_nightly_bootstrap.py"
             ),

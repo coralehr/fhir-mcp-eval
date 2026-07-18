@@ -24,6 +24,7 @@ import threading
 from pathlib import Path
 from typing import Any, BinaryIO, Callable, Mapping
 
+import a11b_launch_protocol
 import codex_harness
 import experiment_anchor
 import experiment_executor as executor_module
@@ -321,6 +322,7 @@ def _read_immutable_code_file(path: Path, *, label: str) -> bytes:
 
 def _current_code_subjects() -> list[dict[str, object]]:
     subjects = {
+        "a11b_launch_protocol": Path(a11b_launch_protocol.__file__),
         "a11b_nightly_bootstrap": Path(__file__).with_name(
             "a11b_nightly_bootstrap.py"
         ),
@@ -340,6 +342,7 @@ def _current_code_subjects() -> list[dict[str, object]]:
         module = sys.modules.get(
             {
                 "anchor": experiment_anchor.__name__,
+                "a11b_launch_protocol": a11b_launch_protocol.__name__,
                 "codex_harness": codex_harness.__name__,
                 "driver": trusted_codex_driver.__name__,
                 "executor": executor_module.__name__,

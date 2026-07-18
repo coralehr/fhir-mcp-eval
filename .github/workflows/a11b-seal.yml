@@ -1,0 +1,53 @@
+name: A11b seal safety
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deterministic-suite:
+    # The executor protocol and frozen power receipt bind the Python 3.14 patch
+    # runtime and Darwin libm. Other runtimes change raw power summaries by a
+    # few ULPs and correctly fail the exact-byte seal.
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14.5"
+      - name: Stage trusted test interpreter
+        run: |
+          install -d -m 0700 "$RUNNER_TEMP/a11b-python"
+          install -m 0500 \
+            "$(python -c 'import sys; print(sys.executable)')" \
+            "$RUNNER_TEMP/a11b-python/python3.14"
+          echo "A11B_TEST_PYTHON=$RUNNER_TEMP/a11b-python/python3.14" >> "$GITHUB_ENV"
+      - name: Compile tracked Python
+        run: '"$A11B_TEST_PYTHON" -m compileall -q .'
+      - name: Run deterministic test suite
+        run: '"$A11B_TEST_PYTHON" -m unittest discover -s tests -v'
+
+  macos-installer-protocol:
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14.5"
+      - name: Exercise installer and runner protocol boundaries
+        run: >-
+          python -m unittest -v
+          tests.test_experiment_executor_deploy
+          tests.test_a11b_nightly_runner
+          tests.test_experiment_executor_install
+          tests.test_experiment_anchor

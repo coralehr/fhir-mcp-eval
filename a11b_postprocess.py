@@ -142,23 +142,30 @@ def _load_controller(path: Path) -> tuple[dict[str, Any], str]:
     if sidecar.read_text(encoding="ascii") != digest + "\n":
         raise PostprocessError("controller sidecar changed")
     value = json.loads(payload)
+    profile = value.get("experiment_profile") if isinstance(value, dict) else None
+    registered_shape = (
+        profile == "a11b-causal-isolation-v2"
+        and value.get("inputs", {}).get("question_count") == 384
+        and value.get("inputs", {}).get("answer_calls") == 1152
+        and set(value.get("outputs", {}))
+        == {"answer_export", "grading", "panel", "result"}
+    ) or (
+        profile == "a11b-successor-development-v1"
+        and value.get("inputs", {}).get("question_count") == 64
+        and value.get("inputs", {}).get("answer_calls") == 192
+        and set(value.get("outputs", {})) == {"result"}
+    )
     if (
         not isinstance(value, dict)
         or value.get("schema_version") != "a11-controller-v4"
-        or value.get("experiment_profile") != "a11b-causal-isolation-v2"
-        or value.get("inputs", {}).get("question_count") != 384
-        or value.get("inputs", {}).get("answer_calls") != 1152
+        or not registered_shape
         or value.get("schedule", {}).get("arms") != ["t0", "t1", "e1"]
-        or len(value.get("schedule", {}).get("items", [])) != 1152
+        or len(value.get("schedule", {}).get("items", []))
+        != value.get("inputs", {}).get("answer_calls")
     ):
         raise PostprocessError("controller is not the registered A11b controller")
     outputs = value.get("outputs")
-    if not isinstance(outputs, dict) or set(outputs) != {
-        "answer_export",
-        "grading",
-        "panel",
-        "result",
-    }:
+    if not isinstance(outputs, dict):
         raise PostprocessError("controller output inventory changed")
     for raw in outputs.values():
         candidate = Path(raw)
@@ -180,6 +187,28 @@ def _verify_installed_postprocess_sources(
         "run_a11_panel": Path(run_a11b_panel.__file__).resolve(),
         "run_lock": Path(run_lock.__file__).resolve(),
     }
+    if controller.get("experiment_profile") == "a11b-successor-development-v1":
+        import a11_evidence_core
+        import a11b_answer_contract
+        import a11b_successor_dev_gate
+        import a11b_successor_development_grading
+        import a11b_successor_development_postprocess
+
+        modules = {
+            "a11_evidence_core": Path(a11_evidence_core.__file__).resolve(),
+            "a11b_answer_contract": Path(a11b_answer_contract.__file__).resolve(),
+            "a11b_postprocess": Path(__file__).resolve(),
+            "a11b_successor_dev_gate": Path(
+                a11b_successor_dev_gate.__file__
+            ).resolve(),
+            "a11b_successor_development_grading": Path(
+                a11b_successor_development_grading.__file__
+            ).resolve(),
+            "a11b_successor_development_postprocess": Path(
+                a11b_successor_development_postprocess.__file__
+            ).resolve(),
+            "run_lock": Path(run_lock.__file__).resolve(),
+        }
     snapshots = controller.get("snapshots")
     if not isinstance(snapshots, dict) or not set(modules).issubset(snapshots):
         raise PostprocessError("sealed postprocess source inventory changed")

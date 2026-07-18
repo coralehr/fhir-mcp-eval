@@ -53,6 +53,7 @@ def _process_limits_are_exact() -> bool:
 # import the service to discover this set without executing it, which is the
 # very thing this gate front-runs.
 _SEALED_CODE_FILENAMES = (
+    "a11b_launch_protocol.py",
     "codex_harness.py",
     "experiment_anchor.py",
     "experiment_executor.py",
