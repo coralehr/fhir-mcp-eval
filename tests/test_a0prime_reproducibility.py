@@ -9,6 +9,7 @@ from pathlib import Path
 import a0prime_cluster_stats
 import a0prime_verdict
 import build_a0prime_artifact
+import decompose_a0prime_failures
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -82,6 +83,7 @@ class A0PrimeReproducibilityTests(unittest.TestCase):
                 {
                     "question_id": "q1",
                     "patient_fhir_id": "Patient/p1",
+                    "question": "What is the latest value?",
                     "agent_answer": "1",
                     "true_answer": "[[1]]",
                     "trace": "must not be copied",
@@ -89,6 +91,7 @@ class A0PrimeReproducibilityTests(unittest.TestCase):
                 {
                     "question_id": "q2",
                     "patient_fhir_id": "Patient/p2",
+                    "question": "What was the first recorded value?",
                     "agent_answer": "yes",
                     "true_answer": "[['yes']]",
                     "trace": "must not be copied",
@@ -97,7 +100,37 @@ class A0PrimeReproducibilityTests(unittest.TestCase):
             code = [{**row, "agent_answer": "code"} for row in resource]
             projected = [
                 {**resource[0], "agent_answer": "1.0", "true_answer": "[[1.0]]"},
-                {**resource[1], "agent_answer": "yes"},
+                {
+                    **resource[1],
+                    "agent_answer": "I cannot determine it because the result was truncated.",
+                    "trace": [
+                        {
+                            "tool_calls": [
+                                {
+                                    "function": {
+                                        "name": "get_resources_by_patient_fhir_id",
+                                        "arguments": json.dumps(
+                                            {"resource_type": "Observation"}
+                                        ),
+                                    }
+                                }
+                            ]
+                        },
+                        {
+                            "tool_calls": [
+                                {
+                                    "function": {
+                                        "name": "get_resources_by_patient_fhir_id",
+                                        "arguments": json.dumps(
+                                            {"resource_type": "Observation"}
+                                        ),
+                                    }
+                                }
+                            ]
+                        },
+                        {"role": "tool", "content": "12345"},
+                    ],
+                },
             ]
             for path, value in (
                 (full / "multi_turn_resource.json", resource),
@@ -116,17 +149,19 @@ class A0PrimeReproducibilityTests(unittest.TestCase):
                 (full / "panel_votes_new.json", []),
                 (
                     full / "_strata.json",
-                    {"ids": ["q1", "q2"], "overflow": ["q1"], "matched": ["q2"]},
+                    {"ids": ["q1", "q2"], "overflow": ["q2"], "matched": ["q1"]},
                 ),
             ):
                 path.write_text(json.dumps(value), encoding="utf-8")
             for panel in (1, 2, 3):
                 (votes / f"p{panel}_b00.json").write_text(
-                    json.dumps({"grades": [{"qid": "q2", "label": 1}]}),
+                    json.dumps({"grades": [{"qid": "q2", "label": 0}]}),
                     encoding="utf-8",
                 )
 
-            artifact = build_a0prime_artifact.build_artifact(root)
+            artifact = build_a0prime_artifact.build_artifact(
+                root, token_counter=len
+            )
 
         self.assertEqual(artifact["schema_version"], "a0prime-score-artifact-v1")
         self.assertEqual(len(artifact["questions"]), 2)
@@ -135,6 +170,21 @@ class A0PrimeReproducibilityTests(unittest.TestCase):
         )
         self.assertEqual(
             artifact["questions"][1]["a0prime_grade_source"], "panel"
+        )
+        self.assertTrue(
+            artifact["questions"][1]["a0prime_cap_drop_language"]
+        )
+        self.assertTrue(
+            artifact["questions"][1]["a0prime_earliest_or_first"]
+        )
+        self.assertTrue(
+            artifact["questions"][1]["a0prime_repeated_resource_type"]
+        )
+        self.assertEqual(
+            artifact["questions"][1][
+                "a0prime_max_tool_content_cl100k_tokens"
+            ],
+            5,
         )
         self.assertNotIn("trace", json.dumps(artifact))
         receipt_files = artifact["source_receipt"]["files"]
@@ -199,7 +249,7 @@ class A0PrimeReproducibilityTests(unittest.TestCase):
         payload = artifact_path.read_bytes()
         self.assertEqual(
             hashlib.sha256(payload).hexdigest(),
-            "39a545d9f5da0d2ec7559f7d699b9dee967c7996fb35bf9f771d71e7b9b35240",
+            "b0bc19c605aea20ada713613ee1f8d1e1bfb1d814f6bba38a4e77637b3ddc242",
         )
         rendered = a0prime_verdict.render_verdict(
             a0prime_verdict.load_artifact(artifact_path)
@@ -214,6 +264,113 @@ class A0PrimeReproducibilityTests(unittest.TestCase):
         self.assertAlmostEqual(a0prime_ci["ci_high"], 0.03164556962025317)
         self.assertAlmostEqual(a5_ci["ci_low"], -0.1111111111111111)
         self.assertAlmostEqual(a5_ci["ci_high"], -0.01408450704225352)
+        decomposition = decompose_a0prime_failures.compute(artifact_path)
+        self.assertEqual(
+            decomposition["counts"],
+            {
+                "cap_drop_language": 82,
+                "correct": 58,
+                "earliest_or_first": 40,
+                "fit_but_wrong": 107,
+                "repeated_resource_overflow": 54,
+                "still_overflow": 97,
+            },
+        )
+        self.assertEqual(
+            decomposition["code_recovery"],
+            {"cap_drop_language": 55, "still_overflow": 64},
+        )
+        self.assertEqual(
+            decomposition["single_tool_block_tokens"],
+            {
+                "encoding": "cl100k_base",
+                "max_tokens": 24815,
+                "over_32000": 0,
+                "question_count": 97,
+            },
+        )
+
+    def test_failure_decomposition_emits_qid_categories_and_summary(self):
+        def row(
+            qid: str,
+            *,
+            correct: int,
+            overflow: bool = False,
+            cap_drop: bool = False,
+            earliest: bool = False,
+            repeated: bool = False,
+            max_tool_tokens: int = 0,
+            a5_correct: int = 0,
+            stratum: str = "overflow",
+        ) -> dict:
+            return {
+                "question_id": qid,
+                "patient_fhir_id": f"Patient/{qid}",
+                "stratum": stratum,
+                "a0_correct": 0,
+                "a5_correct": a5_correct,
+                "a0prime_correct": correct,
+                "a0prime_overflow": overflow,
+                "a0prime_grade_source": "failure" if overflow else "numeric",
+                "a0prime_cap_drop_language": cap_drop,
+                "a0prime_earliest_or_first": earliest,
+                "a0prime_repeated_resource_type": repeated,
+                "a0prime_max_tool_content_cl100k_tokens": max_tool_tokens,
+            }
+
+        artifact = {
+            "schema_version": "a0prime-score-artifact-v1",
+            "source_receipt": {"files": []},
+            "questions": [
+                row("correct", correct=1),
+                row(
+                    "overflow",
+                    correct=0,
+                    overflow=True,
+                    repeated=True,
+                    max_tool_tokens=20,
+                    a5_correct=1,
+                ),
+                row("cap", correct=0, cap_drop=True, earliest=True, a5_correct=1),
+                row("wrong", correct=0),
+                row("matched", correct=1, stratum="matched"),
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "score-artifact.json"
+            path.write_text(
+                json.dumps(artifact, sort_keys=True, separators=(",", ":")) + "\n",
+                encoding="utf-8",
+            )
+
+            result = decompose_a0prime_failures.compute(path)
+            markdown = decompose_a0prime_failures.render_markdown(result)
+
+        self.assertEqual(
+            result["counts"],
+            {
+                "cap_drop_language": 1,
+                "correct": 1,
+                "earliest_or_first": 1,
+                "fit_but_wrong": 2,
+                "repeated_resource_overflow": 1,
+                "still_overflow": 1,
+            },
+        )
+        self.assertEqual(result["code_recovery"]["cap_drop_language"], 1)
+        self.assertEqual(result["code_recovery"]["still_overflow"], 1)
+        self.assertEqual(
+            result["single_tool_block_tokens"],
+            {
+                "encoding": "cl100k_base",
+                "max_tokens": 20,
+                "over_32000": 0,
+                "question_count": 1,
+            },
+        )
+        self.assertEqual(len(result["questions"]), 4)
+        self.assertIn("| correct | 1 |", markdown)
+        self.assertIn("maximum is 20 tokens", markdown)
 
 
 if __name__ == "__main__":

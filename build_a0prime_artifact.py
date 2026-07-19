@@ -8,6 +8,7 @@ import hashlib
 import json
 import re
 from collections import defaultdict
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,11 @@ FAILURE = re.compile(
     r"exceeded your current quota|Expected .* tool call, but got|Traceback",
     re.IGNORECASE,
 )
+CAP_DROP_LANGUAGE = re.compile(
+    r"cannot find|cannot determine|truncat",
+    re.IGNORECASE,
+)
+EARLIEST_OR_FIRST = re.compile(r"\b(?:earliest|first)\b", re.IGNORECASE)
 VOTE_NAME = re.compile(r"p[123]_b[0-9][0-9]\.json")
 
 
@@ -140,7 +146,60 @@ def _numeric_label(answer: str | None, gold: str | None) -> int:
     )
 
 
-def build_artifact(source_root: Path) -> dict[str, Any]:
+def _requested_resource_types(record: dict[str, Any]) -> list[str]:
+    resource_types: list[str] = []
+    for message in record.get("trace") or []:
+        if not isinstance(message, dict):
+            continue
+        for call in message.get("tool_calls") or []:
+            if not isinstance(call, dict):
+                continue
+            function = call.get("function")
+            if (
+                not isinstance(function, dict)
+                or function.get("name") != "get_resources_by_patient_fhir_id"
+            ):
+                continue
+            try:
+                arguments = json.loads(function.get("arguments") or "{}")
+            except (json.JSONDecodeError, TypeError):
+                continue
+            resource_type = arguments.get("resource_type")
+            if isinstance(resource_type, str):
+                resource_types.append(resource_type)
+    return resource_types
+
+
+def _cl100k_token_count(value: str) -> int:
+    try:
+        import tiktoken
+    except ImportError as exc:  # pragma: no cover - exercised by clean environments
+        raise RuntimeError(
+            "building the raw artifact requires tiktoken from requirements.txt"
+        ) from exc
+    return len(tiktoken.get_encoding("cl100k_base").encode(value))
+
+
+def _max_tool_content_tokens(
+    record: dict[str, Any], token_counter: Callable[[str], int]
+) -> int:
+    counts = [
+        token_counter(message["content"])
+        for message in record.get("trace") or []
+        if isinstance(message, dict)
+        and message.get("role") == "tool"
+        and isinstance(message.get("content"), str)
+    ]
+    if any(type(count) is not int or count < 0 for count in counts):
+        raise ValueError("token counter must return a non-negative integer")
+    return max(counts, default=0)
+
+
+def build_artifact(
+    source_root: Path,
+    *,
+    token_counter: Callable[[str], int] = _cl100k_token_count,
+) -> dict[str, Any]:
     root = source_root.resolve(strict=True)
     full = root / "runs" / "full409"
     projected_root = root / "runs" / "a0prime"
@@ -210,13 +269,27 @@ def build_artifact(source_root: Path) -> dict[str, Any]:
                 raise ValueError(f"missing A0-prime panel label for {qid}")
             projected_label = projected_panel[qid]
             grade_source = "panel"
+        requested_resource_types = _requested_resource_types(projected_record)
         questions.append(
             {
                 "a0_correct": original_label("resource"),
+                "a0prime_cap_drop_language": bool(
+                    CAP_DROP_LANGUAGE.search(
+                        projected_record.get("agent_answer") or ""
+                    )
+                ),
                 "a0prime_correct": projected_label,
+                "a0prime_earliest_or_first": bool(
+                    EARLIEST_OR_FIRST.search(projected_record.get("question") or "")
+                ),
                 "a0prime_grade_source": grade_source,
+                "a0prime_max_tool_content_cl100k_tokens": (
+                    _max_tool_content_tokens(projected_record, token_counter)
+                ),
                 "a0prime_overflow": "Input tokens exceeded"
                 in (projected_record.get("agent_answer") or ""),
+                "a0prime_repeated_resource_type": len(requested_resource_types)
+                != len(set(requested_resource_types)),
                 "a5_correct": original_label("code"),
                 "patient_fhir_id": next(iter(patient_ids)),
                 "question_id": qid,
