@@ -1,7 +1,7 @@
 # Trustworthy re-grade — why the headline numbers changed (three times), and the grading that fixed them
 
-*This is the audit trail for the final, defensible numbers in [FINDINGS.md](FINDINGS.md) and
-[CODE_EXPERIMENT.md](CODE_EXPERIMENT.md). It documents two real defects we caught in our own evaluation —
+*This is the canonical grading audit for the final, defensible numbers owned by
+[FINAL_REPORT.md](FINAL_REPORT.md). It documents two real defects we caught in our own evaluation —
 a harness bug and an unreliable LLM judge — plus a grading bug we caught in our **own fix**, and the
 deterministic + multi-judge-panel grading we ended on. Read this before citing any accuracy number.*
 
@@ -18,17 +18,9 @@ The number moved three times under adversarial review; each move corrected a rea
 | 3a | deterministic-numeric + Claude panel | "+1.4pp, null" | better, but the deterministic layer **mis-graded 115 boolean Yes/No golds as numeric** |
 | 3b | **deterministic(clean numerics+failures) + Claude panel, boolean fixed** | **−3.6pp, not significant (p=0.18)** | the trustworthy answer |
 
-The final, trustworthy, judge-family-independent result:
-
-| stratum | n | resource | code | Δ (95% CI) | McNemar |
-|---|---|---|---|---|---|
-| **matched budget** (both arms answered) | 140 | 71.4% | 67.9% | **−3.6pp** (−7.7…+0.6) | p=0.18 → not significant |
-| **resource-real** (predefined by resource success) | 147 | 70.7% | 64.6% | **−6.1pp** (−10.8…−1.4) | p=0.022 → significant† |
-| **large records** (resource overflows 32k) | 262 | 0% | 65.6% | — | by construction |
-| pooled (mixes the strata) | 409 | 25.4% | 65.3% | +39.9pp (+34.6…+45.1) | p≈0 |
-
-† fragile: Holm correction over the 3 predefined pairs and leave-one-patient-out both push p past 0.05
-(see [The strata, and their honest limits](#the-strata-and-their-honest-limits)).
+The final, trustworthy, judge-family-independent estimates and paired result
+table are maintained once in [FINAL_REPORT.md](FINAL_REPORT.md). This document
+owns how those labels were constructed and audited.
 
 **The +11pp was never a reasoning/compute win.** On questions the no-code agent can answer, the code
 interpreter gives no significant benefit and a slightly *negative* point estimate. Its entire positive value

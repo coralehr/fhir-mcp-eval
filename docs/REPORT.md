@@ -1,4 +1,4 @@
-# FHIR Tool-Ablation Eval — Final Honest Synthesis
+# FHIR tool-ablation deep dive — generic versus typed retrieval
 
 **Does a clinical agent with a catalog of purpose-built FHIR tools beat Medplum's single generic `fhir_request` tool, on FHIR-AgentBench?**
 
