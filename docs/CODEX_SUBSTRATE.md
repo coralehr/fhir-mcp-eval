@@ -8,7 +8,7 @@ The runner is `codex_harness.py`. It shells out to `codex exec`, writes the exac
 
 Every run writes:
 
-- `manifest.json` with Codex CLI version, Python/platform version, git commit, dirty flag, run config, and SHA-256 hashes for input/schema/packet/skill files.
+- `manifest.json` with Codex CLI version, Python/platform version, sealed source provenance, run config, and SHA-256 hashes for input/schema/packet/skill files.
 - `summary.json` with question IDs, prompt hashes, status, return code, answer paths, and event-log paths.
 - `questions/<qid>/prompt.txt` with the exact prompt sent to Codex.
 - `questions/<qid>/command.json` with the exact `codex exec` argv.
@@ -16,6 +16,38 @@ Every run writes:
 - `questions/<qid>/answer.json` with the schema-constrained final answer.
 
 Generated runs live under `runs/`, which is gitignored.
+
+## Rsynced source provenance
+
+A live run from a source tree without `.git` fails before the first Codex call
+unless it receives an explicit provenance receipt. Build the receipt on the
+source checkout before rsync:
+
+```bash
+python3 source_provenance.py \
+  --repo . \
+  --out /tmp/fhir-mcp-eval-source-provenance.json
+```
+
+The receipt binds the source commit, dirty state, and a deterministic SHA-256
+manifest of every tracked or unignored source entry. Copy that canonical file
+with the source tree, then pass it to either answer harness:
+
+```bash
+python3 codex_harness.py \
+  --mode packet \
+  --input final_dataset/full_test409.csv \
+  --packet-json runs/a6_query_aware_packets.jsonl \
+  --out-dir runs/codex-a6-packet-pilot \
+  --limit 20 \
+  --source-provenance /path/to/fhir-mcp-eval-source-provenance.json \
+  --live
+```
+
+`a11_answer_harness.py` accepts the same flag. Receipts with missing, extra,
+malformed, or noncanonical fields are rejected. Dry runs may still operate
+without provenance for prompt-only development, but they record the source as
+unknown rather than authorizing a live call.
 
 ## Dry-run smoke
 

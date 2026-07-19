@@ -1,4 +1,5 @@
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -598,6 +599,228 @@ class CodexHarnessTests(unittest.TestCase):
                     git_commit="abc123",
                     git_dirty=True,
                 )
+
+    def test_rsynced_dry_run_records_explicit_source_provenance(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            input_path = root / "input.csv"
+            input_path.write_text(
+                "question_id,question,patient_fhir_id\nq1,What was measured?,Patient/p1\n",
+                encoding="utf-8",
+            )
+            packet_path = root / "packets.jsonl"
+            packet_path.write_text(
+                json.dumps(
+                    {
+                        "question_id": "q1",
+                        "packet": {
+                            "resources": [
+                                {"resourceType": "Observation", "id": "o1"}
+                            ]
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            schema_path = root / "schema.json"
+            schema_path.write_text('{"type":"object"}\n', encoding="utf-8")
+            provenance_path = root / "source-provenance.json"
+            provenance = {
+                "schema_version": "codex-source-provenance-v1",
+                "source_commit": "a" * 40,
+                "source_dirty": False,
+                "source_manifest_sha256": "b" * 64,
+            }
+            provenance_path.write_text(
+                json.dumps(provenance, sort_keys=True, separators=(",", ":")) + "\n",
+                encoding="utf-8",
+            )
+            out_dir = root / "run"
+            argv = [
+                "codex_harness.py",
+                "--mode",
+                "packet",
+                "--input",
+                str(input_path),
+                "--packet-json",
+                str(packet_path),
+                "--schema",
+                str(schema_path),
+                "--out-dir",
+                str(out_dir),
+                "--question-id",
+                "q1",
+                "--dry-run",
+                "--allow-public-artifact",
+                "--source-provenance",
+                str(provenance_path),
+            ]
+            with (
+                mock.patch.object(sys, "argv", argv),
+                mock.patch.object(codex_harness, "run_version", return_value="codex test"),
+                mock.patch.object(
+                    codex_harness,
+                    "git_commit_and_dirty",
+                    return_value=("unknown", True),
+                ),
+            ):
+                result = codex_harness.main()
+
+            self.assertEqual(result, 0)
+            manifest = json.loads(
+                (out_dir / "manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                manifest["git"],
+                {
+                    "commit": "a" * 40,
+                    "dirty": False,
+                    "provenance": "explicit_receipt",
+                    "source_manifest_sha256": "b" * 64,
+                },
+            )
+
+    def test_rsynced_live_run_without_provenance_fails_before_answer_call(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            input_path = root / "input.csv"
+            input_path.write_text(
+                "question_id,question,patient_fhir_id\nq1,What was measured?,Patient/p1\n",
+                encoding="utf-8",
+            )
+            packet_path = root / "packets.jsonl"
+            packet_path.write_text(
+                json.dumps(
+                    {
+                        "question_id": "q1",
+                        "packet": {
+                            "resources": [
+                                {"resourceType": "Observation", "id": "o1"}
+                            ]
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            schema_path = root / "schema.json"
+            schema_path.write_text('{"type":"object"}\n', encoding="utf-8")
+            argv = [
+                "codex_harness.py",
+                "--mode",
+                "packet",
+                "--input",
+                str(input_path),
+                "--packet-json",
+                str(packet_path),
+                "--schema",
+                str(schema_path),
+                "--out-dir",
+                str(root / "run"),
+                "--question-id",
+                "q1",
+                "--live",
+                "--allow-public-artifact",
+            ]
+            with (
+                mock.patch.object(sys, "argv", argv),
+                mock.patch.object(
+                    codex_harness,
+                    "git_commit_and_dirty",
+                    return_value=("unknown", True),
+                ),
+                mock.patch.object(codex_harness, "run_question") as run_question,
+            ):
+                with self.assertRaisesRegex(
+                    SystemExit, "live runs require sealed source provenance"
+                ):
+                    codex_harness.main()
+
+            run_question.assert_not_called()
+
+    def test_explicit_source_provenance_receipt_must_be_canonical(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            receipt_path = Path(tmp) / "source-provenance.json"
+            receipt_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "codex-source-provenance-v1",
+                        "source_commit": "a" * 40,
+                        "source_dirty": False,
+                        "source_manifest_sha256": "b" * 64,
+                    },
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                ValueError, "source provenance receipt is noncanonical"
+            ):
+                codex_harness.resolve_source_provenance(Path(tmp), receipt_path)
+
+    def test_explicit_source_provenance_receipt_rejects_invalid_fields(self):
+        valid = {
+            "schema_version": "codex-source-provenance-v1",
+            "source_commit": "a" * 40,
+            "source_dirty": False,
+            "source_manifest_sha256": "b" * 64,
+        }
+        invalid_receipts = (
+            {**valid, "schema_version": "other"},
+            {**valid, "source_commit": "a" * 39},
+            {**valid, "source_dirty": "false"},
+            {**valid, "source_manifest_sha256": "b" * 63},
+            {**valid, "extra": "unsealed"},
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            receipt_path = Path(tmp) / "source-provenance.json"
+            for receipt in invalid_receipts:
+                with self.subTest(receipt=receipt):
+                    receipt_path.write_text(
+                        json.dumps(receipt, sort_keys=True, separators=(",", ":"))
+                        + "\n",
+                        encoding="utf-8",
+                    )
+                    with self.assertRaisesRegex(
+                        ValueError, "source provenance receipt is invalid"
+                    ):
+                        codex_harness.resolve_source_provenance(
+                            Path(tmp), receipt_path
+                        )
+
+    def test_missing_git_checkout_does_not_emit_expected_probe_stderr(self):
+        script = (
+            "import json,tempfile; from pathlib import Path; "
+            "import codex_harness; "
+            "root=tempfile.TemporaryDirectory(); "
+            "print(json.dumps(codex_harness.git_commit_and_dirty(Path(root.name))))"
+        )
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=Path(codex_harness.__file__).parent,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(completed.returncode, 0)
+        self.assertEqual(json.loads(completed.stdout), ["unknown", True])
+        self.assertEqual(completed.stderr, "")
+
+    def test_git_checkout_preserves_existing_manifest_identity_shape(self):
+        with mock.patch.object(
+            codex_harness,
+            "git_commit_and_dirty",
+            return_value=("a" * 40, False),
+        ):
+            provenance = codex_harness.resolve_source_provenance(
+                Path("."), None, require_provenance=True
+            )
+
+        self.assertEqual(provenance, {"commit": "a" * 40, "dirty": False})
 
     def test_live_success_requires_clean_ok_answer_not_file_existence(self):
         with tempfile.TemporaryDirectory() as tmp:

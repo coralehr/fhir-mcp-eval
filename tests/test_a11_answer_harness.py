@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import a11_answer_harness as harness
 import a11b_answer_contract
@@ -259,6 +260,56 @@ class A11AnswerHarnessTests(unittest.TestCase):
                 summary["questions"][0]["prompt_sha256"],
                 _sha(question_dir.joinpath("prompt.txt").read_bytes()),
             )
+
+    def test_rsynced_live_run_requires_source_provenance(self):
+        row = _input_row()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_path = root / "questions.csv"
+            with input_path.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(handle, fieldnames=list(row))
+                writer.writeheader()
+                writer.writerow(row)
+            packet_path = root / "payloads.jsonl"
+            packet_path.write_text(
+                json.dumps(_record('{"resources":[]}', row=row)) + "\n",
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.object(
+                    harness.codex_harness,
+                    "git_commit_and_dirty",
+                    return_value=("unknown", True),
+                ),
+                mock.patch.object(
+                    harness.codex_harness, "run_question"
+                ) as run_question,
+            ):
+                with self.assertRaisesRegex(
+                    SystemExit, "live runs require sealed source provenance"
+                ):
+                    harness.main(
+                        [
+                            "--mode",
+                            "packet",
+                            "--input",
+                            str(input_path),
+                            "--packet-json",
+                            str(packet_path),
+                            "--out-dir",
+                            str(root / "out"),
+                            "--schema",
+                            str(
+                                Path(harness.__file__).with_name("schemas")
+                                / "codex_answer.schema.json"
+                            ),
+                            "--question-id",
+                            row["question_id"],
+                            "--live",
+                        ]
+                    )
+
+            run_question.assert_not_called()
 
 
 if __name__ == "__main__":
