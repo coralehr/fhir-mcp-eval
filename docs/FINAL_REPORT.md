@@ -131,15 +131,19 @@ was isolated from its prompt/routing; that panel labels are human ground truth; 
 
 ## Reproducibility
 
-The repo commits the final reports and frozen summaries (`medplum-eval/full409_summary.json`,
-`medplum-eval/full409_answers.json`); the A0′ panel votes and `_strata.json` are generated locally under
-gitignored `runs/` and are **not** committed in this repo. Exact answer-level
-recomputation of the A0/A5/A0′ table still requires the local raw answer dumps
-(`runs/full409/multi_turn_{resource,code_resource}.json` and
-`runs/a0prime/multi_turn_projected_resource.json`), which are large and gitignored. `a0prime_verdict.py`
-recomputes the table when those dumps are present, but a fresh checkout currently verifies the committed
-summaries rather than regenerating them from raw answers. Agent reruns need the Medplum substrate
-(`medplum-eval-bundle/`) + a funded key.
+The committed [A0/A0′/A5 reproducibility package](../artifacts/a0prime-v1/README.md)
+contains the 409 minimized answer-level scoring records and source checksums.
+From a fresh checkout, `python3 a0prime_verdict.py` regenerates the complete
+three-arm table without raw answers, model keys, or network access.
+`python3 a0prime_cluster_stats.py` regenerates the patient-cluster intervals
+reported above; its committed output records the 100,000-replicate seed and
+exact statistics. The score artifact is SHA-256
+`39a545d9f5da0d2ec7559f7d699b9dee967c7996fb35bf9f771d71e7b9b35240`;
+the package embeds individual SHA-256 receipts for all external raw dumps and
+grading inputs. Rebuilding that minimized artifact from the gitignored 295 MB
+source runs is documented in the package README. Agent reruns still require the
+Medplum substrate (`medplum-eval-bundle/`) and a funded model account; result
+recomputation does not.
 
 ## Contributions
 

@@ -398,7 +398,7 @@ Two zero-model-token artifacts that double as benchmark design inputs and standa
 - Published map + audit with per-claim citations and probe scripts committed.
 - The A12 strict/lenient probe results per server (deterministic, re-runnable).
 
-## 13. Publish a reproducibility artifact package
+## 13. Publish a reproducibility artifact package — **DONE 2026-07-18**
 
 **Question:** How can a fresh checkout recompute the final table without committing giant raw dumps?
 
@@ -410,6 +410,12 @@ Two zero-model-token artifacts that double as benchmark design inputs and standa
 **Acceptance:**
 - `python a0prime_verdict.py` runs from a clean checkout after fetching the artifact package.
 - `FINAL_REPORT.md` links to artifact checksums and commands.
+
+**Result:** the committed [A0/A0′/A5 reproducibility
+package](../artifacts/a0prime-v1/README.md) reduces the 295 MB historical raw
+answer inputs to a 98 KB scoring artifact, preserves per-source SHA-256
+receipts, and reproduces the 409-question table plus deterministic
+patient-cluster intervals without a model call or local `runs/` directory.
 
 ## 14. Rerun A0, A0', and A5 on one substrate
 

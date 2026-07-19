@@ -1,127 +1,131 @@
 #!/usr/bin/env python3
-"""Three-way verdict: A0 (raw FHIR) vs A0' (projection-only) vs A5 (code interpreter), on the overflow /
-matched-answerable / pooled strata. Answers the decisive question: does projection-alone recover the code
-arm's lift on the overflow stratum?
+"""Recompute the A0/A0-prime/A5 table from the minimized score artifact."""
 
-A0' is graded with the SAME trustworthy method: deterministic for numeric golds + failures; the non-numeric
-(boolean/categorical) real answers are graded by the codex panel written to runs/a0prime/codex_votes/ (run
-codex_panel on the a0prime batches first). Where a non-numeric A0' answer has no panel label yet, it is left
-out of the trustworthy number and counted in `a0prime_ungraded`.
-"""
-import json, re, glob, os
-from collections import defaultdict
+from __future__ import annotations
 
-R = "runs/full409"
-A0P_FILE = "runs/a0prime/multi_turn_projected_resource.json"  # copied from the run host (raw dumps are gitignored)
+import argparse
+import json
+from pathlib import Path
+from typing import Any, Callable
 
-def load_json(path):
-    if not os.path.exists(path):
-        raise SystemExit(
-            f"missing required artifact: {path}\n"
-            "This script recomputes from raw answer dumps, which are large and gitignored. "
-            "Restore the raw runs/full409 and runs/a0prime answer files before running."
-        )
-    with open(path) as f:
-        return json.load(f)
 
-res = {r["question_id"]: r for r in load_json(f"{R}/multi_turn_resource.json")}
-cod = {r["question_id"]: r for r in load_json(f"{R}/multi_turn_code_resource.json")}
-a0p = {r["question_id"]: r for r in load_json(A0P_FILE)}
-det = load_json(f"{R}/det_labels.json")
+SCHEMA_VERSION = "a0prime-score-artifact-v1"
+DEFAULT_ARTIFACT = (
+    Path(__file__).resolve().parent
+    / "artifacts"
+    / "a0prime-v1"
+    / "score-artifact.json"
+)
 
-# --- panel labels (Claude) for resource/code ---
-pvotes = defaultdict(list)
-for pf in (f"{R}/panel_votes.json", f"{R}/panel_votes_new.json"):
-    for b in json.load(open(pf)):
-        for j in b["votes"]:
-            for row in j:
-                for arm in ("resource", "code"):
-                    if row.get(arm) in (0, 1):
-                        pvotes[f'{arm}|{row["qid"]}'].append(row[arm])
-def pmaj(k):
-    v = pvotes.get(k, [])
-    return None if not v else (1 if sum(v) * 2 > len(v) else (0 if sum(v) * 2 < len(v) else None))
-def L(arm, q):
-    k = f"{arm}|{q}"
-    if k in det:
-        return det[k]
-    lab = pmaj(k)
-    if lab is None:
-        raise SystemExit(f"missing or tied panel label for {k}")
-    return lab
 
-# --- grade A0' (deterministic numeric/failures + its own codex panel for non-numeric) ---
-NUM = re.compile(r"-?\d+\.?\d*")
-FAIL = re.compile(r"Input tokens exceeded|Max retries|RateLimitError|exceeded your current quota|Expected .* tool call, but got|Traceback", re.I)
-def gold_type(g):
-    g = (g or "").strip()
-    if g in ("[[1]]", "[[0]]"): return "boolean"
-    if "'" in g or '"' in g: return "categorical"
-    inner = re.sub(r"[\[\]]", " ", g); toks = [t for t in re.split(r"[\s,]+", inner) if t]
-    return "numeric" if toks and all(re.fullmatch(r"-?\d+\.?\d*", t) for t in toks) else "other"
-def is_fail(rec):
-    a = rec.get("agent_answer") or ""
-    return (not a.strip()) or bool(FAIL.search(a))
-def numeric_ok(ans, gold):
-    gs = [float(x) for x in NUM.findall(gold or "")]; as_ = [float(x) for x in NUM.findall(ans or "")]
-    if not gs or not as_: return 0
-    return int(all(any(abs(a - g) <= max(0.05, 0.01 * abs(g)) for a in as_) for g in gs))
-
-# A0' codex panel: runs/a0prime/codex_votes/*.json -> majority.
-# Fail closed: stale, malformed, missing, or extra votes invalidate the run.
-a0p_panel = defaultdict(list)
-vote_files = sorted(glob.glob("runs/a0prime/codex_votes/p[123]_b[0-9][0-9].json"))
-extra_vote_files = sorted(set(glob.glob("runs/a0prime/codex_votes/*.json")) - set(vote_files))
-if extra_vote_files:
-    raise SystemExit(f"unexpected vote files: {extra_vote_files[:3]}")
-if not vote_files:
-    raise SystemExit("missing A0' codex vote files under runs/a0prime/codex_votes/")
-for f in vote_files:
-    data = load_json(f)
-    grades = data.get("grades")
-    if not isinstance(grades, list):
-        raise SystemExit(f"{f}: missing grades array")
-    seen = set()
-    for row in grades:
-        qid, label = row.get("qid"), row.get("label")
-        if not isinstance(qid, str) or label not in (0, 1):
-            raise SystemExit(f"{f}: malformed grade row {row!r}")
-        if qid in seen:
-            raise SystemExit(f"{f}: duplicate qid {qid}")
+def load_artifact(path: Path) -> dict[str, Any]:
+    artifact = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(artifact, dict):
+        raise ValueError("score artifact must be a JSON object")
+    if artifact.get("schema_version") != SCHEMA_VERSION:
+        raise ValueError("unsupported score artifact schema")
+    if not isinstance(artifact.get("source_receipt"), dict):
+        raise ValueError("score artifact is missing its source receipt")
+    questions = artifact.get("questions")
+    if not isinstance(questions, list) or not questions:
+        raise ValueError("score artifact questions must be a non-empty array")
+    seen: set[str] = set()
+    for index, row in enumerate(questions):
+        if not isinstance(row, dict):
+            raise ValueError(f"question {index} is not an object")
+        qid = row.get("question_id")
+        if not isinstance(qid, str) or not qid or qid in seen:
+            raise ValueError(f"question {index} has an invalid or duplicate ID")
         seen.add(qid)
-        a0p_panel[qid].append(label)
-def a0p_panel_label(q):
-    v = a0p_panel.get(q, [])
-    if len(v) != 3:
-        return None
-    return 1 if sum(v) * 2 > len(v) else 0
+        if row.get("stratum") not in {"overflow", "matched"}:
+            raise ValueError(f"question {qid} has an invalid stratum")
+        if not isinstance(row.get("patient_fhir_id"), str):
+            raise ValueError(f"question {qid} has no patient ID")
+        for field in ("a0_correct", "a5_correct", "a0prime_correct"):
+            if row.get(field) not in (0, 1) or type(row[field]) is not int:
+                raise ValueError(f"question {qid} has an invalid {field}")
+        if type(row.get("a0prime_overflow")) is not bool:
+            raise ValueError(f"question {qid} has an invalid overflow flag")
+        if row.get("a0prime_grade_source") not in {
+            "failure",
+            "numeric",
+            "panel",
+        }:
+            raise ValueError(f"question {qid} has an invalid grade source")
+    return artifact
 
-ungraded = set()
-def La0p(q):
-    rec = a0p.get(q)
-    if rec is None: return None
-    if is_fail(rec): return 0
-    gt = gold_type(rec.get("true_answer"))
-    if gt == "numeric": return numeric_ok(rec.get("agent_answer"), rec.get("true_answer"))
-    lab = a0p_panel_label(q)
-    if lab is None: ungraded.add(q); return None
-    return lab
 
-strata = json.load(open(f"{R}/_strata.json"))
-def acc(fn, qs):
-    vals = [fn(q) for q in qs]; vals = [v for v in vals if v is not None]
-    return (sum(vals) / len(vals), len(vals)) if vals else (0, 0)
+def _accuracy(
+    rows: list[dict[str, Any]], field: str, predicate: Callable[[dict[str, Any]], bool]
+) -> tuple[float, int]:
+    labels = [int(row[field]) for row in rows if predicate(row)]
+    return sum(labels) / len(labels), len(labels)
 
-print(f"{'arm':<14}{'overflow(262)':>16}{'matched(147)':>16}{'pooled(409)':>16}")
-for name, fn in [("A0 raw", lambda q: L("resource", q)), ("A5 code", lambda q: L("code", q)),
-                 ("A0' projected", La0p)]:
-    o, on = acc(fn, strata["overflow"]); m, mn = acc(fn, strata["matched"]); p, pn = acc(fn, strata["ids"])
-    print(f"{name:<14}{o:>13.1%}({on}){m:>13.1%}({mn}){p:>13.1%}({pn})")
 
-# A0' overflow behavior
-ov = sum(1 for q in strata["overflow"] if a0p.get(q) and "Input tokens exceeded" in (a0p[q].get("agent_answer") or ""))
-print(f"\nA0' still overflows on {ov}/{len(strata['overflow'])} of the overflow stratum")
-print(f"A0' non-numeric answers awaiting panel label: {len(ungraded)}")
-o_a0p = acc(La0p, strata["overflow"])[0]; o_a5 = acc(lambda q: L('code', q), strata["overflow"])[0]
-print(f"\n>>> VERDICT: overflow-stratum recovery = A0' {o_a0p:.1%} vs code {o_a5:.1%} vs raw 0%")
-print("   projection-alone recovers " + (f"{o_a0p/o_a5:.0%}" if o_a5 else "n/a") + " of the code arm's overflow-stratum accuracy")
+def render_verdict(artifact: dict[str, Any]) -> str:
+    rows = artifact["questions"]
+
+    def overflow(row: dict[str, Any]) -> bool:
+        return row["stratum"] == "overflow"
+
+    def matched(row: dict[str, Any]) -> bool:
+        return row["stratum"] == "matched"
+
+    def pooled(_row: dict[str, Any]) -> bool:
+        return True
+
+    overflow_count = sum(1 for row in rows if overflow(row))
+    matched_count = sum(1 for row in rows if matched(row))
+    lines = [
+        f"{'arm':<14}{f'overflow({overflow_count})':>16}"
+        f"{f'matched({matched_count})':>16}{f'pooled({len(rows)})':>16}"
+    ]
+    for name, field in (
+        ("A0 raw", "a0_correct"),
+        ("A5 code", "a5_correct"),
+        ("A0' projected", "a0prime_correct"),
+    ):
+        o, on = _accuracy(rows, field, overflow)
+        m, mn = _accuracy(rows, field, matched)
+        p, pn = _accuracy(rows, field, pooled)
+        lines.append(
+            f"{name:<14}{o:>13.1%}({on}){m:>13.1%}({mn}){p:>13.1%}({pn})"
+        )
+    remaining_overflow = sum(
+        1
+        for row in rows
+        if overflow(row) and bool(row["a0prime_overflow"])
+    )
+    o_a0prime = _accuracy(rows, "a0prime_correct", overflow)[0]
+    o_a5 = _accuracy(rows, "a5_correct", overflow)[0]
+    recovery = f"{o_a0prime / o_a5:.0%}" if o_a5 else "n/a"
+    lines.extend(
+        [
+            "",
+            f"A0' still overflows on {remaining_overflow}/{overflow_count} "
+            "of the overflow stratum",
+            "A0' non-numeric answers awaiting panel label: 0",
+            "",
+            f">>> VERDICT: overflow-stratum recovery = A0' {o_a0prime:.1%} "
+            f"vs code {o_a5:.1%} vs raw 0%",
+            f"   projection-alone recovers {recovery} of the code arm's "
+            "overflow-stratum accuracy",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--artifact", type=Path, default=DEFAULT_ARTIFACT)
+    args = parser.parse_args(argv)
+    try:
+        artifact = load_artifact(args.artifact)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        parser.error(str(exc))
+    print(render_verdict(artifact))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
