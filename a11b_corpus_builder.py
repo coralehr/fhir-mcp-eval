@@ -11,7 +11,6 @@ import hmac
 import io
 import json
 import os
-import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -608,6 +607,9 @@ def build_case(
         "answerable": answerable,
         "failure_mode": None if answerable else difficulty,
         "reference_answer": facts[selected_index] if answerable else None,
+        "selected_terminal_resource_ref": (
+            citations[selected_index]["target"] if answerable else None
+        ),
         "selected_root_ref": (
             resource_ref(roots[selected_index])
             if answerable or difficulty == "selected_path_incomplete"
@@ -782,6 +784,8 @@ def _assert_public_blind(files: dict[str, bytes]) -> None:
         b'"gold"',
         b'"reference_answer"',
         b'"selected_root_ref"',
+        b'"selected_path_refs"',
+        b'"selected_terminal_resource_ref"',
         b'"patient_id"',
     }
     for name, payload in files.items():

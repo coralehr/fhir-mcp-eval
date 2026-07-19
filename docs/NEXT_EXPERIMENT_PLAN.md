@@ -77,6 +77,12 @@ are in
 The component checklist below is retained as implementation history; it does
 not authorize a model call.
 
+The zero-model candidate for isolating the bundled T1/E1 features and scoring
+terminal/path grounding is documented in
+[A11B_COMPONENT_SCREEN_CANDIDATE.md](A11B_COMPONENT_SCREEN_CANDIDATE.md). It is
+fixture and grader infrastructure only; issue #72 remains the authority for a
+future reviewed preregistration and efficacy design.
+
 ## P0: harden the protocol before another answer run
 
 Implementation status as of 2026-07-15:

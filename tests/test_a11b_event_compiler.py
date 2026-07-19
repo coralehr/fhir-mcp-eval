@@ -332,6 +332,21 @@ class A11bEventCompilerTests(unittest.TestCase):
                 plan,
                 max_packet_bytes=MAX_PACKET_BYTES,
             )
+        for key in (
+            "selected_terminal_resource_ref",
+            "selected_path_refs",
+        ):
+            gold_path_leak = copy.deepcopy(source)
+            gold_path_leak["resources"][0][key] = ["Observation/LEAK"]
+            with self.subTest(key=key), self.assertRaisesRegex(
+                ValueError, "forbidden compiler input"
+            ):
+                compile_arms(
+                    gold_path_leak,
+                    _question(case),
+                    plan,
+                    max_packet_bytes=MAX_PACKET_BYTES,
+                )
         for namespace in ("audit", "checker", "expected", "gold", "governed", "true"):
             namespace_leak = copy.deepcopy(source)
             namespace_leak["resources"][0][namespace] = {"secret": "LEAK"}
