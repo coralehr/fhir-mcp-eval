@@ -437,9 +437,13 @@ patient-cluster intervals without a model call or local `runs/` directory.
 **Scope:**
 - Rejudge the A0' non-numeric real answers with an independent model family or human review.
 - Compare agreement against the existing codex panel.
+- Publish a minimized grading-audit artifact containing per-qid vote counts,
+  disagreement markers, judge family and model identifiers, and a prompt
+  receipt, with no model answers or traces.
 
 **Acceptance:**
 - Add an A0' judge-family agreement table.
+- Bind the minimized audit artifact to its source inputs with SHA-256 receipts.
 - Update the A0' conservative-lower-bound caveat.
 
 ## 16. Judge re-measurement (before re-asserting the judge-reliability headline)
