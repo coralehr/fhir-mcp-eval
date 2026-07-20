@@ -193,11 +193,9 @@ backlog remains in [ROADMAP.md](docs/ROADMAP.md):
   semantics, and latency. Do not select a native graph store from accuracy data.
 - In parallel, prioritize error fidelity (A12), then principal-varying
   authorization (A14); neither needs to wait for another A11b answer run.
-- Publish a minimized reproducibility artifact package with checksums.
 - Rerun A0, A0', and A5 on one substrate.
 - Add cross-family or human adjudication for A0' non-numeric labels.
 - Run a projection cap sweep.
-- Add a tracked failure-decomposition script.
 
 ### External pre-answer anchor for A11 v3
 
