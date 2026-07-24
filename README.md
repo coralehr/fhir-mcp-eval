@@ -101,102 +101,33 @@
 
 ## TL;DR
 
-**What actually makes an LLM agent more accurate on FHIR clinical QA?** We swept the levers an engineer
-would reach for, each a **paired** comparison with exact stats. **Every "win" decomposed to one thing: the
-context budget.** Tool catalog, payload coaching, and thinking time are nulls; the code interpreter's
-apparent win is a context-overflow artifact (a null at matched budget), not a reasoning gain.
+**What actually makes an LLM agent more accurate on FHIR clinical QA?** Across
+this program, the consistent lever is getting a bounded, question-relevant slice
+of clinical data into context. More tools, payload coaching, and more reasoning
+effort did not produce a reliable benefit. The code route's pooled advantage was
+an overflow-avoidance effect, not evidence that Python improved reasoning.
 
-- **Bigger / purpose-built tool catalog → NULL.** No detectable advantage over one generic `fhir-request`
-  on either **Opus 4.8** or **GPT-5.5** (Opus structure-lift p=0.69; GPT-5.5 curve flat, 1 tool never
-  significantly beaten; underpowered for small effects — MDE ~34–46pp at n=25–30/cell). The early **+11pp**
-  (≈39%→50%) was a **context-budget confound**, not a tool win — and it
-  replicates the parent paper's own ablation.
-- **Payload shaping → cost-only** (Δ0.00). **Reasoning effort medium→high → NULL** (0/30 judged-correctness flips;
-  95% upper bound ≈12% flip rate).
-- **Code interpreter → overflow-avoidance, not a reasoning win.** Under **trustworthy grading**
-  (deterministic numeric + a 3-Claude-judge panel, cross-checked by an independent codex/GPT panel and
-  validated against non-LLM ground truth), the code arm shows **no significant benefit where the no-code
-  agent can answer** — matched budget (n=140, both arms produced a real answer): **71.4% vs 67.9%, −3.6pp, 95% CI
-  −7.7…+0.6, McNemar p=0.18 → not significant** (slight negative point estimate; this matched-budget set is a
-  different, success-conditioned stratum from the resource-real n=147 stratum in the table below). Its large pooled lift
-  (**+39.9pp**) is **entirely** the 262/409 (64%) questions where the no-code agent **overflows the 32k cap**
-  and the code agent sidesteps it via a sandbox. **The bottleneck is *getting bounded data into context* —
-  not tool design, payload, thinking time, or compute.** A code path helps only because sandboxing the
-  payload dodges the overflow; payload projection plausibly pulls the same lever.
-- **⚠️ A single small LLM judge is unreliable here — and we quantified it.** Against **non-LLM ground truth**
-  on the 111 numeric arm-answers (97 numeric-gold questions), the small judge we ran with the benchmark's judge
-  prompt (gpt-5-mini; the benchmark's shipped default is o4-mini, which we did not measure) is **61% accurate**
-  (43 false-negatives, a one-directional
-  precision-punishing bias), while 3-vote panels score **98–99%** (Claude 98.2%, codex/GPT 99.1%). Measurement
-  caveat: our gpt-5-mini invocation omitted the question text while the panels received the question plus a
-  numeric-tolerance instruction and judged both arms side-by-side, so 61% measures *our configuration* of a
-  single small judge, and a fair re-measurement could move it. That bias
-  manufactured an earlier spurious "code HURTS −8.6pp." Always audit your LLM judge against ground truth and
-  use a panel. See [TRUSTWORTHY_REGRADE.md](docs/TRUSTWORTHY_REGRADE.md).
-- **Contributions:** (1) the *correct decomposition* — the code "win" is a context-overflow artifact, not a
-  compute gain; the same confound faked the tool-catalog "win"; (2) a **judge-reliability finding** — the
-  small judge we ran with the benchmark's judge prompt (gpt-5-mini) is 61% accurate vs ground truth; a
-  multi-vote panel (two model families, 97% mutual
-  agreement) mitigates it; (3) the grading methodology that also caught a boolean Yes/No grading bug in our own
-  first fix; (4) the cap-factorial + paired-stats harness that caught the confound twice.
-- **QT-4 confirmatory result: terminology binding earned promotion; generic traversal did not.** Fixed
-  question-only microbiology vocabulary moved the registered untouched-holdout stratum from 10/44 to
-  25/44 while reducing accepted answer tokens 13.9% across all 374 questions. Bounded traversal reached
-  29/44 and recovered substantially more mapped gold evidence, but its incremental correctness contrast
-  did not pass the registered significance and interval gates. The failure audit points next to typed
-  event grouping, temporal rank, and deterministic answerability—not simply deeper traversal.
-- **A11 result: traversal passed its path-required mechanism test; event groups
-  did not earn an incremental accuracy claim.** V/T/E scored 24/120, 119/120,
-  and 120/120. E minus T was +0.833 points with 95% CI [0, +2.564], so E was not
-  promoted. T minus V was +100 points on the 96 answerable cases, where V had
-  zero terminal-evidence recall and T/E had complete recall. The only T error
-  substituted a later complete event for an earlier incomplete one. E prevented
-  it, but E bundled event grouping, temporal rank, and an answerability receipt,
-  so the causal feature is unresolved.
-- **A11b r3 exploratory result: the strict labels tie, but T1 changed raw
-  insufficiency behavior.** The normalizer erased 219 structured reasons,
-  producing a 75.0% tie that is reproducible for normalized artifacts but not
-  a faithful behavioral null. Post-hoc sensitivity places T1/E1 above T0 and
-  still finds no E1-over-T1 grouping benefit. The preview and sensitivity
-  cannot license a confirmatory claim.
-- ⚠️ **Reproducibility is split.** For the trustworthy re-grade, the committed artifacts are the aggregate
-  summary (`medplum-eval/full409_summary.json`) and a durable per-question answer backup
-  (`medplum-eval/full409_answers.json`); the per-question panel/deterministic labels live under gitignored
-  `runs/` and are **not** committed — regenerating them requires the large gitignored raw answer dumps plus
-  judge-panel LLM calls. The GPT-5.5 tool-curve per-question labels *are* committed
-  (`medplum-eval/results/*.judged.json` + `_scores.csv`/`_paired.json`). The new A0′ table is
-  locally recomputable when those dumps are present; [FINAL_REPORT.md](docs/FINAL_REPORT.md) records the exact scope.
-  **Opus tool-ablation numbers are not** (run on torn-down EC2). See
-  [Reproducibility status](#where-this-was-actually-run--reproducibility-status).
-- **Start here: [A11B_R3_FORENSIC_AMENDMENT.md](docs/results/A11B_R3_FORENSIC_AMENDMENT.md)**
-  for the corrected causal-isolation interpretation, then the preserved
-  [strict result](docs/results/A11B_R3_UNREGISTERED_EXPLORATORY_RESULT.md).
-  Then read [A11_RESULT.md](docs/results/A11_RESULT.md) and
-  [A11_FORENSIC_AUDIT.md](docs/results/A11_FORENSIC_AUDIT.md), followed by the
-  [QT-4 holdout result](docs/results/QT4_VALID374_RESULT.md),
-  [FINDINGS.md](docs/FINDINGS.md) (the earlier capstone conclusion), the tool-ablation deep-dive
-  **[REPORT.md](docs/REPORT.md)** and the code result **[CODE_EXPERIMENT.md](docs/CODE_EXPERIMENT.md)**.
+The grading audit matters just as much: a configured single small judge produced
+directional false negatives, and the first deterministic repair introduced a
+separate boolean bug. The final labels use deterministic grading where possible
+and independent panels elsewhere. QT-4 promoted fixed question-only vocabulary;
+A11 proved traversal works on path-required evidence but did not isolate an
+event-grouping benefit; A11b r3 remains unregistered exploratory evidence only.
 
-## Final result: A0 vs A0' vs A5
+Start with [FINDINGS.md](docs/FINDINGS.md) for the short capstone and canonical
+document map. Exact A0/A0-prime/A5 estimates live in
+[FINAL_REPORT.md](docs/FINAL_REPORT.md); the judge audit lives in
+[TRUSTWORTHY_REGRADE.md](docs/TRUSTWORTHY_REGRADE.md); the tool-ablation detail is
+in [REPORT.md](docs/REPORT.md); and [CODE_EXPERIMENT.md](docs/CODE_EXPERIMENT.md)
+is the code-route mechanism note. The QT-4, A11, and A11b result pages are linked
+from the capstone.
 
-The final control asks whether the code sandbox is valuable because it computes out-of-context, or because it
-selects a bounded slice of the chart. The answer is narrower: **query-aware selection is the lever; the sandbox
-is one implementation.** The tested projection was deliberately blunt, so it is a floor for projection quality,
-not a ceiling.
+## Canonical A0 vs A0-prime vs A5 result
 
-![Grouped bar chart of final three-arm accuracy](docs/images/final_three_arm_accuracy.svg)
-
-| Arm | Overflow stratum (n=262) | Resource-real stratum (n=147) | Pooled (n=409) |
-|---|---:|---:|---:|
-| A0 — raw FHIR in context | 0.0% | 70.7% | 25.4% |
-| A0' — projection only | 22.1% | 70.1% | 39.4% |
-| A5 — code interpreter | 65.6% | 64.6% | 65.3% |
-
-![Stacked bar chart of A0 prime overflow decomposition](docs/images/a0prime_overflow_decomposition.svg)
-
-Read the full, red-teamed version in [FINAL_REPORT.md](docs/FINAL_REPORT.md). The clean next experiment is a
-query-aware in-context projection arm: fetch the resource type and date range the question asks for, keep
-first-and-last values, and deduplicate repeated requests.
+The full red-teamed table, paired statistics, projection decomposition, figures,
+and caveats are maintained in [FINAL_REPORT.md](docs/FINAL_REPORT.md). In short,
+the tested query-blind projection was a floor rather than a ceiling, and the
+clean follow-up is a query-aware in-context projection arm.
 
 ### Cost and token accounting for the final 409-question run
 
@@ -262,11 +193,9 @@ backlog remains in [ROADMAP.md](docs/ROADMAP.md):
   semantics, and latency. Do not select a native graph store from accuracy data.
 - In parallel, prioritize error fidelity (A12), then principal-varying
   authorization (A14); neither needs to wait for another A11b answer run.
-- Publish a minimized reproducibility artifact package with checksums.
 - Rerun A0, A0', and A5 on one substrate.
 - Add cross-family or human adjudication for A0' non-numeric labels.
 - Run a projection cap sweep.
-- Add a tracked failure-decomposition script.
 
 ### External pre-answer anchor for A11 v3
 
@@ -537,8 +466,8 @@ agent/mcp_agent.py           # agent that retrieves via an MCP server
 agent/ai_agent.py            # agent that routes via Medplum's in-FHIR $ai op
 docs/                        # findings, reports, and figures
   ├── FINDINGS.md            # start here: the capstone conclusion
-  ├── REPORT.md              # full honest synthesis (numbers, stats, limitations)
-  ├── CODE_EXPERIMENT.md     # the code-interpreter result
+  ├── REPORT.md              # tool-ablation deep dive (numbers, stats, limits)
+  ├── CODE_EXPERIMENT.md     # code-interpreter mechanism note
   ├── FINAL_REPORT.md        # red-teamed A0 / A0' / A5 three-arm control
   ├── TRUSTWORTHY_REGRADE.md # judge-reliability finding + trustworthy re-grade
   ├── results/A11_RESULT.md                   # final V/T/E result, economics, and limits

@@ -9,6 +9,10 @@ The source data is the de-identified MIMIC-IV-on-FHIR demo described in
 [`NOTICE-DATA.md`](../../NOTICE-DATA.md). It is not clinical data and is not for
 clinical use.
 
+Reproducibility boundary: the committed score artifact independently reproduces
+the Git-scoped score-to-table computation, while rebuilding raw runs into that
+artifact is only hash-verifiable for holders of the 295 MB gitignored inputs.
+
 ## Committed artifacts
 
 - `score-artifact.json`: 409 minimized question records plus SHA-256 receipts
