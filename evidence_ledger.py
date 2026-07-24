@@ -22,6 +22,8 @@ STATUS_VALUES = {
     "exploratory_not_promoted",
     "development_ready_not_answered",
     "sealed_pending",
+    "exploratory_supported_grading_sensitivity_pending",
+    "exploratory_unresolved_grading_sensitivity_pending",
 }
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -91,6 +93,7 @@ def validate_ledger(path: Path, *, repo_root: Path | None = None) -> dict[str, A
             "not_established",
             "invalidated",
             "pending",
+            "exploratory_supported_pending_sensitivity",
         }:
             raise LedgerError("claim register entry is invalid")
         evidence = claim.get("evidence")

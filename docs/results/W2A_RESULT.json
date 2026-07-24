@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "experiment_id": "w2a-agent-join-176",
+  "status": "exploratory_unresolved_grading_sensitivity_pending",
+  "population": {
+    "questions": 176,
+    "specific_encounter_questions": 176
+  },
+  "paired": {
+    "agent_join_correct": 127,
+    "prejoin_correct": 120,
+    "difference_points": 4.0,
+    "agent_join_only": 30,
+    "prejoin_only": 23,
+    "both_correct": 97,
+    "both_incorrect": 26,
+    "mcnemar_p": 0.41,
+    "patient_cluster_ci_points": [-8.7, 17.6]
+  },
+  "answer_token_receipts": {
+    "agent_join": {
+      "questions_with_complete_usage": 176,
+      "input_tokens": 33742927,
+      "cached_input_tokens": 29068288,
+      "output_tokens": 150330,
+      "reasoning_output_tokens": 65943,
+      "derived_input_plus_output_tokens": 33893257
+    },
+    "prejoin_same_questions": {
+      "questions_with_complete_usage": 176,
+      "input_tokens": 8308129,
+      "cached_input_tokens": 3433472,
+      "output_tokens": 56147,
+      "reasoning_output_tokens": 23258,
+      "derived_input_plus_output_tokens": 8364276
+    },
+    "cumulative_input_token_ratio": 4.061
+  },
+  "grading": {
+    "deterministic_arm_answers": 46,
+    "panel_arm_answers": 130,
+    "panel_votes_per_item": 3,
+    "judge_family": "codex_gpt",
+    "model_pin_retained": false,
+    "historical_panel_arm_blind": false,
+    "limitation": "Historical panel item IDs exposed the W2A arm name to the judge. A fresh opaque sensitivity regrade is required before treating the point estimate as grading-robust."
+  },
+  "protocol_provenance": {
+    "independent_git_anchor_before_run": false,
+    "local_file_birth_preceded_run": true,
+    "local_file_modified_after_results": true,
+    "preserved_protocol_sha256": "2169f9303b8d1d95973fcd34fb181d1c8c3472f1fdd772504f22488f63996399"
+  },
+  "source_receipts": {
+    "mcp_server_sha256": "6672b41e51526bb36fb4b33c30b62644f5cc25aaa0c39f8e7303eccabdc682f3",
+    "agent_join_verdict_map_sha256": "f9f0da0b2270cccf7e1d8599aad656095a27c79f4ac0d5a127fe1fe75380ac2d",
+    "question_id_set_sha256": "694e937ae616677eeb5a0f624fc6a309488e46e457128b4a581267e76644276e",
+    "dataset_sha256": "affa9c73618fbdb547bf7348168a67abf63cd52c8ef922e9e28d1d16e28f4ef4"
+  }
+}

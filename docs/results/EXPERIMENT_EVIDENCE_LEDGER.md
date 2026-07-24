@@ -1,6 +1,6 @@
 # Canonical experiment evidence ledger
 
-Updated: 2026-07-17
+Updated: 2026-07-23
 
 This is an aggregate-only claim ledger. It does not contain answer text, raw
 clinical records, credentials, or hidden chain-of-thought. Numeric claims are
@@ -21,6 +21,8 @@ licensed only at the scope shown below.
 | A11 V/T/E path-required | `confirmatory_supported_not_promotion_gated` | 120 constructed questions / 96 answerable path-required cases | T and E recovered terminal evidence on 96/96 answerable cases versus 0/96 for V. E versus T was +0.83pp with 95% CI 0 to +2.56. | Bounded traversal worked on the constructed multi-hop task. Do not promote event grouping: its single gain is not isolated from the bundled answerability receipt. |
 | A11b causal isolation | `exploratory_not_promoted` | 64 development Patients + 384 untouched efficacy Patients at run start; one efficacy question per Patient; 1,152 answer slots | Strict normalized artifacts: 288/384 in every arm with paired-difference 97.5% intervals 0.0 to 0.0. Raw insufficiency behavior: 26/96 T0, 96/96 T1, 96/96 E1. Conservative post-hoc sensitivity: 314/384, 384/384, 384/384. | Preserve the strict artifact but supersede its behavioral null. T1 merits a fresh prospective test; E1 showed no benefit beyond T1. No promotion is licensed; the Patients are spent. |
 | A11b successor zero-model build | `development_ready_not_answered` | 448 fresh synthetic Patients; 64 development packets materialized; 384 efficacy Patients reserved and unopened | Two clean roots produced byte-identical generation receipts and development public/audit trees under the v2 categorical answer contract. | Seal and independently approve the 192-answer development probe. Do not open efficacy unless both registered correctness contrasts have nonzero discordance. |
+| W1A deterministic prejoin | `exploratory_supported_grading_sensitivity_pending` | 409 questions / 90 patient clusters; 176 visit-specific | Pooled +2.0pp (95% CI -0.9 to +4.5, p=.256); visit-specific +6.8pp (95% CI +1.8 to +12.4, p=.0075). | Support the deterministic join mechanism provisionally. Do not license the effect size until an opaque sensitivity grade closes historical arm-label exposure. |
+| W2A agent-side join | `exploratory_unresolved_grading_sensitivity_pending` | 176 visit-specific questions | +4.0pp versus prejoin; 95% CI -8.7 to +17.6, p=.41; 30 agent-only versus 23 prejoin-only wins. | No difference detected and no equivalence established. Develop any hybrid only on burned data, then use a fresh patient-disjoint confirmation. |
 
 ## Claim register
 
@@ -56,6 +58,26 @@ A11 bundled grouping with temporal rank and an answerability receipt. A11b's nor
 
 Evidence: `a11-vte-120`, `a11b-causal-isolation-384`.
 
+### Resolving a visit-to-resource join before answer generation improves visit-specific accuracy on this benchmark.
+
+Disposition: **exploratory support; sensitivity pending**.
+
+W1A's planned visit-specific subset improved by 6.8 points. Most labels came
+from a historical panel whose model-visible IDs exposed arm names, so the
+effect is not yet licensed as grading-robust or general.
+
+Evidence: `w1a-prejoin-409`.
+
+### Agent-side joining matches or beats deterministic prejoin accuracy.
+
+Disposition: **not established**.
+
+W2A's point estimate was +4.0 points, but p=.41 and the patient-cluster interval
+spans -8.7 to +17.6. The run did not test equivalence and used 4.061 times the
+cumulative input tokens on the same questions.
+
+Evidence: `w2a-agent-join-176`.
+
 ### The effect generalizes across model sizes and reasoning levels.
 
 Disposition: **not_established**.
@@ -87,6 +109,8 @@ Evidence: `qt4-valid374-v2`, `a11-vte-120`.
 | A11 V/T/E path-required | 4728676 | 4728676 | Answer arms only; panel added 445,171 tokens. Zero retries. |
 | A11b causal isolation | 24481563 | 24568225 | Unregistered answer preview only; all-attempt usage is a lower bound because three pre-inference rejects lacked usable usage. Panel added 1,987,299 tokens. |
 | A11b successor zero-model build | 0 | 0 | Source generation, packet compilation, and receipt verification only; no answer or judge call. |
+| W1A deterministic prejoin | 22244468 | 22244468 | 409 complete answer usage receipts; derived input plus output. Comparator used 28,920,106 tokens. Provider-priced cost was not retained. |
+| W2A agent-side join | 33893257 | 33893257 | 176 complete answer usage receipts; derived input plus output. Agent join used 4.061 times the cumulative input tokens of prejoin on the same questions. |
 
 ## Known evidence gaps
 
@@ -97,3 +121,9 @@ Evidence: `qt4-valid374-v2`, `a11-vte-120`.
 - A11b r3 is not runnable as sealed against the current Codex backend. Its successor now has a fresh reproducible development corpus and categorical answer contract, but still requires a new development controller seal and prospective nonzero discordance.
 - The 384 A11b r3 efficacy Patients are spent. The successor's separately reserved 384 efficacy Patients remain unopened and cannot be materialized before the development gate passes.
 - No native graph database, Postgres recursive-query, or natural clinical chart comparison has been run.
+- W1A and W2A historical panel item IDs exposed arm names. A fresh opaque
+  sensitivity grade is required, but no healthcare-derived queue may be sent
+  to an external judge without an approved data route.
+- W1A and W2A answer manifests did not retain an explicit answer-model or
+  reasoning-effort pin. Their local protocol files were not independently
+  Git-anchored before the runs.
