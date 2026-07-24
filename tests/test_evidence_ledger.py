@@ -17,7 +17,7 @@ SUCCESSOR = ROOT / "docs/results/a11b-successor-artifacts"
 class EvidenceLedgerTests(unittest.TestCase):
     def test_committed_ledger_and_source_receipts_validate(self) -> None:
         ledger = evidence_ledger.validate_ledger(LEDGER, repo_root=ROOT)
-        self.assertEqual(len(ledger["experiments"]), 11)
+        self.assertEqual(len(ledger["experiments"]), 13)
         grid = next(
             row for row in ledger["experiments"] if row["id"] == "generality-grid-99"
         )
@@ -70,6 +70,8 @@ class EvidenceLedgerTests(unittest.TestCase):
         )
         self.assertIn("No experiment compared storage engines", rendered)
         self.assertIn("wrong denominator", rendered)
+        self.assertIn("historical panel", rendered)
+        self.assertIn("4.061 times the cumulative input tokens", rendered)
 
     def test_unknown_experiment_reference_fails_closed(self) -> None:
         ledger = json.loads(LEDGER.read_text())

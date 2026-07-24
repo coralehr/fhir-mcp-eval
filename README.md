@@ -53,6 +53,19 @@
 > [strict result](docs/results/A11B_R3_UNREGISTERED_EXPLORATORY_RESULT.md) with
 > its [forensic amendment](docs/results/A11B_R3_FORENSIC_AMENDMENT.md).
 
+> **New (2026-07-23): W1A found exploratory support for deterministic
+> visit-to-resource prejoin; W2A left agent-side joining unresolved.** W1A's
+> planned 176-question visit-specific subset scored 68.2% versus 61.4% for A6a
+> (+6.8 points, patient-cluster 95% CI +1.8 to +12.4, p=.0075), while its pooled
+> 409-question contrast was +2.0 points with an interval crossing zero. W2A
+> scored 72.2% versus prejoin 68.2% on the same 176 questions, but the +4.0-point
+> estimate was unresolved (95% CI -8.7 to +17.6, p=.41) and used 4.061 times the
+> cumulative input tokens. Both runs remain exploratory because the historical
+> panel exposed arm names, answer model pins were not retained, and the local
+> protocols lacked independent pre-run Git anchors. See
+> [W1A_RESULT.md](docs/results/W1A_RESULT.md) and
+> [W2A_RESULT.md](docs/results/W2A_RESULT.md).
+
 > **New (2026-07-14): the promoted recipe and A11 event-group gate are executable.** New packet builds
 > can use `compile_evidence.py`, which defaults to the holdout-promoted vocabulary recipe while preserving
 > every historical experiment entrypoint. The zero-model A11 gate separately exercises synthetic
@@ -159,6 +172,12 @@ apparent win is a context-overflow artifact (a null at matched budget), not a re
   a faithful behavioral null. Post-hoc sensitivity places T1/E1 above T0 and
   still finds no E1-over-T1 grouping benefit. The preview and sensitivity
   cannot license a confirmatory claim.
+- **W1A/W2A exploratory result: deterministic prejoin is the cheaper mechanism
+  worth carrying forward.** W1A's visit-specific gain is promising, but its
+  historical judge path needs an opaque sensitivity grade. W2A did not
+  establish a difference or equivalence and used 4.061 times the cumulative
+  input tokens. The next confirmatory comparison must use a new patient-disjoint
+  corpus and keep search-craft, retry policy, and evidence roots identical.
 - ⚠️ **Reproducibility is split.** For the trustworthy re-grade, the committed artifacts are the aggregate
   summary (`medplum-eval/full409_summary.json`) and a durable per-question answer backup
   (`medplum-eval/full409_answers.json`); the per-question panel/deterministic labels live under gitignored
@@ -227,6 +246,13 @@ future A6/A7 arms should report accuracy beside the same token/cost ledger, not 
 The evidence-driven execution plan is
 [NEXT_EXPERIMENT_PLAN.md](docs/NEXT_EXPERIMENT_PLAN.md); the full issue-ready
 backlog remains in [ROADMAP.md](docs/ROADMAP.md):
+
+- The next graph-efficacy confirmation is C3G versus identical C3 on a new
+  globally unseen, patient-disjoint private corpus. The old 79 and all 409
+  questions are development-only. Zero-model burned-history, whole-Patient
+  selection, analytic power, and atomic treatment-parity gates are documented
+  in [C3G_PREFLIGHT.md](docs/C3G_PREFLIGHT.md). The experiment is not launchable
+  until the remaining receipts pass.
 
 - The successor 64-Patient development controller is a sealed candidate, not a
   released or launched experiment. Its

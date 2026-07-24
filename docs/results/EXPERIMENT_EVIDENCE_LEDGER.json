@@ -1,6 +1,6 @@
 {
   "schema_version": "fhir-context-evidence-ledger-v1",
-  "updated_at": "2026-07-17",
+  "updated_at": "2026-07-23",
   "experiments": [
     {
       "id": "a6a-initial409",
@@ -178,6 +178,43 @@
         {"kind": "repo_file", "path": "docs/results/a11b-successor-artifacts/development-c-audit-manifest.json", "sha256": "b233b4bdfe9411ccf2720acd3e7850a01f340b73bce46bdc07adda0260362dcc"},
         {"kind": "repo_file", "path": "docs/results/a11b-successor-artifacts/development-d-audit-manifest.json", "sha256": "b233b4bdfe9411ccf2720acd3e7850a01f340b73bce46bdc07adda0260362dcc"}
       ]
+    },
+    {
+      "id": "w1a-prejoin-409",
+      "name": "W1A deterministic prejoin",
+      "status": "exploratory_supported_grading_sensitivity_pending",
+      "population": "409 questions / 90 patient clusters; planned mechanism subset of 176 visit-specific questions",
+      "result": "Pooled: 56.0% versus A6a 54.0%, +2.0pp, cluster 95% CI -0.9 to +4.5, McNemar p=.256. Visit-specific subset: 68.2% versus 61.4%, +6.8pp, cluster 95% CI +1.8 to +12.4, p=.0075.",
+      "decision": "Treat deterministic visit-to-resource prejoin as supported exploratory mechanism evidence. Do not license the effect size until a fresh opaque sensitivity grade closes historical arm-label exposure.",
+      "economics": {
+        "accepted_tokens": 22244468,
+        "all_attempt_tokens": 22244468,
+        "notes": "409 complete answer usage receipts. Tokens are derived input plus output; provider-priced cost was not retained."
+      },
+      "sources": [
+        {"kind": "repo_file", "path": "docs/results/W1A_RESULT.json", "sha256": "f961c043424f003d19820815a50664749214178849a18af75f64723923e3e831"},
+        {"kind": "repo_file", "path": "docs/results/W1A_RESULT.md", "sha256": "e78a021ac54335e530e84cd167784fc797a42cbe07a58ad16d18a42753e95731"},
+        {"kind": "external_aggregate", "path": "local:runs/w1a-confirmatory-grading/final_w1a.json", "sha256": "aa3ca6801ae7cb077ea2d5ec6c434efec9d34bf0916abb2e025be6b9ac924800", "verified_at": "2026-07-23"},
+        {"kind": "external_aggregate", "path": "local:runs/w1a-confirmatory-grading/final_a6a.json", "sha256": "c12dd474ee282baeb6825fd4f03c76091acdcb622caf386d17bbd88208b5748f", "verified_at": "2026-07-23"}
+      ]
+    },
+    {
+      "id": "w2a-agent-join-176",
+      "name": "W2A agent-side join",
+      "status": "exploratory_unresolved_grading_sensitivity_pending",
+      "population": "176 visit-specific questions",
+      "result": "72.2% versus prejoin 68.2%, +4.0pp, cluster 95% CI -8.7 to +17.6, McNemar p=.41; 30 agent-only wins and 23 prejoin-only wins.",
+      "decision": "No accuracy difference was detected and equivalence was not established. Develop a hybrid only on burned data; require a fresh patient-disjoint confirmation.",
+      "economics": {
+        "accepted_tokens": 33893257,
+        "all_attempt_tokens": 33893257,
+        "notes": "176 complete answer usage receipts. Agent join used 4.061x the cumulative input tokens of prejoin on the same questions; provider-priced cost was not retained."
+      },
+      "sources": [
+        {"kind": "repo_file", "path": "docs/results/W2A_RESULT.json", "sha256": "d16ff9eb1b11a6c8a6b13ef201e9b0889ade8f09533f34b53920f516a54f2a25"},
+        {"kind": "repo_file", "path": "docs/results/W2A_RESULT.md", "sha256": "ce292fd5c7715c5b8f1d45eeb2344dee92e09c90342fe1ec4f12ebc16eebfed2"},
+        {"kind": "external_aggregate", "path": "local:runs/w2a-grading/final_w2a.json", "sha256": "f9f0da0b2270cccf7e1d8599aad656095a27c79f4ac0d5a127fe1fe75380ac2d", "verified_at": "2026-07-23"}
+      ]
     }
   ],
   "claim_register": [
@@ -198,6 +235,18 @@
       "disposition": "bounded_support",
       "boundary": "A11 establishes the mechanism on its synthetic path-required benchmark. It does not establish a native graph database, universal graph superiority, or natural-chart generality.",
       "evidence": ["qt4-valid374-v2", "a11-vte-120"]
+    },
+    {
+      "claim": "Resolving a visit-to-resource join before answer generation improves visit-specific accuracy on the 409-question benchmark.",
+      "disposition": "exploratory_supported_pending_sensitivity",
+      "boundary": "W1A's planned visit-specific subset improved by 6.8 points, but most labels came from a historical panel whose model-visible IDs exposed arm names. The effect is not yet licensed as grading-robust or general.",
+      "evidence": ["w1a-prejoin-409"]
+    },
+    {
+      "claim": "Agent-side joining matches or beats deterministic prejoin accuracy.",
+      "disposition": "not_established",
+      "boundary": "W2A's point estimate was +4.0 points, but p=.41 and the cluster interval spans -8.7 to +17.6. The run did not test or establish equivalence and used 4.061 times the cumulative input tokens.",
+      "evidence": ["w2a-agent-join-176"]
     },
     {
       "claim": "Typed event grouping improves accuracy beyond identical evidence and deterministic aids.",
@@ -225,6 +274,8 @@
     "The A11b preview completion replay validated prompt, answer, schema, event, usage, and artifact receipts. Its exposure booleans were self-asserted rather than independent measurements.",
     "A11b r3 is not runnable as sealed against the current Codex backend. Its successor now has a fresh reproducible development corpus and categorical answer contract, but still requires a new development controller seal and prospective nonzero discordance.",
     "The 384 A11b r3 efficacy Patients are spent. The successor's separately reserved 384 efficacy Patients remain unopened and cannot be materialized before the development gate passes.",
-    "No native graph database, Postgres recursive-query, or natural clinical chart comparison has been run."
+    "No native graph database, Postgres recursive-query, or natural clinical chart comparison has been run.",
+    "W1A and W2A historical panel item IDs exposed arm names. A fresh opaque sensitivity grade is required, but no healthcare-derived queue may be sent to an external judge without an approved data route.",
+    "W1A and W2A answer manifests did not retain an explicit answer-model or reasoning-effort pin, and their local protocol files were not independently Git-anchored before the runs."
   ]
 }

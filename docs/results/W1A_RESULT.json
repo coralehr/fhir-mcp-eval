@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "experiment_id": "w1a-prejoin-409",
+  "status": "exploratory_supported_grading_sensitivity_pending",
+  "population": {
+    "questions": 409,
+    "patient_clusters": 90,
+    "specific_encounter_questions": 176,
+    "patient_scope_questions": 226,
+    "other_questions": 7
+  },
+  "pooled": {
+    "prejoin_correct": 229,
+    "comparator_correct": 221,
+    "difference_points": 2.0,
+    "prejoin_only": 23,
+    "comparator_only": 15,
+    "mcnemar_p": 0.2559,
+    "patient_cluster_ci_points": [-0.9, 4.5]
+  },
+  "specific_encounter": {
+    "prejoin_correct": 120,
+    "comparator_correct": 108,
+    "difference_points": 6.8,
+    "prejoin_only": 15,
+    "comparator_only": 3,
+    "mcnemar_p": 0.007538,
+    "patient_cluster_ci_points": [1.8, 12.4]
+  },
+  "patient_scope": {
+    "questions": 226,
+    "prejoin_accuracy": 0.451,
+    "comparator_accuracy": 0.469,
+    "difference_points": -1.8,
+    "prejoin_only": 8,
+    "comparator_only": 12,
+    "mcnemar_p": 0.5034,
+    "patient_cluster_ci_points": [-5.8, 2.6]
+  },
+  "answer_token_receipts": {
+    "prejoin": {
+      "questions_with_complete_usage": 409,
+      "input_tokens": 22113585,
+      "cached_input_tokens": 7606784,
+      "output_tokens": 130883,
+      "reasoning_output_tokens": 53489,
+      "derived_input_plus_output_tokens": 22244468
+    },
+    "comparator": {
+      "questions_with_complete_usage": 409,
+      "input_tokens": 28776576,
+      "cached_input_tokens": 7044864,
+      "output_tokens": 143530,
+      "reasoning_output_tokens": 61576,
+      "derived_input_plus_output_tokens": 28920106
+    }
+  },
+  "grading": {
+    "deterministic_arm_answers": 268,
+    "panel_arm_answers": 550,
+    "panel_votes_per_item": 3,
+    "judge_family": "codex_gpt",
+    "model_pin_retained": false,
+    "historical_panel_arm_blind": false,
+    "limitation": "Historical panel item IDs exposed arm names to the judge. A fresh opaque sensitivity regrade is required before treating the effect size as grading-robust."
+  },
+  "protocol_provenance": {
+    "independent_git_anchor_before_run": false,
+    "local_file_birth_preceded_run": true,
+    "local_file_modified_after_results": true,
+    "preserved_protocol_sha256": "5017b32093110f0354f444f146dcc210889d325b94067dee9f5e46ac76bafa11"
+  },
+  "source_receipts": {
+    "builder_sha256": "6fd13dd598dbe9b9c4ff415b5d18e7de27a92d7295622a526e2143eaec33dfc1",
+    "prejoin_verdict_map_sha256": "aa3ca6801ae7cb077ea2d5ec6c434efec9d34bf0916abb2e025be6b9ac924800",
+    "comparator_verdict_map_sha256": "c12dd474ee282baeb6825fd4f03c76091acdcb622caf386d17bbd88208b5748f",
+    "dataset_sha256": "affa9c73618fbdb547bf7348168a67abf63cd52c8ef922e9e28d1d16e28f4ef4"
+  }
+}
