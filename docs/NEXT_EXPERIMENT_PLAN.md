@@ -147,6 +147,15 @@ Implementation status as of 2026-07-15:
   independent development-only builds are also byte-identical and contain no
   efficacy path. Independent exact-head approval remains part of the
   development controller seal, not a reason to rerun generation.
+- [x] Implement the provider-neutral direct-API contract with canonical
+  content-only receipts and two provider-shaped fake conformance adapters. It
+  has no SDKs, credentials, network calls, or model calls and is not wired into
+  the confirmatory executor; see
+  [PROVIDER_API_CONTRACT.md](PROVIDER_API_CONTRACT.md).
+- [ ] After the sealed A11b result identifies a contrast worth replicating,
+  implement and independently approve real provider adapters and bind them to
+  the witnessed executor. Do not mix this transport/model sensitivity into the
+  initial A11b causal run.
 - [ ] Deploy the witness/executor under a principal the run account cannot
   mutate, bind its public key and schedule into a new externally approved
   controller, and mediate the Codex credential before any A11b live call.
