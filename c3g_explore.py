@@ -166,8 +166,42 @@ def edges_for(resource: dict[str, Any]) -> list[dict[str, str]]:
     return sorted(edges, key=canonical_bytes)
 
 
-def round_robin_edges(resources: list[dict[str, Any]]) -> list[dict[str, str]]:
-    queues = deque(deque(edges_for(resource)) for resource in sorted(resources, key=lambda item: resource_ref(item) or ""))
+def edge_priority(question: str, edge: dict[str, str]) -> tuple[int, str, str]:
+    """Question-only scheduling; it changes traversal order, never the roots."""
+    text = question.casefold()
+    path = edge["path"]
+    if any(term in text for term in ("microbiolog", "culture", "specimen", "organism", "smear", "gram stain")):
+        families = ("/result/", "/hasMember/", "/specimen", "/request/", "/encounter", "/subject")
+    elif any(term in text for term in ("medication", "drug", "prescri", "dose", "route", "tablet", "infusion")):
+        families = ("/medicationReference", "/reasonReference/", "/encounter", "/subject")
+    elif any(term in text for term in ("procedure", "surgery", "operation", "undergo", "intubat", "dialysis")):
+        families = ("/report/", "/reasonReference/", "/encounter", "/subject")
+    elif any(term in text for term in ("visit", "admission", "admit", "discharge", "encounter", "hospital", "icu", "stay")):
+        families = ("/encounter", "/partOf", "/diagnosis/", "/reasonReference/", "/subject")
+    elif any(term in text for term in ("gender", "sex", "age", "birth", "race", "ethnic", "marital", "language")):
+        families = ("/subject", "/encounter", "/partOf")
+    else:
+        families = (
+            "/result/",
+            "/hasMember/",
+            "/specimen",
+            "/medicationReference",
+            "/report/",
+            "/reasonReference/",
+            "/encounter",
+            "/partOf",
+            "/diagnosis/",
+            "/subject",
+        )
+    rank = next((index for index, family in enumerate(families) if family in path), len(families))
+    return rank, path, edge["to"]
+
+
+def round_robin_edges(resources: list[dict[str, Any]], *, question: str) -> list[dict[str, str]]:
+    queues = deque(
+        deque(sorted(edges_for(resource), key=lambda edge: edge_priority(question, edge)))
+        for resource in sorted(resources, key=lambda item: resource_ref(item) or "")
+    )
     ordered: list[dict[str, str]] = []
     while queues:
         current = queues.popleft()
@@ -204,6 +238,7 @@ def compile_closure(
     max_edges: int,
     max_citations: int,
     max_added_bytes: int,
+    question: str,
 ) -> dict[str, Any]:
     roots_by_ref = {
         reference: resource
@@ -213,14 +248,13 @@ def compile_closure(
     included = dict(roots_by_ref)
     added: dict[str, dict[str, Any]] = {}
     inspected: set[str] = set()
-    citations: list[dict[str, Any]] = []
     audit_edges: list[dict[str, Any]] = []
     outcomes: set[str] = set()
     added_bytes = 0
     frontier = [roots_by_ref[reference] for reference in sorted(roots_by_ref)]
 
     for depth in range(1, max_depth + 1):
-        candidates = round_robin_edges(frontier)
+        candidates = round_robin_edges(frontier, question=question)
         if not candidates:
             break
         if len(audit_edges) + len(candidates) > max_edges:
@@ -271,14 +305,23 @@ def compile_closure(
                 "status": status,
             }
             audit_edges.append(receipt)
-            if status in {"fetched", "already_present"} and len(citations) < max_citations:
-                citations.append({key: receipt[key] for key in ("depth", "from", "path", "to", "status")})
-            elif status in {"fetched", "already_present"}:
-                outcomes.add("citation_limit")
         frontier = [next_frontier[reference] for reference in sorted(next_frontier)]
         if not frontier or len(audit_edges) >= max_edges:
             break
 
+    successful = [edge for edge in audit_edges if edge["status"] in {"fetched", "already_present"}]
+    successful.sort(
+        key=lambda edge: (
+            0 if edge["status"] == "fetched" else 1,
+            edge["depth"],
+            edge["from"],
+            edge["path"],
+            edge["to"],
+        )
+    )
+    citations = successful[:max_citations]
+    if len(successful) > len(citations):
+        outcomes.add("citation_limit")
     return {
         "added_resources": [added[reference] for reference in sorted(added)],
         "path_receipts": citations,
@@ -405,6 +448,7 @@ def build(args: argparse.Namespace) -> int:
             max_edges=args.max_edges,
             max_citations=args.max_citations,
             max_added_bytes=args.max_added_bytes,
+            question=str(record.get("question") or ""),
         )
         flat_records.append(record)
         graph_records.append(graph_packet(record, closure))
