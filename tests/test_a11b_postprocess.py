@@ -64,6 +64,35 @@ class FakePanelDriver:
 
 
 class A11bPostprocessTests(unittest.TestCase):
+    def test_successor_controller_accepts_the_compiler_output_inventory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            controller = {
+                "schema_version": "a11-controller-v4",
+                "experiment_profile": "a11b-successor-development-v1",
+                "inputs": {"question_count": 64, "answer_calls": 192},
+                "schedule": {
+                    "arms": ["t0", "t1", "e1"],
+                    "items": [{} for _index in range(192)],
+                },
+                "outputs": {
+                    "answer_export": str((root / "answer-export").resolve()),
+                    "grading": str((root / "grading").resolve()),
+                    "result": str((root / "result").resolve()),
+                },
+            }
+            path = root / "controller.json"
+            payload = service.canonical_json_line(controller)
+            path.write_bytes(payload)
+            path.with_suffix(".sha256").write_text(
+                postprocess._sha256(payload) + "\n", encoding="ascii"
+            )
+
+            observed, digest = postprocess._load_controller(path)
+
+            self.assertEqual(observed, controller)
+            self.assertEqual(digest, postprocess._sha256(payload))
+
     def test_audit_verifier_rejects_unmanifested_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
