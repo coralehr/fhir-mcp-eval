@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import datetime as dt
 import hashlib
 import json
 import re
@@ -39,6 +40,12 @@ DEFAULT_MAX_ADDED_BYTES = 24_000
 RELATIVE_REFERENCE = re.compile(
     r"^(?P<type>[A-Za-z][A-Za-z0-9]*)/(?P<id>[A-Za-z0-9\-.]{1,64})"
     r"(?:/_history/(?P<version>[A-Za-z0-9\-.]{1,64}))?$"
+)
+CURRENT_TIME = re.compile(r"current time is (\d{4}-\d{2}-\d{2})(?:[ T](\d{2}:\d{2}:\d{2}))?", re.I)
+VISIT_SELECTOR = re.compile(
+    r"\b(?P<selector>current|this|last|latest|first|earliest)\s+"
+    r"(?:hospital\s+)?(?P<noun>visit|stay|admission|encounter)\b",
+    re.I,
 )
 
 # Mirrored from Bonfire's experimental clinical-reference-v1 semantic catalog.
@@ -139,6 +146,156 @@ def patient_refs(resource: dict[str, Any]) -> set[str]:
 def patient_consistent(resource: dict[str, Any], patient_ref: str) -> bool:
     refs = patient_refs(resource)
     return not refs or refs == {patient_ref}
+
+
+def clinical_time(resource: dict[str, Any], field: str) -> str | None:
+    period = resource.get("period")
+    if not isinstance(period, dict):
+        return None
+    value = period.get(field)
+    return value if isinstance(value, str) and value else None
+
+
+def encounter_kind(resource: dict[str, Any]) -> str:
+    for identifier in resource.get("identifier") or []:
+        if not isinstance(identifier, dict):
+            continue
+        system = str(identifier.get("system") or "")
+        for kind in ("hosp", "icu", "ed"):
+            if system.endswith(f"encounter-{kind}"):
+                return kind
+    return "unknown"
+
+
+def assumption_now(assumption: Any) -> dt.datetime | None:
+    match = CURRENT_TIME.search(str(assumption or ""))
+    if match is None:
+        return None
+    return dt.datetime.fromisoformat(f"{match.group(1)}T{match.group(2) or '00:00:00'}")
+
+
+def comparable_datetime(value: str | None) -> dt.datetime | None:
+    if not value:
+        return None
+    parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return parsed.replace(tzinfo=None)
+
+
+def visit_scope(record: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Prototype the inverse edge: Encounter <- patient events."""
+    question = str(record.get("question") or "")
+    match = VISIT_SELECTOR.search(question)
+    if match is None:
+        return copy.deepcopy(record), {"state": "not_applicable"}
+    selector = match.group("selector").casefold()
+    selector = {"this": "current", "latest": "last", "earliest": "first"}.get(selector, selector)
+    source = record.get("packet", {}).get("resources")
+    if not isinstance(source, list):
+        raise ValueError("visit scoping requires packet resources")
+    encounters = [
+        resource
+        for resource in source
+        if resource.get("resourceType") == "Encounter"
+        and encounter_kind(resource) == "hosp"
+        and not resource.get("partOf")
+    ]
+    encounters.sort(key=lambda resource: (clinical_time(resource, "start") or "", resource_ref(resource) or ""))
+    now = assumption_now(record.get("assumption"))
+    selected: dict[str, Any] | None = None
+    state = "selected"
+    if selector == "current":
+        if now is None:
+            state = "current_time_missing"
+        else:
+            selected = next(
+                (
+                    resource
+                    for resource in reversed(encounters)
+                    if (comparable_datetime(clinical_time(resource, "start")) or dt.datetime.min) <= now
+                    and (
+                        comparable_datetime(clinical_time(resource, "end")) is None
+                        or comparable_datetime(clinical_time(resource, "end")) >= now
+                    )
+                ),
+                None,
+            )
+            if selected is None:
+                state = "no_active_encounter"
+    elif encounters:
+        eligible = encounters
+        if now is not None:
+            eligible = [
+                resource
+                for resource in encounters
+                if (comparable_datetime(clinical_time(resource, "start")) or dt.datetime.min) <= now
+            ]
+        if eligible:
+            selected = eligible[0] if selector == "first" else eligible[-1]
+        else:
+            state = "no_prior_encounter"
+    else:
+        state = "no_encounters_in_packet"
+
+    scoped_record = copy.deepcopy(record)
+    packet = scoped_record["packet"]
+    selected_ref = resource_ref(selected) if selected is not None else None
+    family_refs = {selected_ref} if selected_ref else set()
+    if selected_ref:
+        family_refs.update(
+            reference
+            for resource in source
+            if resource.get("resourceType") == "Encounter"
+            and isinstance(resource.get("partOf"), dict)
+            and resource["partOf"].get("reference") == selected_ref
+            if (reference := resource_ref(resource)) is not None
+        )
+    keep_refs = set(family_refs)
+    for resource in source:
+        encounter = resource.get("encounter")
+        if isinstance(encounter, dict) and encounter.get("reference") in family_refs:
+            reference = resource_ref(resource)
+            if reference:
+                keep_refs.add(reference)
+    changed = True
+    while changed:
+        changed = False
+        for resource in source:
+            reference = resource_ref(resource)
+            if reference in keep_refs:
+                for _, target in explicit_references(resource):
+                    match_ref = RELATIVE_REFERENCE.fullmatch(target)
+                    if match_ref:
+                        target_ref = f"{match_ref.group('type')}/{match_ref.group('id')}"
+                        if target_ref not in keep_refs:
+                            keep_refs.add(target_ref)
+                            changed = True
+    scoped = [resource for resource in source if resource_ref(resource) in keep_refs]
+    receipt = {
+        "kind": "inverse_encounter_edge_scope",
+        "version": PROTOTYPE_VERSION,
+        "selector": selector,
+        "state": state,
+        "authoritative_now": now.isoformat() if now else None,
+        "candidate_encounter_count": len(encounters),
+        "selected_encounter": selected_ref,
+        "family_refs": sorted(family_refs),
+        "input_resource_count": len(source),
+        "output_resource_count": len(scoped),
+    }
+    if state == "no_active_encounter":
+        receipt["negative_evidence"] = (
+            "No hospital Encounter contains the authoritative current time; "
+            "there is no current hospital stay and current-stay events have zero matches."
+        )
+    packet["visit_graph"] = receipt
+    packet["resources"] = scoped
+    packet["resource_count"] = len(scoped)
+    packet["source_resource_ids"] = sorted(
+        reference for resource in scoped if (reference := resource_ref(resource)) is not None
+    )
+    packet.pop("sha256", None)
+    packet["sha256"] = digest(packet)
+    return scoped_record, receipt
 
 
 def edges_for(resource: dict[str, Any]) -> list[dict[str, str]]:
@@ -432,6 +589,7 @@ def build(args: argparse.Namespace) -> int:
     client = get_fhir_client()
     flat_records: list[dict[str, Any]] = []
     graph_records: list[dict[str, Any]] = []
+    visit_graph_records: list[dict[str, Any]] = []
     census_rows: list[dict[str, Any]] = []
 
     for index, record in enumerate(records, 1):
@@ -452,11 +610,27 @@ def build(args: argparse.Namespace) -> int:
         )
         flat_records.append(record)
         graph_records.append(graph_packet(record, closure))
+        visit_record, visit_receipt = visit_scope(record)
+        visit_roots = visit_record["packet"]["resources"]
+        visit_closure = compile_closure(
+            visit_roots,
+            patient_ref=f"Patient/{patient_id}",
+            fetcher=lambda refs: fetch_by_refs(client, refs),
+            max_depth=args.max_depth,
+            max_targets=args.max_targets,
+            max_edges=args.max_edges,
+            max_citations=args.max_citations,
+            max_added_bytes=args.max_added_bytes,
+            question=str(record.get("question") or ""),
+        )
+        visit_graph_records.append(graph_packet(visit_record, visit_closure))
         census_rows.append(
             {
                 "question_id": record.get("question_id"),
                 "question": record.get("question"),
                 "receipt": closure["receipt"],
+                "visit_graph": visit_receipt,
+                "visit_graph_closure": visit_closure["receipt"],
                 "audit_edges": closure["audit_edges"],
             }
         )
@@ -470,9 +644,11 @@ def build(args: argparse.Namespace) -> int:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     flat_path = args.output_dir / "flat_packets.jsonl"
     graph_path = args.output_dir / "graph_packets.jsonl"
+    visit_graph_path = args.output_dir / "visit_graph_packets.jsonl"
     census_path = args.output_dir / "census.json"
     write_jsonl(flat_path, flat_records)
     write_jsonl(graph_path, graph_records)
+    write_jsonl(visit_graph_path, visit_graph_records)
     sample = choose_sample(census_rows, args.sample_size, args.control_count)
     census = {
         "kind": "throwaway_c3g_exploration_census",
@@ -482,6 +658,10 @@ def build(args: argparse.Namespace) -> int:
         "outputs": {
             "flat": {"path": str(flat_path), "sha256": a6.sha256_file(flat_path)},
             "graph": {"path": str(graph_path), "sha256": a6.sha256_file(graph_path)},
+            "visit_graph": {
+                "path": str(visit_graph_path),
+                "sha256": a6.sha256_file(visit_graph_path),
+            },
         },
         "question_count": len(census_rows),
         "questions_with_added_targets": sum(row["receipt"]["added_resource_count"] > 0 for row in census_rows),
