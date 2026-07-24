@@ -485,6 +485,67 @@ def _mkdir(path: Path, *, mode: int, uid: int, gid: int) -> None:
     path.chmod(mode)
 
 
+def _ensure_root_owned_directory(
+    path: Path, *, mode: int, uid: int, gid: int
+) -> None:
+    """Create or validate one fixed transport parent without following it."""
+
+    try:
+        parent_descriptor = os.open(
+            path.parent,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+        )
+    except OSError as exc:
+        raise DeploymentError(f"root-owned directory is unsafe: {path.name}") from exc
+    child_descriptor: int | None = None
+    try:
+        parent_status = os.fstat(parent_descriptor)
+        if (
+            not stat.S_ISDIR(parent_status.st_mode)
+            or parent_status.st_uid != uid
+            or parent_status.st_gid != gid
+            or stat.S_IMODE(parent_status.st_mode) & 0o022
+        ):
+            raise DeploymentError(f"root-owned directory is unsafe: {path.name}")
+        try:
+            child_descriptor = os.open(
+                path.name,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=parent_descriptor,
+            )
+        except FileNotFoundError:
+            try:
+                os.mkdir(path.name, mode, dir_fd=parent_descriptor)
+                child_descriptor = os.open(
+                    path.name,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                    dir_fd=parent_descriptor,
+                )
+            except OSError as exc:
+                raise DeploymentError(
+                    f"root-owned directory is unsafe: {path.name}"
+                ) from exc
+            os.fchown(child_descriptor, uid, gid)
+            os.fchmod(child_descriptor, mode)
+            os.fsync(parent_descriptor)
+        except OSError as exc:
+            raise DeploymentError(
+                f"root-owned directory is unsafe: {path.name}"
+            ) from exc
+        child_status = os.fstat(child_descriptor)
+        if (
+            not stat.S_ISDIR(child_status.st_mode)
+            or child_status.st_uid != uid
+            or child_status.st_gid != gid
+            or stat.S_IMODE(child_status.st_mode) != mode
+        ):
+            raise DeploymentError(f"root-owned directory is unsafe: {path.name}")
+    finally:
+        if child_descriptor is not None:
+            os.close(child_descriptor)
+        os.close(parent_descriptor)
+
+
 def _read_source_bytes(
     path: Path,
     *,
@@ -1064,6 +1125,12 @@ def _install_and_launch_unchecked(
     launcher = manifest["transport"]["launcher"]
     authorized = manifest["transport"]["authorized_key"]
     drop_in = manifest["transport"]["sshd_drop_in"]
+    for parent in (
+        Path(launcher["path"]).parent,
+        Path(authorized["path"]).parent,
+        Path(drop_in["path"]).parent,
+    ):
+        _ensure_root_owned_directory(parent, mode=0o755, uid=0, gid=wheel)
     for target in (Path(launcher["path"]), Path(authorized["path"]), Path(drop_in["path"])):
         if target.exists() or target.is_symlink():
             raise DeploymentError(f"transport target already exists: {target}")
@@ -1077,7 +1144,6 @@ def _install_and_launch_unchecked(
             package_root / "payload/run-experiment-executor-service"
         ],
     )
-    Path(authorized["path"]).parent.mkdir(parents=True, mode=0o755)
     _copy(
         package_root / "payload/authorized_keys.entry",
         Path(authorized["path"]),
