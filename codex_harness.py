@@ -1095,11 +1095,75 @@ def run_version(codex_bin: str) -> str:
 
 def git_commit_and_dirty(repo: Path) -> tuple[str, bool]:
     try:
-        commit = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
-        status = subprocess.check_output(["git", "-C", str(repo), "status", "--porcelain"], text=True)
+        commit = subprocess.check_output(
+            ["git", "-C", str(repo), "rev-parse", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        status = subprocess.check_output(
+            ["git", "-C", str(repo), "status", "--porcelain"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
         return commit, bool(status.strip())
     except Exception:
         return "unknown", True
+
+
+def resolve_source_provenance(
+    repo: Path,
+    explicit_receipt_path: Path | None,
+    *,
+    require_provenance: bool = False,
+) -> dict[str, Any]:
+    if explicit_receipt_path is not None:
+        payload = explicit_receipt_path.read_bytes()
+        receipt = json.loads(payload)
+        canonical = (
+            json.dumps(
+                receipt,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            + b"\n"
+        )
+        if payload != canonical:
+            raise ValueError("source provenance receipt is noncanonical")
+        if (
+            not isinstance(receipt, dict)
+            or set(receipt)
+            != {
+                "schema_version",
+                "source_commit",
+                "source_dirty",
+                "source_manifest_sha256",
+            }
+            or receipt.get("schema_version") != "codex-source-provenance-v1"
+            or re.fullmatch(r"[0-9a-f]{40}", str(receipt.get("source_commit")))
+            is None
+            or type(receipt.get("source_dirty")) is not bool
+            or re.fullmatch(
+                r"[0-9a-f]{64}", str(receipt.get("source_manifest_sha256"))
+            )
+            is None
+        ):
+            raise ValueError("source provenance receipt is invalid")
+        return {
+            "commit": receipt["source_commit"],
+            "dirty": receipt["source_dirty"],
+            "provenance": "explicit_receipt",
+            "source_manifest_sha256": receipt["source_manifest_sha256"],
+        }
+    commit, dirty = git_commit_and_dirty(repo)
+    if require_provenance and commit == "unknown":
+        raise SystemExit(
+            "live runs require sealed source provenance: use a Git checkout "
+            "or pass --source-provenance"
+        )
+    # Preserve the historical two-field shape for Git-backed runs so this
+    # hardening does not change an existing run's immutable manifest identity.
+    return {"commit": commit, "dirty": dirty}
 
 
 def write_manifest(
@@ -1110,6 +1174,7 @@ def write_manifest(
     codex_version: str,
     git_commit: str,
     git_dirty: bool,
+    source_provenance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     file_entries = {}
     for name, path in files.items():
@@ -1124,7 +1189,7 @@ def write_manifest(
         "codex_version": codex_version,
         "python_version": sys.version.split()[0],
         "platform": platform.platform(),
-        "git": {"commit": git_commit, "dirty": git_dirty},
+        "git": source_provenance or {"commit": git_commit, "dirty": git_dirty},
         "run_config": run_config,
         "files": file_entries,
     }
@@ -1298,6 +1363,7 @@ def main() -> int:
     parser.add_argument("--allow-full-run", action="store_true", help="allow live runs without --limit or --question-id")
     parser.add_argument("--allow-public-artifact", action="store_true", help="allow raw prompt/event outputs outside gitignored runs/")
     parser.add_argument("--skip-existing", action="store_true")
+    parser.add_argument("--source-provenance", type=Path, default=None)
     args = parser.parse_args()
 
     repo = Path(__file__).resolve().parent
@@ -1330,7 +1396,11 @@ def main() -> int:
         "ignore_user_config": True,
         "ignore_rules": True,
     }
-    git_commit, git_dirty = git_commit_and_dirty(repo)
+    source_provenance = resolve_source_provenance(
+        repo,
+        args.source_provenance,
+        require_provenance=not args.dry_run,
+    )
     manifest = write_manifest(
         manifest_path=args.out_dir / "manifest.json",
         run_config=run_config,
@@ -1340,10 +1410,12 @@ def main() -> int:
             "schema": args.schema,
             "skill_file": args.skill_file,
             "harness": Path(__file__).resolve(),
+            "source_provenance": args.source_provenance,
         },
         codex_version=run_version(args.codex_bin),
-        git_commit=git_commit,
-        git_dirty=git_dirty,
+        git_commit=str(source_provenance["commit"]),
+        git_dirty=bool(source_provenance["dirty"]),
+        source_provenance=source_provenance,
     )
 
     summary_path = args.out_dir / "summary.json"

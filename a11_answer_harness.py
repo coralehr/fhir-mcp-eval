@@ -541,6 +541,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--allow-full-run", action="store_true")
     parser.add_argument("--allow-public-artifact", action="store_true")
     parser.add_argument("--skip-existing", action="store_true")
+    parser.add_argument("--source-provenance", type=Path, default=None)
     return parser
 
 
@@ -594,7 +595,11 @@ def main(argv: Iterable[str] | None = None) -> int:
         "prompt_record_version": PROMPT_RECORD_VERSION,
         "exact_model_payload_bytes": True,
     }
-    git_commit, git_dirty = codex_harness.git_commit_and_dirty(repo)
+    source_provenance = codex_harness.resolve_source_provenance(
+        repo,
+        args.source_provenance,
+        require_provenance=not args.dry_run,
+    )
     manifest = codex_harness.write_manifest(
         manifest_path=args.out_dir / "manifest.json",
         run_config=run_config,
@@ -604,10 +609,12 @@ def main(argv: Iterable[str] | None = None) -> int:
             "schema": args.schema,
             "harness": Path(__file__).resolve(),
             "runtime_helpers": Path(codex_harness.__file__).resolve(),
+            "source_provenance": args.source_provenance,
         },
         codex_version=codex_harness.run_version(args.codex_bin),
-        git_commit=git_commit,
-        git_dirty=git_dirty,
+        git_commit=str(source_provenance["commit"]),
+        git_dirty=bool(source_provenance["dirty"]),
+        source_provenance=source_provenance,
     )
 
     summary_path = args.out_dir / "summary.json"
