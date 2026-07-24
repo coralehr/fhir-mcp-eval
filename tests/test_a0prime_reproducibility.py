@@ -20,6 +20,7 @@ class A0PrimeReproducibilityTests(unittest.TestCase):
         artifact = {
             "schema_version": "a0prime-score-artifact-v1",
             "source_receipt": {"files": []},
+            "question_count": 2,
             "questions": [
                 {
                     "question_id": "q1",
@@ -70,6 +71,56 @@ class A0PrimeReproducibilityTests(unittest.TestCase):
         self.assertIn("A0' projected", completed.stdout)
         self.assertIn("A0' still overflows on 0/1", completed.stdout)
         self.assertIn("projection-alone recovers 100%", completed.stdout)
+
+    def test_verdict_rejects_artifact_missing_a_required_stratum(self):
+        artifact = {
+            "schema_version": "a0prime-score-artifact-v1",
+            "source_receipt": {"files": []},
+            "question_count": 1,
+            "questions": [
+                {
+                    "question_id": "q1",
+                    "patient_fhir_id": "Patient/p1",
+                    "stratum": "overflow",
+                    "a0_correct": 0,
+                    "a5_correct": 1,
+                    "a0prime_correct": 1,
+                    "a0prime_overflow": False,
+                    "a0prime_grade_source": "numeric",
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "score-artifact.json"
+            path.write_text(json.dumps(artifact), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "both overflow and matched strata"):
+                a0prime_verdict.load_artifact(path)
+
+    def test_verdict_rejects_declared_question_count_mismatch(self):
+        artifact = {
+            "schema_version": "a0prime-score-artifact-v1",
+            "source_receipt": {"files": []},
+            "question_count": 2,
+            "questions": [
+                {
+                    "question_id": "q1",
+                    "patient_fhir_id": "Patient/p1",
+                    "stratum": "overflow",
+                    "a0_correct": 0,
+                    "a5_correct": 1,
+                    "a0prime_correct": 1,
+                    "a0prime_overflow": False,
+                    "a0prime_grade_source": "numeric",
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "score-artifact.json"
+            path.write_text(json.dumps(artifact), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "question_count does not match"):
+                a0prime_verdict.load_artifact(path)
 
     def test_builder_minimizes_raw_answers_and_records_source_checksums(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -195,6 +246,7 @@ class A0PrimeReproducibilityTests(unittest.TestCase):
         artifact = {
             "schema_version": "a0prime-score-artifact-v1",
             "source_receipt": {"files": []},
+            "question_count": 3,
             "questions": [
                 {
                     "question_id": "q1",
@@ -321,6 +373,7 @@ class A0PrimeReproducibilityTests(unittest.TestCase):
         artifact = {
             "schema_version": "a0prime-score-artifact-v1",
             "source_receipt": {"files": []},
+            "question_count": 5,
             "questions": [
                 row("correct", correct=1),
                 row(

@@ -29,7 +29,11 @@ def load_artifact(path: Path) -> dict[str, Any]:
     questions = artifact.get("questions")
     if not isinstance(questions, list) or not questions:
         raise ValueError("score artifact questions must be a non-empty array")
+    question_count = artifact.get("question_count")
+    if type(question_count) is not int or question_count != len(questions):
+        raise ValueError("score artifact question_count does not match questions")
     seen: set[str] = set()
+    strata: set[str] = set()
     for index, row in enumerate(questions):
         if not isinstance(row, dict):
             raise ValueError(f"question {index} is not an object")
@@ -39,6 +43,7 @@ def load_artifact(path: Path) -> dict[str, Any]:
         seen.add(qid)
         if row.get("stratum") not in {"overflow", "matched"}:
             raise ValueError(f"question {qid} has an invalid stratum")
+        strata.add(row["stratum"])
         if not isinstance(row.get("patient_fhir_id"), str):
             raise ValueError(f"question {qid} has no patient ID")
         for field in ("a0_correct", "a5_correct", "a0prime_correct"):
@@ -52,6 +57,8 @@ def load_artifact(path: Path) -> dict[str, Any]:
             "panel",
         }:
             raise ValueError(f"question {qid} has an invalid grade source")
+    if strata != {"overflow", "matched"}:
+        raise ValueError("score artifact must contain both overflow and matched strata")
     return artifact
 
 
