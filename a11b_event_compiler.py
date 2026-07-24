@@ -54,6 +54,8 @@ _FORBIDDEN_KEYS = {
     "gold",
     "governed",
     "reference_answer",
+    "selected_path_refs",
+    "selected_terminal_resource_ref",
     "selected_terminal_id",
     "selected_root_ref",
     "true",

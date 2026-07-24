@@ -10,6 +10,7 @@ from pathlib import Path
 from a11_evidence_core import canonical_bytes
 from a11b_corpus_builder import (
     ARM_ARTIFACTS,
+    _assert_public_blind,
     _event_fields,
     build_case,
     construct_corpus,
@@ -58,6 +59,16 @@ def _bundle(index: int, *, noise: int = 4) -> dict[str, object]:
 
 
 class A11bCorpusBuilderTests(unittest.TestCase):
+    def test_public_blind_scan_rejects_all_selected_path_gold_fields(self) -> None:
+        for field in (
+            "selected_terminal_resource_ref",
+            "selected_path_refs",
+        ):
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                _assert_public_blind(
+                    {"packet.json": f'{{"{field}":["Observation/LEAK"]}}'.encode()}
+                )
+
     def test_corpus_key_is_publicly_derived_without_operator_randomness(self) -> None:
         first = derive_corpus_key(
             generation_receipt_sha256="1" * 64,
@@ -104,6 +115,10 @@ class A11bCorpusBuilderTests(unittest.TestCase):
         self.assertEqual(len(set(receipt["arm_path_citations_sha256"].values())), 1)
         self.assertNotIn("gold", json.dumps(case["compiled"]["arms"], sort_keys=True))
         self.assertNotIn("answerable", json.dumps(case["compiled"]["arms"], sort_keys=True))
+        self.assertIn(
+            case["gold"]["selected_terminal_resource_ref"],
+            case["gold"]["selected_path_refs"],
+        )
         public = json.dumps(case["compiled"]["arms"], sort_keys=True)
         for forbidden in (
             "patient-000",
@@ -173,6 +188,8 @@ class A11bCorpusBuilderTests(unittest.TestCase):
             '"failure_mode"',
             '"reference_answer"',
             '"selected_root_ref"',
+            '"selected_path_refs"',
+            '"selected_terminal_resource_ref"',
         ):
             self.assertNotIn(forbidden, public)
 
