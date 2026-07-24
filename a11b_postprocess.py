@@ -153,7 +153,8 @@ def _load_controller(path: Path) -> tuple[dict[str, Any], str]:
         profile == "a11b-successor-development-v1"
         and value.get("inputs", {}).get("question_count") == 64
         and value.get("inputs", {}).get("answer_calls") == 192
-        and set(value.get("outputs", {})) == {"result"}
+        and set(value.get("outputs", {}))
+        == {"answer_export", "grading", "result"}
     )
     if (
         not isinstance(value, dict)

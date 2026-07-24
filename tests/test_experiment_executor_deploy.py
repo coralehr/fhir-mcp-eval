@@ -15,6 +15,45 @@ import experiment_executor_service as service
 
 
 class ExperimentExecutorDeployTests(unittest.TestCase):
+    def test_root_transport_parent_creation_is_retry_safe(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory) / "transport"
+
+            deploy._ensure_root_owned_directory(
+                parent,
+                mode=0o755,
+                uid=os.getuid(),
+                gid=os.getgid(),
+            )
+            deploy._ensure_root_owned_directory(
+                parent,
+                mode=0o755,
+                uid=os.getuid(),
+                gid=os.getgid(),
+            )
+
+            status = parent.lstat()
+            self.assertTrue(parent.is_dir())
+            self.assertEqual(status.st_uid, os.getuid())
+            self.assertEqual(status.st_gid, os.getgid())
+            self.assertEqual(status.st_mode & 0o777, 0o755)
+
+    def test_root_transport_parent_rejects_unsafe_existing_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            protected = root / "protected"
+            protected.mkdir()
+            parent = root / "transport"
+            parent.symlink_to(protected, target_is_directory=True)
+
+            with self.assertRaisesRegex(deploy.DeploymentError, "directory is unsafe"):
+                deploy._ensure_root_owned_directory(
+                    parent,
+                    mode=0o755,
+                    uid=os.getuid(),
+                    gid=os.getgid(),
+                )
+
     def test_complete_staging_path_uses_production_helper_signatures(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -126,6 +165,8 @@ class ExperimentExecutorDeployTests(unittest.TestCase):
                 deploy, "_copy", side_effect=strict_copy
             ), mock.patch.object(
                 deploy, "_mkdir", side_effect=local_mkdir
+            ), mock.patch.object(
+                deploy, "_ensure_root_owned_directory"
             ), mock.patch.object(
                 deploy, "_run"
             ), mock.patch.object(
