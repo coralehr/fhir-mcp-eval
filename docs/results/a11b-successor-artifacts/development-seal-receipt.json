@@ -8,19 +8,19 @@
     "anchor_request": {
       "bytes": 34062,
       "path": "anchors/a11b-successor-development-controller-2026-07-18.json",
-      "sha256": "8ce6678978da6a843cd94e8e92dc668c2f0240f5cc91897bdaa12a78f4b68843"
+      "sha256": "90165a0f1f63f08a4bf79d6651454cedbec7aceb856fd1f3233d865388ab73ee"
     },
     "bundle": {
       "bytes": 8331752,
-      "sha256": "7e386659a0c000ab22d6fc9954235c23dc74beec885ebcbe6562ce766dcfcb48"
+      "sha256": "1c03d5e08585a1c4dbb202e4e4d6a93fef6654fe36bea1a146de72c66cb6dfa5"
     },
     "controller": {
       "bytes": 98536,
-      "sha256": "daca25e7ed4efbb1a7c27c8d3f1e79fa19bfd5adfddb41e619ff223018c68478"
+      "sha256": "8daf6bac251cef8ba0bed4bf87a17295321b9825ebab97722e89b165d4a7f2ba"
     },
     "install_manifest": {
       "bytes": 391368,
-      "sha256": "d8d5ebcfab34b06b8b5021df560679040768f95652b0f48f6275ae283d17f026"
+      "sha256": "faf90b819959f7f58898c0be465386ac1317364a72b5c6799732bf91bf7442e8"
     },
     "python_tree_receipt": {
       "bytes": 383059,
@@ -36,7 +36,7 @@
     "install_package_builds_byte_identical": true,
     "model_calls": 0,
     "retired_controller_or_manifest_reused": false,
-    "source_commit": "01e42ead1c0787df25aca65199d8eb80050b02fe"
+    "source_commit": "cfd673f472b54e99de37a109097ea5109c3d7c21"
   },
   "corpus": {
     "audit_manifest_sha256": "b233b4bdfe9411ccf2720acd3e7850a01f340b73bce46bdc07adda0260362dcc",
@@ -53,7 +53,13 @@
     "version": "Python 3.14.5"
   },
   "question_count": 64,
-  "run_id": "8005f860fdebcbab717e62a7bea35291b6570769d7091db00712a896e2afa034",
+  "retired_candidate": {
+    "controller_sha256": "daca25e7ed4efbb1a7c27c8d3f1e79fa19bfd5adfddb41e619ff223018c68478",
+    "model_calls": 0,
+    "reason": "content-free macOS bootstrap failures before readiness",
+    "status": "retired"
+  },
+  "run_id": "d948ff16474f5de8822e8ac065bd953068326a783d283123ededb266f4897163",
   "runtime": {
     "bytes": 260405808,
     "sha256": "29915529b97697def1a957b0505e770aa6a45744435d62fc263e98d7619e167a",

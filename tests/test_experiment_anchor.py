@@ -229,6 +229,7 @@ def verified_remote_fetch(
     merger_id: int = 1001,
     reviewer: str = "AJ112103",
     reviewer_id: int = 143727238,
+    reviewer_association: str = "MEMBER",
     reviewed_path: str = "anchors/a11b/anchor-request.json",
     reviewed_head_bytes: bytes | None = None,
 ):
@@ -303,7 +304,7 @@ def verified_remote_fetch(
                         "state": "APPROVED",
                         "commit_id": head,
                         "submitted_at": "2026-07-15T14:10:00Z",
-                        "author_association": "MEMBER",
+                        "author_association": reviewer_association,
                         "user": {
                             "login": reviewer,
                             "id": reviewer_id,
@@ -513,6 +514,31 @@ class ExperimentAnchorTests(unittest.TestCase):
                 receipt["anchor_request_sha256"], sha(expected)
             )
             self.assertEqual(receipt["independent_approvers"], ["AJ112103"])
+
+    def test_pinned_approver_does_not_depend_on_public_org_membership(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            controller = write_v4_controller(Path(directory))
+            expected = experiment_anchor.canonical_json_bytes(
+                experiment_anchor.build_anchor_request(controller)
+            )
+            commit = "b" * 40
+            url = (
+                "https://api.github.com/repos/coralehr/fhir-mcp-eval/contents/"
+                f"anchors/a11b/anchor-request.json?ref={commit}"
+            )
+
+            receipt = experiment_anchor.verify_external_anchor(
+                controller,
+                url,
+                expected_controller_sha256=sha(controller.read_bytes()),
+                fetch_bytes=verified_remote_fetch(
+                    expected,
+                    commit,
+                    reviewer_association="NONE",
+                ),
+            )
+
+            self.assertEqual(receipt["independent_approver_ids"], [143727238])
 
     def test_signed_anchor_receipt_is_offline_verifiable_and_tamper_evident(
         self,

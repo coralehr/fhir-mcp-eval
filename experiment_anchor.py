@@ -31,7 +31,6 @@ SSH_KEYGEN_PATH = Path("/usr/bin/ssh-keygen")
 SSH_KEYGEN_ENV = {"PATH": "/usr/bin:/bin", "LC_ALL": "C"}
 SSH_KEYGEN_TIMEOUT_SECONDS = 30
 MAX_REMOTE_BYTES = 1024 * 1024
-TRUSTED_REVIEWER_ASSOCIATIONS = frozenset({"MEMBER", "OWNER", "COLLABORATOR"})
 TRUSTED_INDEPENDENT_APPROVERS_BY_ID: Mapping[int, str] = MappingProxyType(
     {
         143709176: "Arhaan2104",
@@ -698,7 +697,6 @@ def _independent_pr_approval(
         and review["user"]["login"].casefold()
         == TRUSTED_INDEPENDENT_APPROVERS_BY_ID[user_id].casefold()
         and review.get("state") == "APPROVED"
-        and review.get("author_association") in TRUSTED_REVIEWER_ASSOCIATIONS
         and isinstance(review.get("submitted_at"), str)
         and review["submitted_at"]
         and review["submitted_at"] <= pull["merged_at"]
