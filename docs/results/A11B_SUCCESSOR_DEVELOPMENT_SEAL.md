@@ -15,24 +15,24 @@ registered deterministic exact-alias endpoint and explicitly authorizes zero
 panel calls.
 
 Two independent clean-root development corpora (`c` and `d`) produced
-byte-identical public and audit manifests. The installation package was built
-twice from source commit
-`01e42ead1c0787df25aca65199d8eb80050b02fe` and every package byte matched.
+byte-identical public and audit manifests. The replacement installation package
+was built twice from source commit
+`cfd673f472b54e99de37a109097ea5109c3d7c21` and every package byte matched.
 Controllers compiled independently from corpus builds `c` and `d` were also
 byte-identical.
 
 Key public receipts:
 
 - controller SHA-256:
-  `daca25e7ed4efbb1a7c27c8d3f1e79fa19bfd5adfddb41e619ff223018c68478`;
+  `8daf6bac251cef8ba0bed4bf87a17295321b9825ebab97722e89b165d4a7f2ba`;
 - private executor bundle SHA-256:
-  `7e386659a0c000ab22d6fc9954235c23dc74beec885ebcbe6562ce766dcfcb48`;
+  `1c03d5e08585a1c4dbb202e4e4d6a93fef6654fe36bea1a146de72c66cb6dfa5`;
 - installation manifest SHA-256:
-  `d8d5ebcfab34b06b8b5021df560679040768f95652b0f48f6275ae283d17f026`;
+  `faf90b819959f7f58898c0be465386ac1317364a72b5c6799732bf91bf7442e8`;
 - external anchor request SHA-256:
-  `8ce6678978da6a843cd94e8e92dc668c2f0240f5cc91897bdaa12a78f4b68843`;
+  `90165a0f1f63f08a4bf79d6651454cedbec7aceb856fd1f3233d865388ab73ee`;
 - run ID:
-  `8005f860fdebcbab717e62a7bea35291b6570769d7091db00712a896e2afa034`.
+  `d948ff16474f5de8822e8ac065bd953068326a783d283123ededb266f4897163`.
 
 The machine-readable receipt is
 [`a11b-successor-artifacts/development-seal-receipt.json`](a11b-successor-artifacts/development-seal-receipt.json),
@@ -60,6 +60,12 @@ not permission to run.
 - [x] Independently rebuild the controller and installation package with
   byte-identical outputs. Their SHA-256 values are listed above and bound in
   the machine-readable development-seal receipt.
+- [x] Exercise the original sealed package through exact-head verification and
+  the real macOS bootstrap. Those pre-readiness attempts exposed an
+  output-inventory mismatch, a retry-hostile fixed transport-parent creation
+  path, and a hidden GitHub membership false negative. The replacement package
+  fixes each defect with a regression test. The retired controller made zero
+  model calls and no answer content was opened.
 - [x] Bind deterministic exact-alias grading, 192 answer calls, zero panel
   calls, the native runtime, the trusted executor, and the witness schedule in
   the public anchor candidate.
@@ -90,6 +96,15 @@ organic production EHR records, real-world clinical validity, production
 authorization or correction behavior, universal graph superiority, or the
 need for a native graph database. Those require separate natural-chart,
 principal-varying, and production-substrate evaluations.
+
+## Retired zero-call candidate
+
+The previously published controller
+`daca25e7ed4efbb1a7c27c8d3f1e79fa19bfd5adfddb41e619ff223018c68478`
+was independently approved and merged, but the transactional macOS bootstrap
+rejected it before readiness. No answer-model or judge call was released. It
+is retained only as failure evidence and must not be launched or reinterpreted
+as part of this replacement run.
 
 ## Remaining gate
 
