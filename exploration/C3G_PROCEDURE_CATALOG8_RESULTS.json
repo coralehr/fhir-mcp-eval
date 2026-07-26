@@ -1,0 +1,90 @@
+{
+  "kind": "burned_development_procedure_catalog_probe_result",
+  "date": "2026-07-25",
+  "interpretation": "Exploratory, post-hoc reviewed, non-confirmatory, and not a product claim.",
+  "question_ids_file": "exploration/c3g_procedure_catalog8_question_ids.txt",
+  "model": "gpt-5.6-sol",
+  "reasoning_effort": "medium",
+  "codex_version": "codex-cli 0.144.1",
+  "integrity": {
+    "calls": 24,
+    "failed_calls": 0,
+    "contaminated_event_logs": 0,
+    "nonempty_stderr_logs": 0,
+    "packet_cwd_isolated": true,
+    "sandbox": "read-only",
+    "observed_tool_or_shell_calls": 0,
+    "input_csv_sha256": "330a9659001b441192e2be72bdbdb97992107c7a21aa73804ee60e3180b29ed0",
+    "input_csv_model_visible_leak_check": "No gold, SQL, source-table, or grading fields appeared in the dry-run prompt.",
+    "manifest_dirty_reason": "The Mac mini checkout contained the untracked gold-free public input CSV; exact Git commits and harness/packet hashes are recorded below."
+  },
+  "arms": {
+    "visit_scoped": {
+      "treatment": "Existing packet resources pruned to the selected Encounter family when applicable.",
+      "packet_sha256": "41d384817865e0ba4262fc4fcaefdb1eca9ec46b5d8bf327a5ca78e02ab4aa8e",
+      "git_commit": "3653ad6166278352bc86497d8b3caff46c96986a",
+      "manifest_sha256": "b412f9289e236334da6ff4cc0a0011bef17626479cd784722f8e0e1aedfecb2b",
+      "summary_sha256": "646911cf32d76820e9f7031d81dde41dc7b05a8f1aec6d0c4d1dfef35e1a4463",
+      "posthoc_answer_correct": 3,
+      "posthoc_mechanism_correct": 2,
+      "questions": 8,
+      "tokens": {
+        "input": 260212,
+        "cached_input": 12032,
+        "output": 2418,
+        "reasoning_output": 798,
+        "accepted_total_input_plus_output": 262630,
+        "accepted_noncached_input_plus_output": 250598
+      }
+    },
+    "neutral_catalog": {
+      "treatment": "Same scoped resources plus additive source-family and time-precision metadata; no preferred family.",
+      "packet_sha256": "c96b34cb3824a333e8613329b96cdc04cab2b1dcb9a27b1dc05068f41735ba13",
+      "git_commit": "3653ad6166278352bc86497d8b3caff46c96986a",
+      "manifest_sha256": "ae94b4b38a89fba2374d2747713e49c11db1e06a383eeb7794df1ecbd4786ad1",
+      "summary_sha256": "67597dad99bb0dc3f0bf4503f3c9622e54661229a26b47dda4ea60097b52ec1a",
+      "posthoc_answer_correct": 3,
+      "posthoc_mechanism_correct": 2,
+      "questions": 8,
+      "tokens": {
+        "input": 310182,
+        "cached_input": 12032,
+        "output": 2279,
+        "reasoning_output": 842,
+        "accepted_total_input_plus_output": 312461,
+        "accepted_noncached_input_plus_output": 300429
+      }
+    },
+    "benchmark_vocabulary_policy": {
+      "treatment": "Same neutral catalog plus an explicit burned-benchmark policy selecting inpatient-coded procedures, applying the authoritative upper time bound, and ordering by event start.",
+      "generality": "Intentional benchmark-specific thesis-killer control; not a graph or product rule.",
+      "packet_sha256": "99802d899eb6c51bc3603531b41f68de936575a3f323e1d0a21f943999ab2d8c",
+      "git_commit": "f5ca0c1bc791c79cbb23e9539b61fd73f3e99752",
+      "manifest_sha256": "8de0a20dd52e859b1c3f593655ddfead6859fe764ade7977bb38e67bd8700b49",
+      "summary_sha256": "f3c6b4d95a1a2d9986228b544a7590ec0921d7dec239ed95495b6e0b96609328",
+      "posthoc_lenient_calendar_day_or_empty_correct": 7,
+      "exact_timestamp_score": "not claimed; the policy preserves source day precision instead of treating midnight as an observed time",
+      "posthoc_mechanism_correct": 7,
+      "questions": 8,
+      "tokens": {
+        "input": 313397,
+        "cached_input": 36096,
+        "output": 1972,
+        "reasoning_output": 346,
+        "accepted_total_input_plus_output": 315369,
+        "accepted_noncached_input_plus_output": 279273
+      }
+    }
+  },
+  "per_question": [
+    {"question_id": "08bd537529e959a773c05e95", "visit_scoped": "correct", "neutral_catalog": "correct", "benchmark_vocabulary_policy": "wrong", "finding": "No Procedure root was present. The first two arms used medication evidence as a proxy; the strict family policy exposed the missing-substrate failure."},
+    {"question_id": "104c93f89e19274578bafb8d", "visit_scoped": "correct", "neutral_catalog": "correct", "benchmark_vocabulary_policy": "correct", "finding": "Named inpatient-coded positive control remained correct."},
+    {"question_id": "19858b1d6157d97c01ffb3cf", "visit_scoped": "wrong", "neutral_catalog": "wrong", "benchmark_vocabulary_policy": "correct", "finding": "Neutral metadata fixed start-versus-end ordering but not family choice; explicit vocabulary selected the correct day-precision ICD event."},
+    {"question_id": "20db068481b9b06cc4340c25", "visit_scoped": "correct", "neutral_catalog": "correct", "benchmark_vocabulary_policy": "correct", "finding": "All arms found the earliest coded procedure."},
+    {"question_id": "2e773c48c344e7f33a29892f", "visit_scoped": "wrong", "neutral_catalog": "wrong", "benchmark_vocabulary_policy": "correct", "finding": "Only the policy arm enforced the authoritative upper time bound and rejected all future events."},
+    {"question_id": "8a165a892467a3f42aa7f482", "visit_scoped": "wrong", "neutral_catalog": "wrong", "benchmark_vocabulary_policy": "correct", "finding": "Explicit family choice rejected a later ED workflow event."},
+    {"question_id": "9a53c5a84a90577e106b30ec", "visit_scoped": "wrong", "neutral_catalog": "wrong", "benchmark_vocabulary_policy": "correct", "finding": "Explicit family choice rejected later ICU bedside events in the selected visit."},
+    {"question_id": "b71bf47188930e8abb1e562f", "visit_scoped": "wrong", "neutral_catalog": "wrong", "benchmark_vocabulary_policy": "correct", "finding": "The neutral catalog landed on the right date through the wrong minute-level family; the policy cited the correct inpatient-coded resources."}
+  ],
+  "conclusion": "On this deliberately selected burned set, graph reachability and neutral provenance labels were insufficient. Declared query vocabulary plus time semantics fixed every present-root failure, while the missing-root control remained unresolved and exposed the cost of over-strict family filtering."
+}

@@ -122,17 +122,34 @@ the same packet plus this neutral catalog. It asks whether exposing provenance
 and time precision is enough. If it is not, the next comparison is a declared
 vocabulary policy—not more graph traversal.
 
-That neutral comparison completed with strict answer/source correctness of
-3/8 in both arms. The catalog consumed 310,182 input tokens versus 260,212 for
-the scoped packet (+19.2%). It changed period ordering from end to start in the
-known collision, but still chose the wrong event family. It also failed to
-exclude future events and could not recover the missing-Procedure control.
+That neutral comparison completed with post-hoc answer correctness of 3/8 in
+both arms and mechanism correctness of 2/8: the extra answer-correct case used
+medication evidence as a proxy for a missing Procedure. The catalog consumed
+310,182 input tokens versus 260,212 for the scoped packet (+19.2%). It changed
+period ordering from end to start in the known collision, but still chose the
+wrong event family. It also failed to exclude future events and could not
+recover the missing-Procedure control.
 
 The next arm is therefore an intentionally benchmark-specific, burned-dev
 vocabulary control. It declares that this benchmark's generic “procedure”
 questions mean the inpatient ICD-coded family, applies the authoritative upper
 time bound, and orders by event start. If that fixes the cases, it is evidence
 for explicit query semantics—not evidence that more graph traversal helped.
+
+The control finished at 7/8 post-hoc lenient calendar-day-or-empty correctness
+with the intended source family. Exact timestamp correctness is not claimed:
+the policy deliberately preserves day precision instead of pretending midnight
+was observed. It fixed all five neutral-catalog failures where the needed
+Procedure root was present:
+three wrong-family choices, one future-record error, and the original combined
+family/time collision. It consumed 313,397 input tokens, nearly the same as the
+neutral catalog and 20.4% more than the scoped arm.
+
+The sole miss was the zero-Procedure-root control. The scoped and neutral arms
+had answered it from medication evidence, while the stricter policy returned
+zero and was wrong. This is useful rather than embarrassing: semantic policy
+cannot recover a missing source event, and overly strict family filtering can
+discard a valid cross-resource proxy.
 
 ## Current interpretation
 
