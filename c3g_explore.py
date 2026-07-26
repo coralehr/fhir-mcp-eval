@@ -49,6 +49,10 @@ VISIT_SELECTOR = re.compile(
 )
 CURRENT_POLICIES = ("snapshot-open", "historical-as-of")
 ACTIVE_ENCOUNTER_STATUSES = frozenset({"arrived", "triaged", "in-progress", "onleave"})
+PROCEDURE_FAMILY_SUFFIXES = {
+    "inpatient_coded": ("/mimic-procedure-icd9", "/mimic-procedure-icd10"),
+    "icu_bedside": ("/mimic-d-items",),
+}
 
 # Mirrored from Bonfire's experimental clinical-reference-v1 semantic catalog.
 # Keeping it here makes this prototype file-backed and disposable.
@@ -352,6 +356,94 @@ def visit_scope(
     return scoped_record, receipt
 
 
+def procedure_event_entry(resource: dict[str, Any]) -> dict[str, Any] | None:
+    if resource.get("resourceType") != "Procedure":
+        return None
+    coding = resource.get("code", {}).get("coding")
+    coding = coding if isinstance(coding, list) else []
+    systems = sorted(
+        {
+            str(item.get("system"))
+            for item in coding
+            if isinstance(item, dict) and item.get("system")
+        }
+    )
+    matched_families = {
+        family
+        for family, suffixes in PROCEDURE_FAMILY_SUFFIXES.items()
+        if any(system.endswith(suffix) for system in systems for suffix in suffixes)
+    }
+    if any(system == "http://snomed.info/sct" for system in systems):
+        matched_families.add("ed_workflow")
+    family = next(iter(matched_families)) if len(matched_families) == 1 else "unknown"
+
+    performed = resource.get("performedDateTime")
+    period = resource.get("performedPeriod")
+    start: str | None = None
+    end: str | None = None
+    if isinstance(performed, str):
+        start = performed
+        end = performed
+    elif isinstance(period, dict):
+        start = period.get("start") if isinstance(period.get("start"), str) else None
+        end = period.get("end") if isinstance(period.get("end"), str) else None
+    precision = "day" if family == "inpatient_coded" else "minute"
+    if start is None:
+        precision = "unknown"
+
+    primary = next((item for item in coding if isinstance(item, dict)), {})
+    encounter = resource.get("encounter")
+    encounter_ref = encounter.get("reference") if isinstance(encounter, dict) else None
+    return {
+        "resource_ref": resource_ref(resource),
+        "source_family": family,
+        "provenance_basis": "code_system",
+        "source_profile": None,
+        "code_systems": systems,
+        "code": primary.get("code"),
+        "display": primary.get("display"),
+        "encounter_ref": encounter_ref,
+        "status": resource.get("status"),
+        "time": {
+            "start": start,
+            "end": end,
+            "precision": precision,
+            "default_order_key": "start",
+        },
+    }
+
+
+def event_catalog_packet(record: dict[str, Any]) -> dict[str, Any]:
+    """Add provenance metadata without filtering or reordering FHIR resources."""
+    output = copy.deepcopy(record)
+    packet = output.get("packet")
+    resources = packet.get("resources") if isinstance(packet, dict) else None
+    if not isinstance(resources, list):
+        raise ValueError("event catalog requires packet resources")
+    entries = [entry for resource in resources if (entry := procedure_event_entry(resource))]
+    entries.sort(key=canonical_bytes)
+    counts: dict[str, int] = defaultdict(int)
+    for entry in entries:
+        counts[entry["source_family"]] += 1
+    packet["clinical_event_catalog"] = {
+        "kind": "neutral_provenance_aware_procedure_catalog",
+        "version": PROTOTYPE_VERSION,
+        "interpretation": (
+            "Additive source-family metadata only. Generic procedure language can be "
+            "ambiguous across families; this catalog does not choose a preferred family."
+        ),
+        "profile_note": (
+            "Input projection removed meta.profile, so this throwaway catalog derives "
+            "family from code system and marks conflicting signals unknown."
+        ),
+        "family_counts": dict(sorted(counts.items())),
+        "entries": entries,
+    }
+    packet.pop("sha256", None)
+    packet["sha256"] = digest(packet)
+    return output
+
+
 def edges_for(resource: dict[str, Any]) -> list[dict[str, str]]:
     source = resource_ref(resource)
     if source is None:
@@ -644,6 +736,7 @@ def build(args: argparse.Namespace) -> int:
     flat_records: list[dict[str, Any]] = []
     graph_records: list[dict[str, Any]] = []
     visit_graph_records: list[dict[str, Any]] = []
+    visit_catalog_records: list[dict[str, Any]] = []
     census_rows: list[dict[str, Any]] = []
 
     for index, record in enumerate(records, 1):
@@ -665,6 +758,7 @@ def build(args: argparse.Namespace) -> int:
         flat_records.append(record)
         graph_records.append(graph_packet(record, closure))
         visit_record, visit_receipt = visit_scope(record, current_policy=args.current_policy)
+        visit_catalog_records.append(event_catalog_packet(visit_record))
         visit_roots = visit_record["packet"]["resources"]
         visit_closure = compile_closure(
             visit_roots,
@@ -699,10 +793,12 @@ def build(args: argparse.Namespace) -> int:
     flat_path = args.output_dir / "flat_packets.jsonl"
     graph_path = args.output_dir / "graph_packets.jsonl"
     visit_graph_path = args.output_dir / "visit_graph_packets.jsonl"
+    visit_catalog_path = args.output_dir / "visit_catalog_packets.jsonl"
     census_path = args.output_dir / "census.json"
     write_jsonl(flat_path, flat_records)
     write_jsonl(graph_path, graph_records)
     write_jsonl(visit_graph_path, visit_graph_records)
+    write_jsonl(visit_catalog_path, visit_catalog_records)
     sample = choose_sample(census_rows, args.sample_size, args.control_count)
     census = {
         "kind": "throwaway_c3g_exploration_census",
@@ -716,6 +812,10 @@ def build(args: argparse.Namespace) -> int:
             "visit_graph": {
                 "path": str(visit_graph_path),
                 "sha256": a6.sha256_file(visit_graph_path),
+            },
+            "visit_catalog": {
+                "path": str(visit_catalog_path),
+                "sha256": a6.sha256_file(visit_catalog_path),
             },
         },
         "question_count": len(census_rows),

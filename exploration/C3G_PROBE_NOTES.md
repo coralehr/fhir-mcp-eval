@@ -100,6 +100,28 @@ FHIR conversion represents both ICD procedures and bedside `d-items` as FHIR
 `Procedure`. The model chose a later bedside event. This is a semantic-family
 and provenance collision, not missing graph reachability.
 
+## Neutral event-catalog probe
+
+Across all 409 projected packets, the same FHIR `Procedure` type contains 678
+events from three source conventions:
+
+| Derived family | Events | Time representation |
+|---|---:|---|
+| Inpatient ICD-coded procedure | 176 | `performedDateTime`, day precision |
+| ICU bedside event | 304 | `performedPeriod`, minute precision |
+| ED/SNOMED workflow event | 198 | `performedDateTime`, minute precision |
+
+The input projection has already removed `meta.profile`, so the throwaway
+catalog derives these families from the dataset's code-system conventions and
+records that limitation. It is additive: it preserves every FHIR resource,
+does not choose a preferred family for generic “procedure” language, and marks
+conflicting signals unknown.
+
+The next eight-question burned probe compares the encounter-scoped packet with
+the same packet plus this neutral catalog. It asks whether exposing provenance
+and time precision is enough. If it is not, the next comparison is a declared
+vocabulary policy—not more graph traversal.
+
 ## Current interpretation
 
 Generic outbound closure is not the useful intervention on this benchmark. The
@@ -110,8 +132,8 @@ promising context-compiler primitives are:
 3. a provenance-aware clinical event catalog that separates coded procedures
    from bedside procedure events and defines a canonical timestamp per family.
 
-Next exploratory work should test those three primitives on the rest of the
-burned visit-specific questions before any larger run. The next answer probe
-should compare flat packets with inverse-Encounter packets only; generic
-outbound closure has already failed its mechanism test. A native graph database
-is still neither required nor supported by this probe.
+The next answer probe is the eight-question neutral event-catalog comparison
+above. A separate burned probe can test the 23 snapshot-open cases, keeping
+empty results distinct from zero/false aggregates. Generic outbound closure has
+already failed its mechanism test. A native graph database is still neither
+required nor supported by this probe.
