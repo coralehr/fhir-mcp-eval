@@ -30,7 +30,7 @@ import a6_packet_builder as a6
 from fhir_client import get_fhir_client
 
 
-PROTOTYPE_VERSION = "c3g-explore-v0"
+PROTOTYPE_VERSION = "c3g-explore-v1"
 DEFAULT_MAX_DEPTH = 2
 DEFAULT_MAX_TARGETS = 24
 DEFAULT_MAX_EDGES = 96
@@ -47,6 +47,8 @@ VISIT_SELECTOR = re.compile(
     r"(?:hospital\s+)?(?P<noun>visit|stay|admission|encounter)\b",
     re.I,
 )
+CURRENT_POLICIES = ("snapshot-open", "historical-as-of")
+ACTIVE_ENCOUNTER_STATUSES = frozenset({"arrived", "triaged", "in-progress", "onleave"})
 
 # Mirrored from Bonfire's experimental clinical-reference-v1 semantic catalog.
 # Keeping it here makes this prototype file-backed and disposable.
@@ -181,8 +183,20 @@ def comparable_datetime(value: str | None) -> dt.datetime | None:
     return parsed.replace(tzinfo=None)
 
 
-def visit_scope(record: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Prototype the inverse edge: Encounter <- patient events."""
+def visit_scope(
+    record: dict[str, Any],
+    *,
+    current_policy: str = "snapshot-open",
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Prune existing packet roots to one Encounter family.
+
+    This does not perform inverse retrieval.  ``snapshot-open`` mirrors this
+    benchmark's ``dischtime IS NULL`` semantics using FHIR Encounter.status.
+    ``historical-as-of`` instead asks which period contained the simulated
+    current time, even if the final-snapshot status is now ``finished``.
+    """
+    if current_policy not in CURRENT_POLICIES:
+        raise ValueError(f"unknown current visit policy: {current_policy}")
     question = str(record.get("question") or "")
     match = VISIT_SELECTOR.search(question)
     if match is None:
@@ -204,7 +218,30 @@ def visit_scope(record: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]
     selected: dict[str, Any] | None = None
     state = "selected"
     if selector == "current":
-        if now is None:
+        if current_policy == "snapshot-open":
+            active = [
+                resource
+                for resource in encounters
+                if str(resource.get("status") or "").casefold() in ACTIVE_ENCOUNTER_STATUSES
+            ]
+            if now is not None:
+                active = [
+                    resource
+                    for resource in active
+                    if (comparable_datetime(clinical_time(resource, "start")) or dt.datetime.min)
+                    <= now
+                    and (
+                        comparable_datetime(clinical_time(resource, "end")) is None
+                        or comparable_datetime(clinical_time(resource, "end")) >= now
+                    )
+                ]
+            if len(active) == 1:
+                selected = active[0]
+            elif not active:
+                state = "no_active_encounter_in_packet"
+            else:
+                state = "ambiguous_active_encounters"
+        elif now is None:
             state = "current_time_missing"
         else:
             selected = next(
@@ -220,7 +257,7 @@ def visit_scope(record: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]
                 None,
             )
             if selected is None:
-                state = "no_active_encounter"
+                state = "no_historical_encounter_at_time"
     elif encounters:
         eligible = encounters
         if now is not None:
@@ -269,23 +306,40 @@ def visit_scope(record: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]
                         if target_ref not in keep_refs:
                             keep_refs.add(target_ref)
                             changed = True
-    scoped = [resource for resource in source if resource_ref(resource) in keep_refs]
+    unresolved_states = {
+        "ambiguous_active_encounters",
+        "current_time_missing",
+        "no_encounters_in_packet",
+        "no_prior_encounter",
+    }
+    if selected is None and state in unresolved_states:
+        scoped = list(source)
+    else:
+        scoped = [resource for resource in source if resource_ref(resource) in keep_refs]
     receipt = {
         "kind": "inverse_encounter_edge_scope",
         "version": PROTOTYPE_VERSION,
         "selector": selector,
+        "current_policy": current_policy,
         "state": state,
         "authoritative_now": now.isoformat() if now else None,
+        "comparison_clock": "source-local-wall-time",
         "candidate_encounter_count": len(encounters),
         "selected_encounter": selected_ref,
         "family_refs": sorted(family_refs),
         "input_resource_count": len(source),
         "output_resource_count": len(scoped),
     }
-    if state == "no_active_encounter":
+    if selected is None and state in unresolved_states:
+        receipt["scope_applied"] = False
+        receipt["reason"] = "visit scope could not be established; original roots retained"
+    else:
+        receipt["scope_applied"] = True
+    if state in {"no_active_encounter_in_packet", "no_historical_encounter_at_time"}:
         receipt["negative_evidence"] = (
-            "No hospital Encounter contains the authoritative current time; "
-            "there is no current hospital stay and current-stay events have zero matches."
+            "No matching hospital Encounter appears in the supplied packet under the "
+            f"{current_policy} policy. Packet completeness is not proven, so this is not "
+            "a store-wide absence claim."
         )
     packet["visit_graph"] = receipt
     packet["resources"] = scoped
@@ -610,7 +664,7 @@ def build(args: argparse.Namespace) -> int:
         )
         flat_records.append(record)
         graph_records.append(graph_packet(record, closure))
-        visit_record, visit_receipt = visit_scope(record)
+        visit_record, visit_receipt = visit_scope(record, current_policy=args.current_policy)
         visit_roots = visit_record["packet"]["resources"]
         visit_closure = compile_closure(
             visit_roots,
@@ -653,6 +707,7 @@ def build(args: argparse.Namespace) -> int:
     census = {
         "kind": "throwaway_c3g_exploration_census",
         "version": PROTOTYPE_VERSION,
+        "compiler_sha256": a6.sha256_file(Path(__file__)),
         "interpretation": "development-only; burned data; not a confirmatory result",
         "input": {"path": str(args.input), "sha256": a6.sha256_file(args.input)},
         "outputs": {
@@ -696,6 +751,57 @@ def inspect(args: argparse.Namespace) -> int:
     return 0
 
 
+def visit_census(args: argparse.Namespace) -> int:
+    records = load_jsonl(args.input, limit=args.limit)
+    rows = []
+    for record in records:
+        scoped, receipt = visit_scope(record, current_policy=args.current_policy)
+        if receipt["state"] == "not_applicable":
+            continue
+        rows.append(
+            {
+                "question_id": record.get("question_id"),
+                "question": record.get("question"),
+                **receipt,
+                "output_packet_sha256": scoped["packet"]["sha256"],
+                "resource_reduction": receipt["input_resource_count"]
+                - receipt["output_resource_count"],
+            }
+        )
+    by_state: dict[str, int] = defaultdict(int)
+    for row in rows:
+        by_state[row["state"]] += 1
+    rows.sort(key=lambda row: (-row["resource_reduction"], str(row["question_id"])))
+    value = {
+        "kind": "throwaway_inverse_encounter_census",
+        "version": PROTOTYPE_VERSION,
+        "compiler_sha256": a6.sha256_file(Path(__file__)),
+        "interpretation": "development-only; burned data; not a confirmatory result",
+        "input": {"path": str(args.input), "sha256": a6.sha256_file(args.input)},
+        "input_question_count": len(records),
+        "applicable_question_count": len(rows),
+        "states": dict(sorted(by_state.items())),
+        "total_resource_reduction": sum(row["resource_reduction"] for row in rows),
+        "rows": rows,
+    }
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    print(
+        json.dumps(
+            {
+                "output": str(args.output),
+                "input_questions": len(records),
+                "applicable_questions": len(rows),
+                "states": value["states"],
+                "total_resource_reduction": value["total_resource_reduction"],
+                "top_question_ids": [row["question_id"] for row in rows[:12]],
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(description=__doc__)
     commands = root.add_subparsers(dest="command", required=True)
@@ -712,11 +818,20 @@ def parser() -> argparse.ArgumentParser:
     build_parser.add_argument("--max-edges", type=int, default=DEFAULT_MAX_EDGES)
     build_parser.add_argument("--max-citations", type=int, default=DEFAULT_MAX_CITATIONS)
     build_parser.add_argument("--max-added-bytes", type=int, default=DEFAULT_MAX_ADDED_BYTES)
+    build_parser.add_argument("--current-policy", choices=CURRENT_POLICIES, required=True)
     build_parser.set_defaults(func=build)
     inspect_parser = commands.add_parser("inspect", help="terminal inspection UI")
     inspect_parser.add_argument("--census", type=Path, required=True)
     inspect_parser.add_argument("--question-id")
     inspect_parser.set_defaults(func=inspect)
+    census_parser = commands.add_parser(
+        "visit-census", help="zero-network census of inverse Encounter scoping"
+    )
+    census_parser.add_argument("--input", type=Path, required=True)
+    census_parser.add_argument("--output", type=Path, required=True)
+    census_parser.add_argument("--limit", type=int)
+    census_parser.add_argument("--current-policy", choices=CURRENT_POLICIES, required=True)
+    census_parser.set_defaults(func=visit_census)
     return root
 
 
