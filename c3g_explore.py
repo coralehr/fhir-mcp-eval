@@ -321,7 +321,7 @@ def visit_scope(
     else:
         scoped = [resource for resource in source if resource_ref(resource) in keep_refs]
     receipt = {
-        "kind": "inverse_encounter_edge_scope",
+        "kind": "encounter_scoped_packet_pruning",
         "version": PROTOTYPE_VERSION,
         "selector": selector,
         "current_policy": current_policy,
@@ -829,6 +829,73 @@ def build(args: argparse.Namespace) -> int:
     return 0
 
 
+def catalog_build(args: argparse.Namespace) -> int:
+    """Build flat/scoped/catalog packets without a FHIR client or network."""
+    requested = list(args.question_id)
+    if args.question_id_file:
+        requested.extend(
+            line.strip()
+            for line in args.question_id_file.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        )
+    requested_ids = set(requested) if requested else None
+    records = load_jsonl(args.input, limit=args.limit, question_ids=requested_ids)
+    if requested_ids:
+        found = {str(record.get("question_id")) for record in records}
+        missing = sorted(requested_ids - found)
+        if missing:
+            raise ValueError(f"input packet file is missing question IDs: {missing}")
+
+    scoped_records = []
+    catalog_records = []
+    rows = []
+    for record in records:
+        scoped, visit_receipt = visit_scope(record, current_policy=args.current_policy)
+        catalog = event_catalog_packet(scoped)
+        scoped_records.append(scoped)
+        catalog_records.append(catalog)
+        event_catalog = catalog["packet"]["clinical_event_catalog"]
+        rows.append(
+            {
+                "question_id": record.get("question_id"),
+                "visit_scope": visit_receipt,
+                "flat_resource_count": record["packet"]["resource_count"],
+                "scoped_resource_count": scoped["packet"]["resource_count"],
+                "procedure_family_counts": event_catalog["family_counts"],
+            }
+        )
+
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    flat_path = args.output_dir / "flat_packets.jsonl"
+    scoped_path = args.output_dir / "visit_scoped_packets.jsonl"
+    catalog_path = args.output_dir / "visit_catalog_packets.jsonl"
+    write_jsonl(flat_path, records)
+    write_jsonl(scoped_path, scoped_records)
+    write_jsonl(catalog_path, catalog_records)
+    census = {
+        "kind": "throwaway_procedure_catalog_probe",
+        "version": PROTOTYPE_VERSION,
+        "interpretation": "development-only; burned data; not a confirmatory result",
+        "compiler_sha256": a6.sha256_file(Path(__file__)),
+        "input": {"path": str(args.input), "sha256": a6.sha256_file(args.input)},
+        "current_policy": args.current_policy,
+        "question_count": len(rows),
+        "outputs": {
+            "flat": {"path": str(flat_path), "sha256": a6.sha256_file(flat_path)},
+            "visit_scoped": {"path": str(scoped_path), "sha256": a6.sha256_file(scoped_path)},
+            "visit_catalog": {"path": str(catalog_path), "sha256": a6.sha256_file(catalog_path)},
+        },
+        "rows": rows,
+    }
+    census_path = args.output_dir / "census.json"
+    census_path.write_text(
+        json.dumps(census, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    print(json.dumps({"census": str(census_path), "question_count": len(rows)}, indent=2))
+    return 0
+
+
 def inspect(args: argparse.Namespace) -> int:
     census = json.loads(args.census.read_text(encoding="utf-8"))
     rows = census["rows"]
@@ -920,6 +987,16 @@ def parser() -> argparse.ArgumentParser:
     build_parser.add_argument("--max-added-bytes", type=int, default=DEFAULT_MAX_ADDED_BYTES)
     build_parser.add_argument("--current-policy", choices=CURRENT_POLICIES, required=True)
     build_parser.set_defaults(func=build)
+    catalog_parser = commands.add_parser(
+        "catalog-build", help="zero-network flat/scoped/procedure-catalog packet build"
+    )
+    catalog_parser.add_argument("--input", type=Path, required=True)
+    catalog_parser.add_argument("--output-dir", type=Path, required=True)
+    catalog_parser.add_argument("--limit", type=int)
+    catalog_parser.add_argument("--question-id", action="append", default=[])
+    catalog_parser.add_argument("--question-id-file", type=Path)
+    catalog_parser.add_argument("--current-policy", choices=CURRENT_POLICIES, required=True)
+    catalog_parser.set_defaults(func=catalog_build)
     inspect_parser = commands.add_parser("inspect", help="terminal inspection UI")
     inspect_parser.add_argument("--census", type=Path, required=True)
     inspect_parser.add_argument("--question-id")
