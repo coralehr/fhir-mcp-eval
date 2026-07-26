@@ -7,7 +7,7 @@
   "reasoning_effort": "medium",
   "codex_version": "codex-cli 0.144.1",
   "integrity": {
-    "calls": 24,
+    "calls": 32,
     "failed_calls": 0,
     "contaminated_event_logs": 0,
     "nonempty_stderr_logs": 0,
@@ -55,6 +55,26 @@
         "accepted_noncached_input_plus_output": 300429
       }
     },
+    "benchmark_family_only": {
+      "treatment": "Same neutral catalog plus the burned-benchmark inpatient-coded family choice and start ordering, without an authoritative upper-time cutoff.",
+      "generality": "Intentional benchmark-specific thesis-killer control; not a graph or product rule.",
+      "packet_sha256": "2883636a8127aaaf97c10b0cd47b578205f02456397160d4fa08a6fba135e297",
+      "git_commit": "36e536440697155215b626401fcfbcad167d8aab",
+      "manifest_sha256": "aab7b262907cccf46e0172c3f426dd55e921f027441660666689c0c8e52e176e",
+      "summary_sha256": "15126a729ed165f388ce940e0f0e778dca7812395d53d74d893f526ac09bb038",
+      "posthoc_lenient_calendar_day_correct": 6,
+      "exact_timestamp_score": "not claimed; the policy preserves source day precision instead of treating midnight as an observed time",
+      "posthoc_mechanism_correct": 6,
+      "questions": 8,
+      "tokens": {
+        "input": 310950,
+        "cached_input": 36096,
+        "output": 2264,
+        "reasoning_output": 439,
+        "accepted_total_input_plus_output": 313214,
+        "accepted_noncached_input_plus_output": 277118
+      }
+    },
     "benchmark_vocabulary_policy": {
       "treatment": "Same neutral catalog plus an explicit burned-benchmark policy selecting inpatient-coded procedures, applying the authoritative upper time bound, and ordering by event start.",
       "generality": "Intentional benchmark-specific thesis-killer control; not a graph or product rule.",
@@ -77,14 +97,14 @@
     }
   },
   "per_question": [
-    {"question_id": "08bd537529e959a773c05e95", "visit_scoped": "correct", "neutral_catalog": "correct", "benchmark_vocabulary_policy": "wrong", "finding": "No Procedure root was present. The first two arms used medication evidence as a proxy; the strict family policy exposed the missing-substrate failure."},
-    {"question_id": "104c93f89e19274578bafb8d", "visit_scoped": "correct", "neutral_catalog": "correct", "benchmark_vocabulary_policy": "correct", "finding": "Named inpatient-coded positive control remained correct."},
-    {"question_id": "19858b1d6157d97c01ffb3cf", "visit_scoped": "wrong", "neutral_catalog": "wrong", "benchmark_vocabulary_policy": "correct", "finding": "Neutral metadata fixed start-versus-end ordering but not family choice; explicit vocabulary selected the correct day-precision ICD event."},
-    {"question_id": "20db068481b9b06cc4340c25", "visit_scoped": "correct", "neutral_catalog": "correct", "benchmark_vocabulary_policy": "correct", "finding": "All arms found the earliest coded procedure."},
-    {"question_id": "2e773c48c344e7f33a29892f", "visit_scoped": "wrong", "neutral_catalog": "wrong", "benchmark_vocabulary_policy": "correct", "finding": "Only the policy arm enforced the authoritative upper time bound and rejected all future events."},
-    {"question_id": "8a165a892467a3f42aa7f482", "visit_scoped": "wrong", "neutral_catalog": "wrong", "benchmark_vocabulary_policy": "correct", "finding": "Explicit family choice rejected a later ED workflow event."},
-    {"question_id": "9a53c5a84a90577e106b30ec", "visit_scoped": "wrong", "neutral_catalog": "wrong", "benchmark_vocabulary_policy": "correct", "finding": "Explicit family choice rejected later ICU bedside events in the selected visit."},
-    {"question_id": "b71bf47188930e8abb1e562f", "visit_scoped": "wrong", "neutral_catalog": "wrong", "benchmark_vocabulary_policy": "correct", "finding": "The neutral catalog landed on the right date through the wrong minute-level family; the policy cited the correct inpatient-coded resources."}
+    {"question_id": "08bd537529e959a773c05e95", "visit_scoped": "correct", "neutral_catalog": "correct", "benchmark_family_only": "wrong", "benchmark_vocabulary_policy": "wrong", "finding": "No Procedure root was present. The first two arms used medication evidence as a proxy; both strict family controls exposed the missing-substrate failure."},
+    {"question_id": "104c93f89e19274578bafb8d", "visit_scoped": "correct", "neutral_catalog": "correct", "benchmark_family_only": "correct", "benchmark_vocabulary_policy": "correct", "finding": "Named inpatient-coded positive control remained correct."},
+    {"question_id": "19858b1d6157d97c01ffb3cf", "visit_scoped": "wrong", "neutral_catalog": "wrong", "benchmark_family_only": "correct", "benchmark_vocabulary_policy": "correct", "finding": "Neutral metadata fixed start-versus-end ordering but not family choice; either explicit family arm selected the correct day-precision ICD event."},
+    {"question_id": "20db068481b9b06cc4340c25", "visit_scoped": "correct", "neutral_catalog": "correct", "benchmark_family_only": "correct", "benchmark_vocabulary_policy": "correct", "finding": "All arms found the earliest coded procedure."},
+    {"question_id": "2e773c48c344e7f33a29892f", "visit_scoped": "wrong", "neutral_catalog": "wrong", "benchmark_family_only": "wrong", "benchmark_vocabulary_policy": "correct", "finding": "Family selection alone still chose a 2167 event; only the full policy enforced the 2162 authoritative upper bound."},
+    {"question_id": "8a165a892467a3f42aa7f482", "visit_scoped": "wrong", "neutral_catalog": "wrong", "benchmark_family_only": "correct", "benchmark_vocabulary_policy": "correct", "finding": "Explicit family choice rejected a later ED workflow event."},
+    {"question_id": "9a53c5a84a90577e106b30ec", "visit_scoped": "wrong", "neutral_catalog": "wrong", "benchmark_family_only": "correct", "benchmark_vocabulary_policy": "correct", "finding": "Explicit family choice rejected later ICU bedside events in the selected visit."},
+    {"question_id": "b71bf47188930e8abb1e562f", "visit_scoped": "wrong", "neutral_catalog": "wrong", "benchmark_family_only": "correct", "benchmark_vocabulary_policy": "correct", "finding": "The neutral catalog landed on the right date through the wrong minute-level family; either family arm cited the correct inpatient-coded resources."}
   ],
-  "conclusion": "On this deliberately selected burned set, graph reachability and neutral provenance labels were insufficient. Declared query vocabulary plus time semantics fixed every present-root failure, while the missing-root control remained unresolved and exposed the cost of over-strict family filtering."
+  "conclusion": "On this deliberately selected burned set, graph reachability and neutral provenance labels were insufficient. Family selection moved 3/8 to 6/8, and the authoritative time cutoff moved 6/8 to 7/8. The missing-root control remained unresolved and exposed the cost of over-strict family filtering."
 }

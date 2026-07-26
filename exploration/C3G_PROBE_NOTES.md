@@ -151,6 +151,13 @@ zero and was wrong. This is useful rather than embarrassing: semantic policy
 cannot recover a missing source event, and overly strict family filtering can
 discard a valid cross-resource proxy.
 
+A final family-only ablation removed the upper-time rule. It reached 6/8:
+family selection fixed four wrong-family cases but broke the lucky
+MedicationRequest proxy, a net gain of three. Adding the time cutoff fixed the
+future-only case and moved 6/8 to 7/8. Accepted tokens were 313,214 for
+family-only and 315,369 for family-plus-time, so the behavioral change was not
+explained by a large context increase.
+
 ## Current interpretation
 
 Generic outbound closure is not the useful intervention on this benchmark. The
@@ -161,8 +168,10 @@ promising context-compiler primitives are:
 3. a provenance-aware clinical event catalog that separates coded procedures
    from bedside procedure events and defines a canonical timestamp per family.
 
-The next answer probe is the eight-question neutral event-catalog comparison
-above. A separate burned probe can test the 23 snapshot-open cases, keeping
-empty results distinct from zero/false aggregates. Generic outbound closure has
-already failed its mechanism test. A native graph database is still neither
-required nor supported by this probe.
+This procedure exploration is now decomposed enough to stop: family semantics,
+then time semantics, explain the present-root gains; the remaining case needs
+source recovery or a declared cross-resource fallback. A separate burned probe
+can test the 23 snapshot-open cases, keeping empty results distinct from
+zero/false aggregates. Generic outbound closure has already failed its
+mechanism test. A native graph database is still neither required nor supported
+by this probe.
