@@ -122,6 +122,18 @@ the same packet plus this neutral catalog. It asks whether exposing provenance
 and time precision is enough. If it is not, the next comparison is a declared
 vocabulary policy—not more graph traversal.
 
+That neutral comparison completed with strict answer/source correctness of
+3/8 in both arms. The catalog consumed 310,182 input tokens versus 260,212 for
+the scoped packet (+19.2%). It changed period ordering from end to start in the
+known collision, but still chose the wrong event family. It also failed to
+exclude future events and could not recover the missing-Procedure control.
+
+The next arm is therefore an intentionally benchmark-specific, burned-dev
+vocabulary control. It declares that this benchmark's generic “procedure”
+questions mean the inpatient ICD-coded family, applies the authoritative upper
+time bound, and orders by event start. If that fixes the cases, it is evidence
+for explicit query semantics—not evidence that more graph traversal helped.
+
 ## Current interpretation
 
 Generic outbound closure is not the useful intervention on this benchmark. The

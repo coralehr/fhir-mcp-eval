@@ -444,6 +444,39 @@ def event_catalog_packet(record: dict[str, Any]) -> dict[str, Any]:
     return output
 
 
+def benchmark_procedure_policy_packet(record: dict[str, Any]) -> dict[str, Any]:
+    """Burned-dev oracle arm for the benchmark's hidden Procedure vocabulary.
+
+    This is deliberately not a general graph rule.  It tests whether the
+    remaining errors collapse once the benchmark's procedures_icd convention
+    and ordinary as-of filtering are made explicit.
+    """
+    output = event_catalog_packet(record)
+    packet = output["packet"]
+    catalog = packet["clinical_event_catalog"]
+    now = assumption_now(record.get("assumption"))
+    for entry in catalog["entries"]:
+        start = comparable_datetime(entry["time"].get("start"))
+        entry["eligible_as_of_authoritative_now"] = (
+            None if now is None or start is None else start <= now
+        )
+    catalog["query_policy"] = {
+        "kind": "burned_dev_benchmark_vocabulary_control",
+        "generality": "benchmark-specific; not a product or graph rule",
+        "procedure_family_for_this_benchmark": "inpatient_coded",
+        "authoritative_upper_time_bound": now.isoformat() if now else None,
+        "first_last_order_key": "time.start",
+        "count_identity": "resource_ref",
+        "day_precision_rule": (
+            "An inpatient_coded midnight timestamp denotes a calendar date, "
+            "not an observed exact time of day."
+        ),
+    }
+    packet.pop("sha256", None)
+    packet["sha256"] = digest(packet)
+    return output
+
+
 def edges_for(resource: dict[str, Any]) -> list[dict[str, str]]:
     source = resource_ref(resource)
     if source is None:
@@ -848,12 +881,15 @@ def catalog_build(args: argparse.Namespace) -> int:
 
     scoped_records = []
     catalog_records = []
+    policy_records = []
     rows = []
     for record in records:
         scoped, visit_receipt = visit_scope(record, current_policy=args.current_policy)
         catalog = event_catalog_packet(scoped)
+        policy = benchmark_procedure_policy_packet(scoped)
         scoped_records.append(scoped)
         catalog_records.append(catalog)
+        policy_records.append(policy)
         event_catalog = catalog["packet"]["clinical_event_catalog"]
         rows.append(
             {
@@ -869,9 +905,11 @@ def catalog_build(args: argparse.Namespace) -> int:
     flat_path = args.output_dir / "flat_packets.jsonl"
     scoped_path = args.output_dir / "visit_scoped_packets.jsonl"
     catalog_path = args.output_dir / "visit_catalog_packets.jsonl"
+    policy_path = args.output_dir / "visit_catalog_policy_packets.jsonl"
     write_jsonl(flat_path, records)
     write_jsonl(scoped_path, scoped_records)
     write_jsonl(catalog_path, catalog_records)
+    write_jsonl(policy_path, policy_records)
     census = {
         "kind": "throwaway_procedure_catalog_probe",
         "version": PROTOTYPE_VERSION,
@@ -884,6 +922,10 @@ def catalog_build(args: argparse.Namespace) -> int:
             "flat": {"path": str(flat_path), "sha256": a6.sha256_file(flat_path)},
             "visit_scoped": {"path": str(scoped_path), "sha256": a6.sha256_file(scoped_path)},
             "visit_catalog": {"path": str(catalog_path), "sha256": a6.sha256_file(catalog_path)},
+            "visit_catalog_policy": {
+                "path": str(policy_path),
+                "sha256": a6.sha256_file(policy_path),
+            },
         },
         "rows": rows,
     }
