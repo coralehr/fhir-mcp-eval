@@ -12,6 +12,10 @@ The build command emits paired packet JSONL files.  The flat arm preserves the
 input packet object unchanged.  The graph arm only adds resolved target resources
 and replayable path citations.  An audit-only census records fetches, limits,
 and a mechanism-rich sample; it is never included in the model packet.
+
+The current follow-up asks one narrower question: can a terminal, patient-scoped
+Encounter search turn packet-level “none seen” into store-complete evidence for
+the burned current-visit cases?  It does not yet retrieve visit events.
 """
 
 from __future__ import annotations
@@ -442,6 +446,96 @@ def event_catalog_packet(record: dict[str, Any]) -> dict[str, Any]:
     packet.pop("sha256", None)
     packet["sha256"] = digest(packet)
     return output
+
+
+def store_complete_encounter_packet(
+    record: dict[str, Any],
+    encounters: list[dict[str, Any]],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Compile a snapshot-open receipt from a complete patient Encounter search."""
+    question = str(record.get("question") or "")
+    match = VISIT_SELECTOR.search(question)
+    selector = match.group("selector").casefold() if match else None
+    selector = {"this": "current"}.get(selector, selector)
+    if selector != "current":
+        raise ValueError("store-complete Encounter probe only accepts current-visit questions")
+    patient_id = str(record.get("patient_fhir_id") or "")
+    patient_ref = f"Patient/{patient_id}"
+    if not patient_id:
+        raise ValueError("store-complete Encounter probe requires patient_fhir_id")
+    inconsistent = [
+        resource_ref(resource)
+        for resource in encounters
+        if patient_refs(resource) != {patient_ref}
+    ]
+    if inconsistent:
+        raise ValueError(f"Encounter search returned patient-inconsistent resources: {inconsistent}")
+
+    projected = [a6.project_resource(resource) for resource in encounters]
+    projected.sort(key=lambda resource: resource_ref(resource) or "")
+    hospital = [
+        resource
+        for resource in projected
+        if encounter_kind(resource) == "hosp" and not resource.get("partOf")
+    ]
+    active = [
+        resource
+        for resource in hospital
+        if str(resource.get("status") or "").casefold() in ACTIVE_ENCOUNTER_STATUSES
+    ]
+    status_counts: dict[str, int] = defaultdict(int)
+    for resource in hospital:
+        status_counts[str(resource.get("status") or "unknown").casefold()] += 1
+    selected_ref = resource_ref(active[0]) if len(active) == 1 else None
+    if not active:
+        state = "no_active_hospital_encounter_in_store"
+    elif len(active) == 1:
+        state = "selected_active_hospital_encounter"
+    else:
+        state = "ambiguous_active_hospital_encounters"
+
+    output = copy.deepcopy(record)
+    packet = output["packet"]
+    original_resources = packet.get("resources")
+    if not isinstance(original_resources, list):
+        raise ValueError("store-complete Encounter probe requires packet resources")
+    patients = [resource for resource in original_resources if resource.get("resourceType") == "Patient"]
+    evidence_resources = a6._dedupe_resources([*patients, *hospital])
+    receipt = {
+        "kind": "store_complete_patient_encounter_search",
+        "version": PROTOTYPE_VERSION,
+        "query": f"Encounter?patient={patient_id}",
+        "current_policy": "snapshot-open",
+        "terminal_page_reached": True,
+        "patient_consistency_verified": True,
+        "total_encounter_count": len(projected),
+        "hospital_encounter_count": len(hospital),
+        "hospital_status_counts": dict(sorted(status_counts.items())),
+        "active_hospital_encounter_count": len(active),
+        "selected_encounter": selected_ref,
+        "state": state,
+        "source_resource_ids": sorted(
+            reference
+            for resource in hospital
+            if (reference := resource_ref(resource)) is not None
+        ),
+    }
+    if state == "no_active_hospital_encounter_in_store":
+        receipt["negative_evidence"] = (
+            "The complete patient Encounter search reached its terminal page and returned "
+            "no open hospital Encounter under the snapshot-open policy."
+        )
+    packet["store_encounter_search"] = receipt
+    packet["resources"] = evidence_resources
+    packet["resource_count"] = len(evidence_resources)
+    packet["source_resource_ids"] = sorted(
+        reference
+        for resource in evidence_resources
+        if (reference := resource_ref(resource)) is not None
+    )
+    packet.pop("sha256", None)
+    packet["sha256"] = digest(packet)
+    return output, receipt
 
 
 def benchmark_procedure_family_packet(record: dict[str, Any]) -> dict[str, Any]:
@@ -958,6 +1052,107 @@ def catalog_build(args: argparse.Namespace) -> int:
     return 0
 
 
+def store_encounter_build(args: argparse.Namespace) -> int:
+    """Build complete Encounter-search packets from the local Medplum substrate."""
+    from medplum_fhir_client import MedplumFHIRClient
+
+    requested = list(args.question_id)
+    if args.question_id_file:
+        requested.extend(
+            line.strip()
+            for line in args.question_id_file.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        )
+    requested_ids = set(requested) if requested else None
+    records = load_jsonl(args.input, limit=args.limit, question_ids=requested_ids)
+    if requested_ids:
+        found = {str(record.get("question_id")) for record in records}
+        missing = sorted(requested_ids - found)
+        if missing:
+            raise ValueError(f"input packet file is missing question IDs: {missing}")
+
+    client = MedplumFHIRClient(base_url=args.medplum_base_url)
+    output_records = []
+    rows = []
+    encounter_cache: dict[str, list[dict[str, Any]]] = {}
+    for record in records:
+        patient_id = str(record.get("patient_fhir_id") or "")
+        if patient_id not in encounter_cache:
+            encounter_cache[patient_id] = client.search_with_pagination(
+                f"Encounter?patient={patient_id}"
+            )
+        output, receipt = store_complete_encounter_packet(record, encounter_cache[patient_id])
+        output_records.append(output)
+        rows.append({"question_id": record.get("question_id"), **receipt})
+        print(
+            f"{record.get('question_id')} patient={patient_id} "
+            f"encounters={receipt['total_encounter_count']} state={receipt['state']}",
+            flush=True,
+        )
+
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    packet_path = args.output_dir / "store_complete_encounter_packets.jsonl"
+    write_jsonl(packet_path, output_records)
+    census = {
+        "kind": "throwaway_store_complete_encounter_probe",
+        "version": PROTOTYPE_VERSION,
+        "interpretation": "development-only; burned data; not a confirmatory result",
+        "compiler_sha256": a6.sha256_file(Path(__file__)),
+        "input": {"path": str(args.input), "sha256": a6.sha256_file(args.input)},
+        "medplum_base_url": args.medplum_base_url,
+        "question_count": len(rows),
+        "unique_patient_count": len(encounter_cache),
+        "output": {"path": str(packet_path), "sha256": a6.sha256_file(packet_path)},
+        "states": dict(
+            sorted(
+                (state, sum(row["state"] == state for row in rows))
+                for state in {row["state"] for row in rows}
+            )
+        ),
+        "rows": rows,
+    }
+    census_path = args.output_dir / "census.json"
+    census_path.write_text(
+        json.dumps(census, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    print(
+        json.dumps(
+            {
+                "census": str(census_path),
+                "questions": len(rows),
+                "unique_patients": len(encounter_cache),
+                "states": census["states"],
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
+def store_inspect(args: argparse.Namespace) -> int:
+    """Tiny terminal viewer for complete Encounter-search receipt states."""
+    census = json.loads(args.census.read_text(encoding="utf-8"))
+    rows = census.get("rows") or []
+    if not rows:
+        raise ValueError("store Encounter census has no rows")
+    index = 0
+    while True:
+        print("\033[2J\033[H", end="")
+        row = rows[index]
+        print("\033[1mStore-complete Encounter probe\033[0m")
+        print(f"\033[2mrow {index + 1}/{len(rows)}\033[0m\n")
+        print(json.dumps(row, ensure_ascii=False, sort_keys=True, indent=2))
+        print("\n\033[1m[n]\033[0m next  \033[1m[p]\033[0m previous  \033[1m[q]\033[0m quit")
+        action = input("> ").strip().casefold()
+        if action == "q":
+            return 0
+        if action == "n":
+            index = (index + 1) % len(rows)
+        elif action == "p":
+            index = (index - 1) % len(rows)
+
+
 def inspect(args: argparse.Namespace) -> int:
     census = json.loads(args.census.read_text(encoding="utf-8"))
     rows = census["rows"]
@@ -1059,6 +1254,22 @@ def parser() -> argparse.ArgumentParser:
     catalog_parser.add_argument("--question-id-file", type=Path)
     catalog_parser.add_argument("--current-policy", choices=CURRENT_POLICIES, required=True)
     catalog_parser.set_defaults(func=catalog_build)
+    store_parser = commands.add_parser(
+        "store-encounter-build",
+        help="query complete patient Encounters and build snapshot-open evidence packets",
+    )
+    store_parser.add_argument("--input", type=Path, required=True)
+    store_parser.add_argument("--output-dir", type=Path, required=True)
+    store_parser.add_argument("--question-id", action="append", default=[])
+    store_parser.add_argument("--question-id-file", type=Path)
+    store_parser.add_argument("--limit", type=int)
+    store_parser.add_argument("--medplum-base-url", default="http://127.0.0.1:8103")
+    store_parser.set_defaults(func=store_encounter_build)
+    store_inspect_parser = commands.add_parser(
+        "store-inspect", help="interactive viewer for store-complete Encounter receipts"
+    )
+    store_inspect_parser.add_argument("--census", type=Path, required=True)
+    store_inspect_parser.set_defaults(func=store_inspect)
     inspect_parser = commands.add_parser("inspect", help="terminal inspection UI")
     inspect_parser.add_argument("--census", type=Path, required=True)
     inspect_parser.add_argument("--question-id")

@@ -175,3 +175,17 @@ can test the 23 snapshot-open cases, keeping empty results distinct from
 zero/false aggregates. Generic outbound closure has already failed its
 mechanism test. A native graph database is still neither required nor supported
 by this probe.
+
+## Store-complete Encounter follow-up
+
+The next throwaway slice replaces packet-level absence with a complete FHIR
+`Encounter?patient=...` search. It is limited to the 23 burned current-visit
+questions and three deidentified patients. A negative receipt is emitted only
+after pagination reaches a terminal page, every returned Encounter matches the
+patient, and no top-level hospital Encounter has an active status. The packet
+includes the finished hospital Encounters and status counts as auditable
+evidence.
+
+This slice tests absence provenance, not event recall. Complete
+Encounter-to-event retrieval is the next step only if this receipt behaves as
+expected.
