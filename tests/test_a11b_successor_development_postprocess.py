@@ -89,22 +89,26 @@ class SuccessorDevelopmentPostprocessTests(unittest.TestCase):
                 "development_result_manifest_sha256": "d" * 64,
                 "model_calls": 0,
             }
-            with mock.patch.object(
-                postprocess, "_export_rows", return_value=([], [])
-            ), mock.patch.object(
-                postprocess.a11b_postprocess,
-                "_verify_audit_tree",
-                return_value={"artifacts": {}},
-            ), mock.patch.object(
-                postprocess.a11b_postprocess, "_read_jsonl", return_value=[]
-            ), mock.patch.object(
-                postprocess.a11b_successor_development_grading,
-                "compile_result",
-                return_value=grading_result,
-            ), mock.patch.object(
-                postprocess.a11b_successor_dev_gate,
-                "compile_gate_receipt",
-                return_value=failed_gate,
+            with (
+                mock.patch.object(postprocess, "_export_rows", return_value=([], [])),
+                mock.patch.object(
+                    postprocess.a11b_postprocess,
+                    "_verify_audit_tree",
+                    return_value={"artifacts": {}},
+                ),
+                mock.patch.object(
+                    postprocess.a11b_postprocess, "_read_jsonl", return_value=[]
+                ),
+                mock.patch.object(
+                    postprocess.a11b_successor_development_grading,
+                    "compile_result",
+                    return_value=grading_result,
+                ),
+                mock.patch.object(
+                    postprocess.a11b_successor_dev_gate,
+                    "compile_gate_receipt",
+                    return_value=failed_gate,
+                ),
             ):
                 result = postprocess.run_all(
                     bundle_root=root,
@@ -157,10 +161,10 @@ class SuccessorDevelopmentPostprocessTests(unittest.TestCase):
                             "arm": arm,
                         }
                     )
-                    wrong = (
-                        (question["question_id"], arm)
-                        in {("q-00", "e1"), ("q-01", "t0")}
-                    )
+                    wrong = (question["question_id"], arm) in {
+                        ("q-00", "e1"),
+                        ("q-01", "t0"),
+                    }
                     attempts.append(_attempt(index, "wrong" if wrong else "Alpha"))
                     index += 1
             controller = {
@@ -192,6 +196,19 @@ class SuccessorDevelopmentPostprocessTests(unittest.TestCase):
             gate = json.loads((root / "results/final/gate.json").read_bytes())
             self.assertEqual(gate["status"], "passed")
             self.assertEqual(gate["model_calls"], 0)
+            grading = json.loads((root / "results/final/grading.json").read_bytes())
+            self.assertEqual(len(grading["answer_adaptations"]), 192)
+            first = grading["answer_adaptations"][0]
+            self.assertEqual(first["transport_payload"], first["canonical_answer"])
+            self.assertTrue(first["normalization_receipt"]["lossless"])
+            self.assertEqual(
+                first["normalization_receipt"]["canonical_transport_sha256"],
+                first["normalization_receipt"]["canonical_answer_sha256"],
+            )
+            self.assertIn(
+                "answer_adaptations_sha256",
+                grading["manifest"],
+            )
 
 
 if __name__ == "__main__":

@@ -16,7 +16,7 @@ class A11bSuccessorDevelopmentSpecTests(unittest.TestCase):
 
         self.assertEqual(
             spec["schema_version"],
-            "a11b-successor-development-spec-v1",
+            "a11b-successor-development-spec-v2",
         )
         self.assertEqual(spec["seal_state"], "candidate_unanchored")
         self.assertFalse(spec["model_calls_authorized"])
@@ -28,13 +28,14 @@ class A11bSuccessorDevelopmentSpecTests(unittest.TestCase):
         )
         self.assertEqual(
             spec["gate"]["result_manifest_version"],
-            "a11b-successor-development-result-manifest-v2",
+            "a11b-successor-development-result-manifest-v3",
         )
         self.assertEqual(
             set(spec["gate"]["result_manifest_binds"]),
             {
                 "assignments_sha256",
                 "outcomes_sha256",
+                "answer_adaptations_sha256",
                 "audit_manifest_sha256",
                 "gold_rows_sha256",
                 "accepted_token_receipts_sha256",
@@ -50,7 +51,7 @@ class A11bSuccessorDevelopmentSpecTests(unittest.TestCase):
         )
         self.assertEqual(
             spec["grading"]["version"],
-            "a11b-successor-development-exact-alias-grading-v1",
+            "a11b-successor-development-exact-alias-grading-v2",
         )
         self.assertEqual(spec["grading"]["panel_model_calls"], 0)
         self.assertEqual(
@@ -75,6 +76,13 @@ class A11bSuccessorDevelopmentSpecTests(unittest.TestCase):
             "utf8_bytes_stricter_fail_closed",
         )
         self.assertEqual(
+            spec["answer_protocol"]["transport_adaptation"],
+            "identity_only",
+        )
+        self.assertTrue(
+            spec["answer_protocol"]["raw_transport_and_canonical_payloads_recorded"]
+        )
+        self.assertEqual(
             spec["answer_protocol"]["registered_schema_sha256"],
             hashlib.sha256(
                 (ROOT / "schemas/a11b_answer_v2.schema.json").read_bytes()
@@ -83,9 +91,7 @@ class A11bSuccessorDevelopmentSpecTests(unittest.TestCase):
         self.assertEqual(
             spec["answer_protocol"]["transport_schema_sha256"],
             hashlib.sha256(
-                (
-                    ROOT / "schemas/a11b_answer_v2_transport.schema.json"
-                ).read_bytes()
+                (ROOT / "schemas/a11b_answer_v2_transport.schema.json").read_bytes()
             ).hexdigest(),
         )
         self.assertIn(

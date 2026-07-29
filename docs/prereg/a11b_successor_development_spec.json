@@ -1,5 +1,5 @@
 {
-  "schema_version": "a11b-successor-development-spec-v1",
+  "schema_version": "a11b-successor-development-spec-v2",
   "phase": "development",
   "seal_state": "candidate_unanchored",
   "model_calls_authorized": false,
@@ -35,7 +35,10 @@
     "offline_validation_required": true,
     "schema_length_unit": "unicode_code_points",
     "offline_length_unit": "utf8_bytes_stricter_fail_closed",
-    "normalization_permitted": false
+    "normalization_permitted": false,
+    "transport_adaptation": "identity_only",
+    "adaptation_receipt_version": "a11b-answer-adaptation-receipt-v1",
+    "raw_transport_and_canonical_payloads_recorded": true
   },
   "design": {
     "arms": [
@@ -52,11 +55,12 @@
     "maximum_attempts_per_question_arm": 3
   },
   "gate": {
-    "version": "a11b-successor-development-discordance-gate-v1",
-    "result_manifest_version": "a11b-successor-development-result-manifest-v2",
+    "version": "a11b-successor-development-discordance-gate-v2",
+    "result_manifest_version": "a11b-successor-development-result-manifest-v3",
     "result_manifest_binds": [
       "assignments_sha256",
       "outcomes_sha256",
+      "answer_adaptations_sha256",
       "audit_manifest_sha256",
       "gold_rows_sha256",
       "accepted_token_receipts_sha256",
@@ -79,7 +83,7 @@
     "failure_action": "stop_without_materializing_efficacy"
   },
   "grading": {
-    "version": "a11b-successor-development-exact-alias-grading-v1",
+    "version": "a11b-successor-development-exact-alias-grading-v2",
     "panel_model_calls": 0,
     "answerable_correctness": "validated status=answered and Unicode-NFKC whitespace-collapsed casefolded answer equals exactly the registered code or display alias",
     "unanswerable_correctness": "validated status=insufficient",

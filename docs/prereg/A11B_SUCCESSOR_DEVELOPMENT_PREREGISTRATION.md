@@ -5,6 +5,40 @@ efficacy packet materialized**.
 
 Date: 2026-07-17
 
+## Amendment 1: recorded lossless transport adaptation
+
+**Dated 2026-07-28, before any successor answer-model call.** Independent
+review in issue #100 identified that the v2 categorical contract validated
+provider output fail-closed but did not preserve an explicit
+transport-to-canonical adaptation record in the development result. The
+2026-07-18 sealed candidate is therefore retired with zero answer-model calls.
+It may not be launched under this amendment.
+
+The amended development protocol keeps the same two semantic states and the
+same correctness endpoint. It adds one identity-only adaptation boundary:
+
+- the exact raw provider bytes remain committed in the witnessed executor
+  archive;
+- the parsed transport payload and validated canonical answer are recorded for
+  every accepted call;
+- an `a11b-answer-adaptation-receipt-v1` binds the raw transport SHA-256 and
+  both canonical payload SHA-256 values;
+- the two canonical hashes must match, and no coercion, defaulting, field
+  deletion, or post-hoc normalization is permitted;
+- unknown states, duplicate JSON keys, non-finite values, invalid UTF-8,
+  contradictory states, and receipt tampering fail before scoring; and
+- the result manifest binds the ordered 192-record adaptation set through
+  `answer_adaptations_sha256`.
+
+The amended protocol uses
+`a11b-successor-development-exact-alias-grading-v2`,
+`a11b-successor-development-result-manifest-v3`, and
+`a11b-successor-development-discordance-gate-v2`. It requires a newly built
+controller, installation package, exact-head approval, external anchor, and
+content-free readiness receipt before a model call. The failed historical r3
+experiment and its post-hoc sensitivity result remain separately reported and
+are not overwritten.
+
 This document freezes the only development probe allowed to decide whether a
 fresh A11b confirmatory efficacy run is worth opening. It does not authorize or
 seal that efficacy run.
@@ -48,7 +82,9 @@ calls before transport retries:
 
 All arms use `a11b-answer-contract-v2`, the successor prompt protocol, and a
 native structural response schema. No prose sentinel or post-hoc response
-normalization may change answer state. Development correctness is entirely
+normalization may change answer state. The recorded transport adaptation is
+identity-only and may not change answer state or any other canonical field.
+Development correctness is entirely
 deterministic and authorizes zero panel calls: an answerable response is correct
 only when its validated categorical state is `answered` and its Unicode-NFKC,
 whitespace-collapsed, case-folded answer equals exactly the registered code or
@@ -69,11 +105,12 @@ therefore pass transport validation and still fail closed before grading.
 
 Correctness discordance is evaluated only after all 192 development outcomes
 are complete and bound to one witnessed
-`a11b-successor-development-result-manifest-v2`. That manifest commits to the
+`a11b-successor-development-result-manifest-v3`. That manifest commits to the
 exact audit manifest and gold rows, assignment and outcome arrays, question
-count, ordered arms, accepted and all-attempt token receipts, per-arm token
-economics, provider-failure counts, retry yield, and completeness of both
-accepted-attempt and all-attempt token receipts. The efficacy split may be
+count, ordered arms, the complete transport-adaptation record set, accepted and
+all-attempt token receipts, per-arm token economics, provider-failure counts,
+retry yield, and completeness of both accepted-attempt and all-attempt token
+receipts. The efficacy split may be
 opened only if both registered paired
 contrasts contain at least one discordant correctness pair:
 
@@ -100,7 +137,7 @@ is opened.
 - byte-identical development public and audit manifests;
 - proof that no efficacy artifact was materialized;
 - exact answer-contract, prompt, schema, runtime, executable, packet, grader,
-  witness, and executor hashes;
+  identity-adaptation, witness, and executor hashes;
 - externally anchored controller bytes with independent exact-head approval;
 - a content-free dry-run and full token-accounting path.
 

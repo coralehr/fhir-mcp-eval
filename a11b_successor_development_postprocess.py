@@ -3,12 +3,12 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 import a11b_postprocess
+import a11b_answer_contract
 import a11b_successor_dev_gate
 import a11b_successor_development_grading
 from a11_evidence_core import canonical_bytes
@@ -34,7 +34,11 @@ def _export_rows(
     by_slot: dict[int, list[Mapping[str, Any]]] = {}
     for row in attempts:
         descriptor = row.get("descriptor") if isinstance(row, Mapping) else None
-        index = descriptor.get("schedule_index") if isinstance(descriptor, Mapping) else None
+        index = (
+            descriptor.get("schedule_index")
+            if isinstance(descriptor, Mapping)
+            else None
+        )
         if type(index) is not int or not 0 <= index < ANSWER_CALLS:
             raise ValueError("successor executor schedule index changed")
         by_slot.setdefault(index, []).append(row)
@@ -67,14 +71,13 @@ def _export_rows(
         if accepted.get("outcome") != "accepted":
             raise ValueError("successor completed slot is not accepted")
         _artifact, files = a11b_postprocess._decode_artifact(accepted)
-        answer = json.loads(files["answer.json"])
-        if not isinstance(answer, dict):
-            raise ValueError("successor accepted answer is invalid")
+        adaptation = a11b_answer_contract.adapt_transport_answer(files["answer.json"])
         accepted_answers.append(
             {
                 "question_id": host["question_id"],
                 "arm": host["arm"],
-                "answer": answer,
+                "answer": adaptation["canonical_answer"],
+                "answer_adaptation": adaptation,
                 "token_usage": accepted["token_usage"],
             }
         )
@@ -101,9 +104,7 @@ def run_all(
         audit_root,
         controller["inputs"]["audit_manifest_sha256"],
     )
-    gold_rows = a11b_postprocess._read_jsonl(
-        audit_root / "development/gold.jsonl"
-    )
+    gold_rows = a11b_postprocess._read_jsonl(audit_root / "development/gold.jsonl")
     result = a11b_successor_development_grading.compile_result(
         gold_rows=gold_rows,
         accepted_answers=accepted_answers,

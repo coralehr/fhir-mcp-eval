@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import unittest
 
+import a11b_answer_contract
 import a11b_successor_development_grading as grading
 import a11b_successor_dev_gate as gate
 
@@ -25,6 +27,20 @@ def _usage() -> dict[str, object]:
         "total": 14,
         "complete": True,
         "source": "turn.completed",
+    }
+
+
+def _accepted(question_id: str, arm: str, value: str) -> dict[str, object]:
+    answer = _answer(value)
+    adaptation = a11b_answer_contract.adapt_transport_answer(
+        json.dumps(answer, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    )
+    return {
+        "question_id": question_id,
+        "arm": arm,
+        "answer": answer,
+        "answer_adaptation": adaptation,
+        "token_usage": _usage(),
     }
 
 
@@ -110,17 +126,13 @@ class A11bSuccessorDevelopmentGradingTests(unittest.TestCase):
             for index in range(64)
         ]
         accepted = [
-            {
-                "question_id": row["question_id"],
-                "arm": arm,
-                "answer": _answer(
-                    "wrong"
-                    if (row["question_id"], arm)
-                    in {("q-00", "e1"), ("q-01", "t0")}
-                    else "Alpha finding"
-                ),
-                "token_usage": _usage(),
-            }
+            _accepted(
+                row["question_id"],
+                arm,
+                "wrong"
+                if (row["question_id"], arm) in {("q-00", "e1"), ("q-01", "t0")}
+                else "Alpha finding",
+            )
             for row in gold
             for arm in ("t0", "t1", "e1")
         ]
@@ -150,6 +162,8 @@ class A11bSuccessorDevelopmentGradingTests(unittest.TestCase):
         self.assertEqual(receipt["status"], "passed")
         self.assertEqual(result["manifest"]["accepted_attempts"], 192)
         self.assertEqual(result["manifest"]["all_attempts"], 192)
+        self.assertEqual(len(result["answer_adaptations"]), 192)
+        self.assertIn("answer_adaptations_sha256", result["manifest"])
         self.assertEqual(
             result["manifest"]["token_economics"]["accepted_by_arm"]["t0"]["total"],
             64 * 14,

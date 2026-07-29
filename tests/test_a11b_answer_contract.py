@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 import unittest
@@ -14,6 +15,65 @@ TRANSPORT_SCHEMA = Path("schemas/a11b_answer_v2_transport.schema.json")
 
 
 class A11bAnswerContractTests(unittest.TestCase):
+    def test_transport_adaptation_preserves_every_canonical_state(self) -> None:
+        states = (
+            {
+                "status": "answered",
+                "answer": "O-ABC",
+                "source_resource_ids": ["Observation/example"],
+                "evidence_summary": "Observation/example contains O-ABC.",
+                "insufficiency_reason": None,
+            },
+            {
+                "status": "insufficient",
+                "answer": None,
+                "source_resource_ids": ["DiagnosticReport/example"],
+                "evidence_summary": "The selected path has no result resource.",
+                "insufficiency_reason": "The selected path is incomplete.",
+            },
+        )
+
+        for state in states:
+            raw = json.dumps(state, ensure_ascii=False, indent=2).encode("utf-8")
+            adapted = contract.adapt_transport_answer(raw)
+            receipt = adapted["normalization_receipt"]
+
+            with self.subTest(status=state["status"]):
+                self.assertEqual(adapted["transport_payload"], state)
+                self.assertEqual(adapted["canonical_answer"], state)
+                self.assertEqual(receipt["adaptation"], "identity")
+                self.assertTrue(receipt["lossless"])
+                self.assertEqual(
+                    receipt["raw_transport_sha256"], hashlib.sha256(raw).hexdigest()
+                )
+                self.assertEqual(
+                    receipt["canonical_transport_sha256"],
+                    receipt["canonical_answer_sha256"],
+                )
+
+    def test_transport_adaptation_rejects_unknown_state_and_tampering(self) -> None:
+        unknown = {
+            "status": "future-state",
+            "answer": None,
+            "source_resource_ids": [],
+            "evidence_summary": "No selected result was available.",
+            "insufficiency_reason": "The future state is not registered.",
+        }
+        with self.assertRaises(ValueError):
+            contract.adapt_transport_answer(json.dumps(unknown).encode("utf-8"))
+
+        answered = {
+            "status": "answered",
+            "answer": "O-ABC",
+            "source_resource_ids": ["Observation/example"],
+            "evidence_summary": "Observation/example contains O-ABC.",
+            "insufficiency_reason": None,
+        }
+        adapted = contract.adapt_transport_answer(json.dumps(answered).encode("utf-8"))
+        adapted["canonical_answer"]["answer"] = "changed"
+        with self.assertRaises(ValueError):
+            contract.validate_adaptation_record(adapted)
+
     def test_answered_and_insufficient_states_are_unambiguous(self) -> None:
         answered = {
             "status": "answered",
@@ -74,10 +134,7 @@ class A11bAnswerContractTests(unittest.TestCase):
         }
         mutations = (
             {"answer": "a" * (contract.MAX_ANSWER_BYTES + 1)},
-            {
-                "evidence_summary": "a"
-                * (contract.MAX_EVIDENCE_SUMMARY_BYTES + 1)
-            },
+            {"evidence_summary": "a" * (contract.MAX_EVIDENCE_SUMMARY_BYTES + 1)},
             {
                 "source_resource_ids": [
                     f"Observation/example-{index}"
@@ -94,8 +151,7 @@ class A11bAnswerContractTests(unittest.TestCase):
             **base,
             "status": "insufficient",
             "answer": None,
-            "insufficiency_reason": "a"
-            * (contract.MAX_INSUFFICIENCY_REASON_BYTES + 1),
+            "insufficiency_reason": "a" * (contract.MAX_INSUFFICIENCY_REASON_BYTES + 1),
         }
         with self.assertRaises(ValueError):
             contract.validate_answer(insufficient)
