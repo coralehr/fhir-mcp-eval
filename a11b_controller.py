@@ -15,6 +15,7 @@ from typing import Any
 
 import a11_answer_harness
 import a11b_grading
+import a11b_successor_development_grading
 import experiment_anchor
 import experiment_executor
 import experiment_executor_install as install
@@ -707,7 +708,7 @@ def build_controller_bundle(
     codex = {**runtime, "native": {k: runtime[k] for k in ("path", "sha256", "bytes")}}
     if successor:
         grading = {
-            "method": "a11b-successor-development-exact-alias-grading-v1",
+            "method": a11b_successor_development_grading.GRADING_VERSION,
             "panel_model_calls": 0,
             "registered_schema_sha256": snapshots["registered_schema"]["sha256"],
             "transport_schema_sha256": snapshots["schema"]["sha256"],

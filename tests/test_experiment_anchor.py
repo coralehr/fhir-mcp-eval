@@ -175,7 +175,7 @@ def write_successor_v4_controller(root: Path) -> Path:
     manifest = json.loads(path.read_text(encoding="utf-8"))
     manifest["experiment_profile"] = "a11b-successor-development-v1"
     manifest["grading"] = {
-        "method": "a11b-successor-development-exact-alias-grading-v1",
+        "method": "a11b-successor-development-exact-alias-grading-v2",
         "panel_model_calls": 0,
     }
     for name in (
@@ -319,9 +319,7 @@ def verified_remote_fetch(
 
 
 class ExperimentAnchorTests(unittest.TestCase):
-    def _checker(
-        self, root: Path, name: str
-    ) -> tuple[Path, dict[str, str]]:
+    def _checker(self, root: Path, name: str) -> tuple[Path, dict[str, str]]:
         private_key = root / name
         subprocess.run(
             [
@@ -340,25 +338,28 @@ class ExperimentAnchorTests(unittest.TestCase):
             capture_output=True,
             text=True,
         )
-        public_fields = subprocess.run(
-            [
-                str(experiment_anchor.SSH_KEYGEN_PATH),
-                "-y",
-                "-f",
-                str(private_key),
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.strip().split()
+        public_fields = (
+            subprocess.run(
+                [
+                    str(experiment_anchor.SSH_KEYGEN_PATH),
+                    "-y",
+                    "-f",
+                    str(private_key),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            .stdout.strip()
+            .split()
+        )
         public_key = " ".join(public_fields[:2])
         return private_key, {
             "algorithm": "ssh-ed25519",
             "identity": name,
             "namespace": experiment_anchor.SIGNED_ANCHOR_NAMESPACE,
             "public_key": public_key,
-            "key_id": "sha256:"
-            + sha((public_key + "\n").encode("ascii")),
+            "key_id": "sha256:" + sha((public_key + "\n").encode("ascii")),
         }
 
     def test_v4_request_binds_exact_trusted_executor_boundary(self) -> None:
@@ -367,12 +368,8 @@ class ExperimentAnchorTests(unittest.TestCase):
 
             request = experiment_anchor.build_anchor_request(controller)
 
-            self.assertEqual(
-                request["schema_version"], "experiment-external-anchor-v2"
-            )
-            self.assertEqual(
-                request["trusted_executor"], trusted_executor_binding()
-            )
+            self.assertEqual(request["schema_version"], "experiment-external-anchor-v2")
+            self.assertEqual(request["trusted_executor"], trusted_executor_binding())
             self.assertEqual(
                 request["controller"]["schema_version"], "a11-controller-v4"
             )
@@ -405,8 +402,9 @@ class ExperimentAnchorTests(unittest.TestCase):
                     json.dumps(changed, indent=2, sort_keys=True) + "\n",
                     encoding="utf-8",
                 )
-                with self.subTest(mutation=mutation), self.assertRaisesRegex(
-                    ValueError, "explicitly panel-free"
+                with (
+                    self.subTest(mutation=mutation),
+                    self.assertRaisesRegex(ValueError, "explicitly panel-free"),
                 ):
                     experiment_anchor.build_anchor_request(controller)
 
@@ -459,24 +457,22 @@ class ExperimentAnchorTests(unittest.TestCase):
             "panel_reasoning": lambda value: value["grading"]["panel"].update(
                 {"reasoning_effort": "medium"}
             ),
-            "panel_votes": lambda value: value["grading"]["panel"].update(
-                {"votes": 5}
-            ),
+            "panel_votes": lambda value: value["grading"]["panel"].update({"votes": 5}),
             "panel_batch": lambda value: value["grading"]["panel"].update(
                 {"batch_size": 21}
             ),
             "panel_timeout": lambda value: value["grading"]["panel"].update(
                 {"timeout_seconds": 601}
             ),
-            "native_path": lambda value: value["execution"]["codex"][
-                "native"
-            ].update({"path": "/sealed/native/other"}),
-            "native_digest": lambda value: value["execution"]["codex"][
-                "native"
-            ].update({"sha256": "0" * 64}),
-            "native_bytes": lambda value: value["execution"]["codex"][
-                "native"
-            ].update({"bytes": 101}),
+            "native_path": lambda value: value["execution"]["codex"]["native"].update(
+                {"path": "/sealed/native/other"}
+            ),
+            "native_digest": lambda value: value["execution"]["codex"]["native"].update(
+                {"sha256": "0" * 64}
+            ),
+            "native_bytes": lambda value: value["execution"]["codex"]["native"].update(
+                {"bytes": 101}
+            ),
         }
         for label, mutate in mutations.items():
             with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
@@ -510,9 +506,7 @@ class ExperimentAnchorTests(unittest.TestCase):
             )
 
             self.assertEqual(receipt["external_commit_sha"], commit)
-            self.assertEqual(
-                receipt["anchor_request_sha256"], sha(expected)
-            )
+            self.assertEqual(receipt["anchor_request_sha256"], sha(expected))
             self.assertEqual(receipt["independent_approvers"], ["AJ112103"])
 
     def test_pinned_approver_does_not_depend_on_public_org_membership(self) -> None:
@@ -921,9 +915,7 @@ class ExperimentAnchorTests(unittest.TestCase):
                         experiment_anchor.verify_external_anchor(
                             controller,
                             url,
-                            expected_controller_sha256=sha(
-                                controller.read_bytes()
-                            ),
+                            expected_controller_sha256=sha(controller.read_bytes()),
                             fetch_bytes=verified_remote_fetch(
                                 expected,
                                 commit,
@@ -1018,9 +1010,7 @@ class ExperimentAnchorTests(unittest.TestCase):
                         experiment_anchor.verify_external_anchor(
                             controller,
                             url,
-                            expected_controller_sha256=sha(
-                                controller.read_bytes()
-                            ),
+                            expected_controller_sha256=sha(controller.read_bytes()),
                             fetch_bytes=capped(endpoint),
                         )
 

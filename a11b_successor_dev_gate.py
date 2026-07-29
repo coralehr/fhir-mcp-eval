@@ -15,11 +15,9 @@ from typing import Any
 from a11_evidence_core import canonical_bytes, sha256
 
 
-GATE_VERSION = "a11b-successor-development-discordance-gate-v1"
+GATE_VERSION = "a11b-successor-development-discordance-gate-v2"
 ASSIGNMENT_FIELDS = frozenset({"question_id", "patient_cluster_sha256"})
-OUTCOME_FIELDS = ASSIGNMENT_FIELDS | frozenset(
-    {"arm", "correct", "answer_status"}
-)
+OUTCOME_FIELDS = ASSIGNMENT_FIELDS | frozenset({"arm", "correct", "answer_status"})
 ARMS = ("t0", "t1", "e1")
 CONTRASTS = (
     ("primary_e1_minus_t1", "e1", "t1"),
@@ -27,7 +25,7 @@ CONTRASTS = (
 )
 QUESTION_COUNT = 64
 MINIMUM_DISCORDANT_PAIRS = 1
-RESULT_MANIFEST_VERSION = "a11b-successor-development-result-manifest-v2"
+RESULT_MANIFEST_VERSION = "a11b-successor-development-result-manifest-v3"
 RESULT_MANIFEST_FIELDS = frozenset(
     {
         "schema_version",
@@ -35,6 +33,7 @@ RESULT_MANIFEST_FIELDS = frozenset(
         "gold_rows_sha256",
         "assignments_sha256",
         "outcomes_sha256",
+        "answer_adaptations_sha256",
         "accepted_token_receipts_sha256",
         "all_attempt_token_receipts_sha256",
         "question_count",
@@ -173,11 +172,9 @@ def compile_gate_receipt(
     if (
         not isinstance(development_result_manifest, Mapping)
         or set(development_result_manifest) != RESULT_MANIFEST_FIELDS
-        or development_result_manifest.get("schema_version")
-        != RESULT_MANIFEST_VERSION
+        or development_result_manifest.get("schema_version") != RESULT_MANIFEST_VERSION
         or any(
-            _SHA256.fullmatch(str(development_result_manifest.get(field, "")))
-            is None
+            _SHA256.fullmatch(str(development_result_manifest.get(field, ""))) is None
             for field in (
                 "audit_manifest_sha256",
                 "gold_rows_sha256",
@@ -197,8 +194,7 @@ def compile_gate_receipt(
         or not QUESTION_COUNT * len(ARMS)
         <= development_result_manifest["all_attempts"]
         <= QUESTION_COUNT * len(ARMS) * 3
-        or development_result_manifest.get("accepted_token_usage_complete")
-        is not True
+        or development_result_manifest.get("accepted_token_usage_complete") is not True
         or development_result_manifest.get("all_attempt_token_usage_complete")
         is not True
         or not token_groups_valid
@@ -215,8 +211,7 @@ def compile_gate_receipt(
             != {"input", "cached", "output", "reasoning", "total"}
             or set(all_attempt_usage) != set(accepted_usage)
             or any(
-                type(value) is not int or value < 0
-                for value in accepted_usage.values()
+                type(value) is not int or value < 0 for value in accepted_usage.values()
             )
             or any(
                 type(value) is not int or value < 0
@@ -267,9 +262,7 @@ def compile_gate_receipt(
         ),
         "question_count": QUESTION_COUNT,
         "answer_call_count": QUESTION_COUNT * len(ARMS),
-        "accepted_attempts": development_result_manifest[
-            "accepted_attempts"
-        ],
+        "accepted_attempts": development_result_manifest["accepted_attempts"],
         "all_attempts": development_result_manifest["all_attempts"],
         "token_usage_complete": True,
         "patient_disjoint": True,
@@ -337,9 +330,7 @@ def _load_value(path: Path, *, label: str) -> Any:
 
 def _load_array(path: Path, *, label: str) -> list[dict[str, Any]]:
     value = _load_value(path, label=label)
-    if not isinstance(value, list) or any(
-        not isinstance(item, dict) for item in value
-    ):
+    if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
         raise ValueError(f"{label} must be a JSON array of objects")
     return value
 

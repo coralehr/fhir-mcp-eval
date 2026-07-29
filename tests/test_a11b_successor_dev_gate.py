@@ -34,11 +34,12 @@ def _manifest(
     outcomes: list[dict[str, object]],
 ) -> dict[str, object]:
     return {
-        "schema_version": "a11b-successor-development-result-manifest-v2",
+        "schema_version": "a11b-successor-development-result-manifest-v3",
         "audit_manifest_sha256": "a" * 64,
         "gold_rows_sha256": "b" * 64,
         "assignments_sha256": sha256(canonical_bytes(assignments)),
         "outcomes_sha256": sha256(canonical_bytes(outcomes)),
+        "answer_adaptations_sha256": "e" * 64,
         "accepted_token_receipts_sha256": "c" * 64,
         "all_attempt_token_receipts_sha256": "d" * 64,
         "question_count": 64,
@@ -79,9 +80,7 @@ class A11bSuccessorDevelopmentGateTests(unittest.TestCase):
         )
 
         self.assertEqual(receipt["status"], "failed")
-        self.assertEqual(
-            receipt["contrasts"]["primary_e1_minus_t1"]["discordant"], 0
-        )
+        self.assertEqual(receipt["contrasts"]["primary_e1_minus_t1"]["discordant"], 0)
 
     def test_requires_nonzero_discordance_for_both_registered_contrasts(self) -> None:
         outcomes = _outcomes()
@@ -118,9 +117,7 @@ class A11bSuccessorDevelopmentGateTests(unittest.TestCase):
         )
 
         self.assertEqual(receipt["status"], "failed")
-        self.assertEqual(
-            receipt["contrasts"]["secondary_t1_minus_t0"]["discordant"], 0
-        )
+        self.assertEqual(receipt["contrasts"]["secondary_t1_minus_t0"]["discordant"], 0)
 
     def test_rejects_missing_duplicate_or_mismatched_patient_outcomes(self) -> None:
         assignments = _assignments()

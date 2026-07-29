@@ -1,10 +1,19 @@
 # A11b successor development seal
 
-Status: **sealed candidate awaiting independent exact-head approval**.
+Status: **retired before model calls; superseded by the 2026-07-28 lossless
+adaptation amendment**.
 
 Date: 2026-07-18
 
 Answer-model and judge calls at seal: **0**
+
+> **Retirement notice (2026-07-28):** issue #100 correctly identified that
+> this candidate's successor postprocessor validated the categorical answer
+> contract but did not record an explicit transport-to-canonical adaptation
+> receipt. No answer-model call was made. This candidate and anchor remain
+> historical integrity evidence and must not be launched. A replacement must
+> use the amended v2 development specification, v2 grading, v3 result manifest,
+> and v2 discordance gate, then receive a new exact-head approval and anchor.
 
 ## What is sealed
 

@@ -11,8 +11,8 @@ import a11b_answer_contract
 from a11_evidence_core import canonical_bytes, sha256
 
 
-GRADING_VERSION = "a11b-successor-development-exact-alias-grading-v1"
-RESULT_MANIFEST_VERSION = "a11b-successor-development-result-manifest-v2"
+GRADING_VERSION = "a11b-successor-development-exact-alias-grading-v2"
+RESULT_MANIFEST_VERSION = "a11b-successor-development-result-manifest-v3"
 ARMS = ("t0", "t1", "e1")
 QUESTION_COUNT = 64
 TOKEN_FIELDS = ("input", "cached", "output", "reasoning", "total")
@@ -46,9 +46,7 @@ def is_correct(*, gold: Mapping[str, Any], answer: Mapping[str, Any]) -> bool:
     }
 
 
-def _validated_complete_usage(
-    value: object, *, expected_source: str
-) -> dict[str, Any]:
+def _validated_complete_usage(value: object, *, expected_source: str) -> dict[str, Any]:
     expected_fields = {*TOKEN_FIELDS, "complete", "source"}
     if (
         not isinstance(value, Mapping)
@@ -66,10 +64,7 @@ def _validated_complete_usage(
 
 
 def _token_totals(rows: list[Mapping[str, Any]]) -> dict[str, dict[str, int]]:
-    totals = {
-        arm: {field: 0 for field in TOKEN_FIELDS}
-        for arm in ARMS
-    }
+    totals = {arm: {field: 0 for field in TOKEN_FIELDS} for arm in ARMS}
     for row in rows:
         arm = str(row["arm"])
         usage = row["token_usage"]
@@ -93,8 +88,7 @@ def compile_result(
         or not isinstance(audit_manifest_sha256, str)
         or len(audit_manifest_sha256) != 64
         or any(
-            character not in "0123456789abcdef"
-            for character in audit_manifest_sha256
+            character not in "0123456789abcdef" for character in audit_manifest_sha256
         )
     ):
         raise ValueError("development grading requires exactly 64 gold rows")
@@ -126,7 +120,13 @@ def compile_result(
     accepted: dict[tuple[str, str], Mapping[str, Any]] = {}
     outcomes: list[dict[str, Any]] = []
     for row in accepted_answers:
-        if set(row) != {"question_id", "arm", "answer", "token_usage"}:
+        if set(row) != {
+            "question_id",
+            "arm",
+            "answer",
+            "answer_adaptation",
+            "token_usage",
+        }:
             raise ValueError("accepted development answer fields changed")
         identity = (row.get("question_id"), row.get("arm"))
         if identity not in expected or identity in accepted:
@@ -138,10 +138,22 @@ def compile_result(
         if not isinstance(answer, Mapping):
             raise ValueError("accepted development answer is invalid")
         validated = a11b_answer_contract.validate_answer(answer)
+        adaptation = row.get("answer_adaptation")
+        if not isinstance(adaptation, Mapping):
+            raise ValueError("accepted development answer adaptation is invalid")
+        validated_adaptation = a11b_answer_contract.validate_adaptation_record(
+            adaptation
+        )
+        if validated_adaptation["canonical_answer"] != validated:
+            raise ValueError("accepted answer differs from its canonical adaptation")
         question_id, arm = identity
         assert isinstance(question_id, str) and isinstance(arm, str)
         cluster = str(gold[question_id]["patient_cluster_sha256"])
-        accepted[identity] = {**row, "token_usage": usage}
+        accepted[identity] = {
+            **row,
+            "answer_adaptation": validated_adaptation,
+            "token_usage": usage,
+        }
         outcomes.append(
             {
                 "question_id": question_id,
@@ -203,6 +215,14 @@ def compile_result(
         }
         for question_id, arm in sorted(expected)
     ]
+    answer_adaptations = [
+        {
+            "question_id": question_id,
+            "arm": arm,
+            **accepted[(question_id, arm)]["answer_adaptation"],
+        }
+        for question_id, arm in sorted(expected)
+    ]
     all_attempt_receipts = [
         {
             "question_id": str(row["question_id"]),
@@ -225,8 +245,7 @@ def compile_result(
     }
     accepted_after_retry = {
         arm: sum(
-            identity[1] == arm and len(rows) > 1
-            for identity, rows in attempts.items()
+            identity[1] == arm and len(rows) > 1 for identity, rows in attempts.items()
         )
         for arm in ARMS
     }
@@ -236,6 +255,7 @@ def compile_result(
         "gold_rows_sha256": sha256(canonical_bytes(gold_rows)),
         "assignments_sha256": sha256(canonical_bytes(assignments)),
         "outcomes_sha256": sha256(canonical_bytes(outcomes)),
+        "answer_adaptations_sha256": sha256(canonical_bytes(answer_adaptations)),
         "accepted_token_receipts_sha256": sha256(
             canonical_bytes(accepted_token_receipts)
         ),
@@ -259,6 +279,7 @@ def compile_result(
         "schema_version": GRADING_VERSION,
         "assignments": assignments,
         "outcomes": outcomes,
+        "answer_adaptations": answer_adaptations,
         "manifest": manifest,
         "model_calls": 0,
     }
