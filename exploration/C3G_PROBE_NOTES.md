@@ -189,3 +189,36 @@ evidence.
 This slice tests absence provenance, not event recall. Complete
 Encounter-to-event retrieval is the next step only if this receipt behaves as
 expected.
+
+The store query reached a terminal page for all three patients. Across the 23
+questions it found 23 Encounters, including 11 top-level hospital Encounters;
+all 11 hospital Encounters were `finished`, so every question received a
+store-complete no-active-Encounter receipt.
+
+One `gpt-5.6-sol`/medium subscription episode per arm produced this burned-dev
+result:
+
+| Packet | Answer-equivalent | Intended mechanism | Accepted tokens |
+|---|---:|---:|---:|
+| Complete-store absence | 20/23 | qualitative only | 430,514 |
+| Absence + empty-set result algebra | 23/23 | 22/23 | 435,079 |
+
+The first arm answered all 20 scalar empty results but treated the one count
+and two yes/no questions as generic insufficiency. The second arm compiled the
+relational identities explicitly: an empty count is `0`, an empty existence
+test is `false`, and an empty scalar lookup has no matching result. It fixed all
+three at a 1.1% accepted-token increase. One otherwise correct scalar response
+still cited unresolved Location naming instead of the no-active-Encounter
+receipt, hence 22/23 rather than 23/23 on mechanism.
+
+This is not evidence that a graph database wins. The useful primitive was a
+typed, auditable absence receipt from ordinary FHIR search plus explicit result
+algebra. The operator was inferred by a narrow question-text heuristic on
+burned development wording, and all 23 cases were empty-scope cases clustered
+within three patients. The next graph-shaped experiment must retrieve positive
+Encounter-to-event inverse edges completely; otherwise we have only proved the
+negative half of traversal.
+
+The immutable hashes, token reconciliation, excluded zero-call launch errors,
+anti-leakage checks, and claim boundaries are recorded in
+`exploration/C3G_STORE_CURRENT23_RESULTS.json`.

@@ -1,0 +1,176 @@
+{
+  "experiment": "C3G store-complete snapshot-open Encounter probe",
+  "status": "completed exploratory burned-development probe",
+  "completed_at": "2026-07-29T00:39:00Z",
+  "question_set": {
+    "count": 23,
+    "unique_patients": 3,
+    "selection": "questions whose benchmark scope requires a current/open hospital Encounter",
+    "question_id_file": "exploration/c3g_current23_question_ids.txt",
+    "gold_distribution": {
+      "empty_scalar": 20,
+      "zero_count": 1,
+      "false_exists": 2
+    },
+    "independence_warning": "The 23 questions cluster within three patients and are not 23 independent clinical records."
+  },
+  "store_retrieval": {
+    "query": "Encounter?patient=<patient_fhir_id>",
+    "current_policy": "snapshot-open",
+    "terminal_page_reached": true,
+    "patient_consistency_verified": true,
+    "total_encounters": 23,
+    "hospital_encounters": 11,
+    "active_hospital_encounters": 0,
+    "hospital_status_counts": {
+      "finished": 11
+    },
+    "question_states": {
+      "no_active_hospital_encounter_in_store": 23
+    },
+    "packet_path": "runs/c3g-store-encounter-current23-v3-semantics-0728/store_complete_encounter_packets.jsonl",
+    "packet_sha256": "71e013c3f858d256660ae2e543a44351b727145ef17cb8fd0a9d6176e81f91c9",
+    "census_path": "runs/c3g-store-encounter-current23-v3-semantics-0728/census.json",
+    "census_sha256": "80a601eb7caa6e5c1b478a626523914142baa5e2e27f3741b86d3be03dbeed58"
+  },
+  "arms": [
+    {
+      "name": "store-complete absence receipt",
+      "run_dir": "runs/codex-c3g-store-current23-v1-0728",
+      "git_commit": "21f024658b8480e19282fd417b149d8132cccf17",
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "medium",
+      "codex_version": "codex-cli 0.144.1",
+      "substrate": "codex_subscription",
+      "answer_correct": 20,
+      "answer_total": 23,
+      "answer_rate": 0.8695652173913043,
+      "answer_wilson_95": [
+        0.6787251772990404,
+        0.9546234090636876
+      ],
+      "failure_decomposition": {
+        "scalar_empty_scope": "20/20 answered as no matching result or insufficient",
+        "count_empty_scope": "0/1 returned the relational identity 0",
+        "exists_empty_scope": "0/2 returned the relational identity false"
+      },
+      "integrity": {
+        "questions": 23,
+        "turn_completed": 23,
+        "turn_failed": 0,
+        "stderr_nonempty": 0,
+        "contaminated": 0,
+        "forbidden_prompt_terms_found": []
+      },
+      "tokens": {
+        "input": 424584,
+        "cached_input": 72192,
+        "output": 5930,
+        "reasoning_output": 287,
+        "accepted_total": 430514,
+        "accepted_noncached": 358322
+      },
+      "manifest_sha256": "c9888a9a1a341f600a03c412180131f89abb60983583235a4bc5b2a70bbf25e9",
+      "summary_sha256": "83256e31880f9aeebc3e5a090bd1408f0f5e3868c81381bc8fd6014d3226eb02"
+    },
+    {
+      "name": "store-complete absence plus empty-scope result algebra",
+      "run_dir": "runs/codex-c3g-store-current23-semantics-v3-0728",
+      "git_commit": "07d36ad1b95bf5370c51722370d7c68322c29e89",
+      "model": "gpt-5.6-sol",
+      "reasoning_effort": "medium",
+      "codex_version": "codex-cli 0.144.1",
+      "substrate": "codex_subscription",
+      "answer_correct": 23,
+      "answer_total": 23,
+      "answer_rate": 1.0,
+      "answer_wilson_95": [
+        0.8568833815495731,
+        1.0
+      ],
+      "mechanism_correct": 22,
+      "mechanism_total": 23,
+      "mechanism_rate": 0.9565217391304348,
+      "mechanism_exception_question_id": "7995633cbc3e134de24ae114",
+      "mechanism_exception": "The answer was empty-result equivalent but attributed insufficiency to unresolved Location naming instead of the terminal no-active-Encounter receipt.",
+      "failure_decomposition": {
+        "scalar_empty_scope": "20/20 answered as no matching result or insufficient",
+        "count_empty_scope": "1/1 answered 0",
+        "exists_empty_scope": "2/2 answered no/false"
+      },
+      "integrity": {
+        "questions": 23,
+        "turn_completed": 23,
+        "turn_failed": 0,
+        "stderr_nonempty": 0,
+        "contaminated": 0,
+        "forbidden_prompt_terms_found": []
+      },
+      "tokens": {
+        "input": 429099,
+        "cached_input": 130304,
+        "output": 5980,
+        "reasoning_output": 162,
+        "accepted_total": 435079,
+        "accepted_noncached": 304775
+      },
+      "manifest_sha256": "360a7a1d3d57f68fe0016f47169bbada5b5213cf484b3b58b1ea7932c461225d",
+      "summary_sha256": "324c3435f23ab4ad2b7d4ecfc9c8296beed993d08c8269bc4453745a99459d18"
+    }
+  ],
+  "comparison": {
+    "answer_delta": 3,
+    "answer_rate_delta": 0.13043478260869568,
+    "accepted_token_delta": 4565,
+    "accepted_token_delta_fraction": 0.010603604939211724,
+    "interpretation": "Once complete-store absence was proven, explicitly compiling empty-set identities fixed the one count and two existence questions. It did not materially increase accepted tokens."
+  },
+  "excluded_zero_call_attempts": [
+    {
+      "run_dir": "runs/codex-c3g-store-current23-semantics-v1-0728",
+      "reason": "The model-visible packet guard rejected the nested key named answer before any model call. The receipt schema was renamed to empty_value."
+    },
+    {
+      "run_dir": "runs/codex-c3g-store-current23-semantics-v2-0728",
+      "reason": "The harness rejected the 409-row input versus 23-row packet mismatch before any model call. The successful arm pinned all 23 question IDs."
+    }
+  ],
+  "scoring": {
+    "status": "post-hoc on burned development questions",
+    "answer_equivalence": "Scalar [] accepts a no-matching-result response; count [[0]] requires 0; boolean [[0]] requires no/false.",
+    "mechanism_rule": "The response must attribute the empty dependent event set to the proven absence of a current/open hospital Encounter.",
+    "mid_run_answer_inspection": false
+  },
+  "anti_leakage": {
+    "packet_builder_inputs": [
+      "question text",
+      "patient FHIR id",
+      "complete FHIR Encounter search results"
+    ],
+    "not_used_by_packet_builder": [
+      "benchmark SQL",
+      "gold answer",
+      "source table labels"
+    ],
+    "prompt_scan_terms_absent": [
+      "true_answer",
+      "gold_answer",
+      "sql_query",
+      "main_table_name",
+      "procedures_icd"
+    ],
+    "important_boundary": "The empty-scope operator is a narrow question-text heuristic built on burned development wording. It is a context-compiler control, not an independently validated planner."
+  },
+  "claims_supported": [
+    "For these 23 burned questions, a terminal complete-store Encounter search can prove that the current hospital-Encounter set is empty.",
+    "A model often converts that proof into empty scalar answers, but it needs explicit result algebra to reliably distinguish no matching scalar, count zero, and existence false.",
+    "The result does not require a native graph database; it used ordinary FHIR search plus a typed compiler receipt."
+  ],
+  "claims_not_supported": [
+    "Graph traversal generally improves clinical question answering.",
+    "The result generalizes beyond these three patients, these 23 burned questions, this model episode, or snapshot-open benchmark semantics.",
+    "The store-complete arm can retrieve positive current-visit events; every case in this slice had an empty current-Encounter scope.",
+    "The question-text operator classifier is production-ready."
+  ],
+  "next_experiment": "Build complete inverse Encounter-to-event retrieval on positive and missing-root burned cases, emit per-resource-family terminal-pagination receipts, and compare strict family selection with a declared cross-resource fallback."
+}
