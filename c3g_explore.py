@@ -15,7 +15,7 @@ and a mechanism-rich sample; it is never included in the model packet.
 
 The current follow-up asks whether terminal inverse searches can recover the
 Procedure roots needed by eight burned questions.  Visit-scoped questions walk
-Patient -> Encounter family <- Procedure; the one global question walks
+Patient -> Encounter family <- Procedure; patient-wide questions walk
 Patient <- Procedure.  The neutral and benchmark-policy outputs use identical
 retrieved resources so reachability and semantics remain separate.
 """
@@ -688,12 +688,16 @@ def store_complete_procedure_packet(
         "version": PROTOTYPE_VERSION,
         "scope": plan["scope"],
         "current_policy": plan["current_policy"],
+        "selector": plan.get("selector"),
+        "authoritative_now": plan.get("authoritative_now"),
         "selected_encounter": plan.get("selected_encounter"),
         "family_refs": sorted(family_refs),
         "queries": query_receipts,
         "all_queries_terminal": True,
         "patient_consistency_verified": True,
-        "encounter_consistency_verified": True,
+        "encounter_consistency_verified": (
+            True if plan["scope"] == "encounter_family" else None
+        ),
         "procedure_count": len(a6._dedupe_resources(projected)),
         "source_resource_ids": sorted(
             reference
