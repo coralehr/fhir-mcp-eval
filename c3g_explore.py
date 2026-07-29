@@ -58,6 +58,29 @@ PROCEDURE_FAMILY_SUFFIXES = {
     "icu_bedside": ("/mimic-d-items",),
 }
 
+
+def empty_scope_operator(question: str) -> str:
+    """Classify the answer algebra when a required visit scope is empty."""
+    text = question.strip().casefold()
+    if re.search(r"\bcount(?: the)?(?: number of)?\b|\bhow many times\b", text):
+        return "count"
+    if text.startswith(("has ", "have ", "did ", "was ", "were ", "is ", "are ")):
+        return "exists"
+    if re.search(r"\bhas patient\b", text):
+        return "exists"
+    return "scalar"
+
+
+def empty_scope_result(operator: str) -> dict[str, Any]:
+    values = {
+        "count": {"answer": 0, "meaning": "zero matching events"},
+        "exists": {"answer": False, "meaning": "no matching event exists"},
+        "scalar": {"answer": None, "meaning": "no matching result"},
+    }
+    if operator not in values:
+        raise ValueError(f"unknown empty-scope operator: {operator}")
+    return {"operator": operator, **values[operator]}
+
 # Mirrored from Bonfire's experimental clinical-reference-v1 semantic catalog.
 # Keeping it here makes this prototype file-backed and disposable.
 CLINICAL_REFERENCE_RULES: tuple[tuple[str, re.Pattern[str], frozenset[str]], ...] = (
@@ -521,10 +544,20 @@ def store_complete_encounter_packet(
         ),
     }
     if state == "no_active_hospital_encounter_in_store":
+        operator = empty_scope_operator(question)
         receipt["negative_evidence"] = (
             "The complete patient Encounter search reached its terminal page and returned "
             "no open hospital Encounter under the snapshot-open policy."
         )
+        receipt["empty_scope_semantics"] = {
+            **empty_scope_result(operator),
+            "sufficient_for_answer": True,
+            "reason": (
+                "The question requires an event inside the current hospital Encounter. "
+                "The complete current-Encounter set has cardinality zero, so the dependent "
+                "event set is empty without fetching event resources."
+            ),
+        }
     packet["store_encounter_search"] = receipt
     packet["resources"] = evidence_resources
     packet["resource_count"] = len(evidence_resources)
