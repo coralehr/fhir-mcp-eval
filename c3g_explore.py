@@ -73,9 +73,9 @@ def empty_scope_operator(question: str) -> str:
 
 def empty_scope_result(operator: str) -> dict[str, Any]:
     values = {
-        "count": {"answer": 0, "meaning": "zero matching events"},
-        "exists": {"answer": False, "meaning": "no matching event exists"},
-        "scalar": {"answer": None, "meaning": "no matching result"},
+        "count": {"empty_value": 0, "meaning": "zero matching events"},
+        "exists": {"empty_value": False, "meaning": "no matching event exists"},
+        "scalar": {"empty_value": None, "meaning": "no matching result"},
     }
     if operator not in values:
         raise ValueError(f"unknown empty-scope operator: {operator}")
