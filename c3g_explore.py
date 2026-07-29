@@ -13,9 +13,11 @@ input packet object unchanged.  The graph arm only adds resolved target resource
 and replayable path citations.  An audit-only census records fetches, limits,
 and a mechanism-rich sample; it is never included in the model packet.
 
-The current follow-up asks one narrower question: can a terminal, patient-scoped
-Encounter search turn packet-level “none seen” into store-complete evidence for
-the burned current-visit cases?  It does not yet retrieve visit events.
+The current follow-up asks whether terminal inverse searches can recover the
+Procedure roots needed by eight burned questions.  Visit-scoped questions walk
+Patient -> Encounter family <- Procedure; the one global question walks
+Patient <- Procedure.  The neutral and benchmark-policy outputs use identical
+retrieved resources so reachability and semantics remain separate.
 """
 
 from __future__ import annotations
@@ -566,6 +568,148 @@ def store_complete_encounter_packet(
         for resource in evidence_resources
         if (reference := resource_ref(resource)) is not None
     )
+    packet.pop("sha256", None)
+    packet["sha256"] = digest(packet)
+    return output, receipt
+
+
+def store_procedure_plan(
+    record: dict[str, Any],
+    encounters: list[dict[str, Any]],
+    *,
+    current_policy: str,
+) -> dict[str, Any]:
+    """Plan complete inverse Procedure searches without consulting gold or SQL."""
+    patient_id = str(record.get("patient_fhir_id") or "")
+    if not patient_id:
+        raise ValueError("store Procedure probe requires patient_fhir_id")
+    patient_ref = f"Patient/{patient_id}"
+    inconsistent = [
+        resource_ref(resource)
+        for resource in encounters
+        if patient_refs(resource) != {patient_ref}
+    ]
+    if inconsistent:
+        raise ValueError(f"Encounter search returned patient-inconsistent resources: {inconsistent}")
+
+    question = str(record.get("question") or "")
+    match = VISIT_SELECTOR.search(question)
+    if match is None:
+        return {
+            "scope": "patient",
+            "current_policy": current_policy,
+            "selected_encounter": None,
+            "family_refs": [],
+            "encounter_resources": [],
+            "queries": [f"Procedure?patient={patient_id}"],
+        }
+
+    selection_record = copy.deepcopy(record)
+    original_resources = selection_record.get("packet", {}).get("resources")
+    if not isinstance(original_resources, list):
+        raise ValueError("store Procedure probe requires packet resources")
+    patients = [resource for resource in original_resources if resource.get("resourceType") == "Patient"]
+    selection_record["packet"]["resources"] = [
+        *patients,
+        *(a6.project_resource(resource) for resource in encounters),
+    ]
+    selection_record["packet"]["resource_count"] = len(selection_record["packet"]["resources"])
+    selected_record, selection = visit_scope(selection_record, current_policy=current_policy)
+    if selection.get("state") != "selected" or not selection.get("selected_encounter"):
+        raise ValueError(
+            "store Procedure probe requires one selected Encounter; "
+            f"got {selection.get('state')}"
+        )
+    family_refs = list(selection["family_refs"])
+    selected_resources = [
+        resource
+        for resource in selected_record["packet"]["resources"]
+        if resource_ref(resource) in set(family_refs)
+    ]
+    return {
+        "scope": "encounter_family",
+        "current_policy": current_policy,
+        "selector": selection["selector"],
+        "authoritative_now": selection["authoritative_now"],
+        "selected_encounter": selection["selected_encounter"],
+        "family_refs": family_refs,
+        "encounter_resources": selected_resources,
+        "queries": [f"Procedure?encounter={reference}" for reference in family_refs],
+    }
+
+
+def store_complete_procedure_packet(
+    record: dict[str, Any],
+    plan: dict[str, Any],
+    procedures_by_query: dict[str, list[dict[str, Any]]],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Compile terminal inverse-search results into a model-visible packet."""
+    patient_id = str(record.get("patient_fhir_id") or "")
+    patient_ref = f"Patient/{patient_id}"
+    family_refs = set(plan.get("family_refs") or [])
+    projected: list[dict[str, Any]] = []
+    query_receipts = []
+    for query in plan["queries"]:
+        resources = procedures_by_query.get(query)
+        if resources is None:
+            raise ValueError(f"missing terminal Procedure query result: {query}")
+        query_receipts.append(
+            {
+                "query": query,
+                "terminal_page_reached": True,
+                "resource_count": len(resources),
+            }
+        )
+        for resource in resources:
+            if resource.get("resourceType") != "Procedure":
+                raise ValueError(f"Procedure search returned {resource.get('resourceType')}")
+            refs = patient_refs(resource)
+            if refs and refs != {patient_ref}:
+                raise ValueError(f"Procedure search returned patient-inconsistent {resource_ref(resource)}")
+            if plan["scope"] == "encounter_family":
+                encounter = resource.get("encounter")
+                encounter_ref = encounter.get("reference") if isinstance(encounter, dict) else None
+                if encounter_ref not in family_refs:
+                    raise ValueError(
+                        f"Procedure search returned Encounter-inconsistent {resource_ref(resource)}"
+                    )
+            projected.append(a6.project_resource(resource))
+
+    output = copy.deepcopy(record)
+    original_resources = output.get("packet", {}).get("resources")
+    if not isinstance(original_resources, list):
+        raise ValueError("store Procedure probe requires packet resources")
+    patients = [resource for resource in original_resources if resource.get("resourceType") == "Patient"]
+    evidence_resources = a6._dedupe_resources(
+        [*patients, *(plan.get("encounter_resources") or []), *projected]
+    )
+    receipt = {
+        "kind": "store_complete_inverse_procedure_search",
+        "version": PROTOTYPE_VERSION,
+        "scope": plan["scope"],
+        "current_policy": plan["current_policy"],
+        "selected_encounter": plan.get("selected_encounter"),
+        "family_refs": sorted(family_refs),
+        "queries": query_receipts,
+        "all_queries_terminal": True,
+        "patient_consistency_verified": True,
+        "encounter_consistency_verified": True,
+        "procedure_count": len(a6._dedupe_resources(projected)),
+        "source_resource_ids": sorted(
+            reference
+            for resource in a6._dedupe_resources(projected)
+            if (reference := resource_ref(resource)) is not None
+        ),
+    }
+    packet = output["packet"]
+    packet["resources"] = evidence_resources
+    packet["resource_count"] = len(evidence_resources)
+    packet["source_resource_ids"] = sorted(
+        reference
+        for resource in evidence_resources
+        if (reference := resource_ref(resource)) is not None
+    )
+    packet["store_procedure_search"] = receipt
     packet.pop("sha256", None)
     packet["sha256"] = digest(packet)
     return output, receipt
@@ -1163,6 +1307,98 @@ def store_encounter_build(args: argparse.Namespace) -> int:
     return 0
 
 
+def store_procedure_build(args: argparse.Namespace) -> int:
+    """Build terminal inverse Procedure packets from the local Medplum substrate."""
+    from medplum_fhir_client import MedplumFHIRClient
+
+    requested = list(args.question_id)
+    if args.question_id_file:
+        requested.extend(
+            line.strip()
+            for line in args.question_id_file.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        )
+    requested_ids = set(requested) if requested else None
+    records = load_jsonl(args.input, limit=args.limit, question_ids=requested_ids)
+    if requested_ids:
+        found = {str(record.get("question_id")) for record in records}
+        missing = sorted(requested_ids - found)
+        if missing:
+            raise ValueError(f"input packet file is missing question IDs: {missing}")
+
+    client = MedplumFHIRClient(base_url=args.medplum_base_url)
+    encounter_cache: dict[str, list[dict[str, Any]]] = {}
+    procedure_cache: dict[str, list[dict[str, Any]]] = {}
+    neutral_records = []
+    policy_records = []
+    rows = []
+    for record in records:
+        patient_id = str(record.get("patient_fhir_id") or "")
+        if patient_id not in encounter_cache:
+            encounter_cache[patient_id] = client.search_with_pagination(
+                f"Encounter?patient={patient_id}"
+            )
+        plan = store_procedure_plan(
+            record,
+            encounter_cache[patient_id],
+            current_policy=args.current_policy,
+        )
+        for query in plan["queries"]:
+            if query not in procedure_cache:
+                procedure_cache[query] = client.search_with_pagination(query)
+        base, receipt = store_complete_procedure_packet(record, plan, procedure_cache)
+        neutral_records.append(event_catalog_packet(base))
+        policy_records.append(benchmark_procedure_policy_packet(base))
+        rows.append({"question_id": record.get("question_id"), **receipt})
+        print(
+            f"{record.get('question_id')} scope={receipt['scope']} "
+            f"queries={len(receipt['queries'])} procedures={receipt['procedure_count']}",
+            flush=True,
+        )
+
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    neutral_path = args.output_dir / "store_procedure_neutral_packets.jsonl"
+    policy_path = args.output_dir / "store_procedure_policy_packets.jsonl"
+    write_jsonl(neutral_path, neutral_records)
+    write_jsonl(policy_path, policy_records)
+    census = {
+        "kind": "throwaway_store_complete_inverse_procedure_probe",
+        "version": PROTOTYPE_VERSION,
+        "interpretation": "development-only; burned data; not a confirmatory result",
+        "compiler_sha256": a6.sha256_file(Path(__file__)),
+        "input": {"path": str(args.input), "sha256": a6.sha256_file(args.input)},
+        "medplum_base_url": args.medplum_base_url,
+        "current_policy": args.current_policy,
+        "question_count": len(rows),
+        "unique_patient_count": len(encounter_cache),
+        "unique_procedure_query_count": len(procedure_cache),
+        "total_procedures": sum(row["procedure_count"] for row in rows),
+        "outputs": {
+            "neutral": {"path": str(neutral_path), "sha256": a6.sha256_file(neutral_path)},
+            "policy": {"path": str(policy_path), "sha256": a6.sha256_file(policy_path)},
+        },
+        "rows": rows,
+    }
+    census_path = args.output_dir / "census.json"
+    census_path.write_text(
+        json.dumps(census, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    print(
+        json.dumps(
+            {
+                "census": str(census_path),
+                "questions": len(rows),
+                "unique_patients": len(encounter_cache),
+                "unique_queries": len(procedure_cache),
+                "total_procedures": census["total_procedures"],
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
 def store_inspect(args: argparse.Namespace) -> int:
     """Tiny terminal viewer for complete Encounter-search receipt states."""
     census = json.loads(args.census.read_text(encoding="utf-8"))
@@ -1298,6 +1534,18 @@ def parser() -> argparse.ArgumentParser:
     store_parser.add_argument("--limit", type=int)
     store_parser.add_argument("--medplum-base-url", default="http://127.0.0.1:8103")
     store_parser.set_defaults(func=store_encounter_build)
+    procedure_parser = commands.add_parser(
+        "store-procedure-build",
+        help="query complete inverse Procedure roots and build neutral/policy packets",
+    )
+    procedure_parser.add_argument("--input", type=Path, required=True)
+    procedure_parser.add_argument("--output-dir", type=Path, required=True)
+    procedure_parser.add_argument("--question-id", action="append", default=[])
+    procedure_parser.add_argument("--question-id-file", type=Path)
+    procedure_parser.add_argument("--limit", type=int)
+    procedure_parser.add_argument("--current-policy", choices=CURRENT_POLICIES, required=True)
+    procedure_parser.add_argument("--medplum-base-url", default="http://127.0.0.1:8103")
+    procedure_parser.set_defaults(func=store_procedure_build)
     store_inspect_parser = commands.add_parser(
         "store-inspect", help="interactive viewer for store-complete Encounter receipts"
     )
