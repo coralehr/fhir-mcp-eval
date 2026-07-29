@@ -1,0 +1,212 @@
+{
+  "kind": "burned_development_store_complete_inverse_procedure_result",
+  "status": "completed exploratory probe",
+  "completed_at": "2026-07-29T01:03:00Z",
+  "interpretation": "Post-hoc reviewed, non-confirmatory, and not a product claim.",
+  "question_set": {
+    "count": 8,
+    "unique_patients": 8,
+    "question_id_file": "exploration/c3g_procedure_catalog8_question_ids.txt",
+    "scope_counts": {
+      "encounter_family": 3,
+      "patient": 5
+    }
+  },
+  "retrieval": {
+    "kind": "terminal inverse FHIR search",
+    "encounter_path": "Patient -> selected Encounter family <- Procedure",
+    "patient_path": "Patient <- Procedure",
+    "unique_queries": 12,
+    "all_queries_terminal": true,
+    "retrieved_procedures_summed_per_question": 274,
+    "patient_consistency_verified": true,
+    "encounter_consistency_verified_for_encounter_scopes": true,
+    "nonempty_gold_procedure_sets": 7,
+    "nonempty_gold_sets_fully_recalled": 7,
+    "gold_resource_recall": 1.0,
+    "empty_gold_questions": 1,
+    "maximum_policy_packet_characters": 121956,
+    "packet_character_bound": 160000,
+    "census_path": "runs/c3g-store-procedure-catalog8-v2-0728/census.json",
+    "census_sha256": "a98fb70d402d4949658865b2f8a44d064416449ad21c84c53d3f48ad449a5ca8",
+    "neutral_packet_sha256": "f2daa225a7f784df038a04dbfa2e97506e71adcb22951d2ef9c9d0130ebd7dac",
+    "policy_packet_sha256": "77a924b8090f3380d0b7419704ef178c31e4ed530b9cbc41e1d60dce68b2dc2a"
+  },
+  "model": {
+    "name": "gpt-5.6-sol",
+    "reasoning_effort": "medium",
+    "codex_version": "codex-cli 0.144.1",
+    "substrate": "codex_subscription",
+    "git_commit": "6117ab56e53e440742426157455e4286e192a916",
+    "parallel_arm_launch": true,
+    "manifest_dirty_reason": "The Mac mini checkout contained the untracked gold-free public input CSV; exact Git, packet, manifest, and summary hashes are recorded."
+  },
+  "arms": {
+    "neutral_store_retrieval": {
+      "treatment": "Complete inverse Procedure roots plus additive source-family and time-precision metadata; no preferred family or upper-time rule.",
+      "run_dir": "runs/codex-c3g-store-procedure-neutral8-v1-0728",
+      "answer_correct": 3,
+      "mechanism_correct": 3,
+      "questions": 8,
+      "integrity": {
+        "turn_completed": 8,
+        "turn_failed": 0,
+        "contaminated": 0,
+        "stderr_nonempty": 0,
+        "forbidden_prompt_terms_found": []
+      },
+      "tokens": {
+        "input": 261688,
+        "cached_input": 60160,
+        "output": 2340,
+        "reasoning_output": 942,
+        "accepted_total": 264028,
+        "accepted_noncached": 203868
+      },
+      "manifest_sha256": "b578b1be83bd77030a00993f32564d8a22a9a23d120e81bd00deb72d04d6eb6a",
+      "summary_sha256": "86c1bf982cadd5f6c6d66741575e8b316cc41adaac2b353f5f6995b5e26518df"
+    },
+    "store_retrieval_plus_benchmark_policy": {
+      "treatment": "The identical retrieved resources plus the declared burned-benchmark inpatient-coded family, authoritative upper-time bound, start ordering, and day-precision rules.",
+      "generality": "Intentional benchmark-specific thesis-killer control; not a graph or product rule.",
+      "run_dir": "runs/codex-c3g-store-procedure-policy8-v1-0728",
+      "posthoc_lenient_calendar_day_or_empty_correct": 8,
+      "exact_timestamp_score": "not claimed; the policy preserves day precision instead of treating midnight as an observed time",
+      "mechanism_correct": 8,
+      "questions": 8,
+      "nonempty_answers_citing_gold_procedure": 7,
+      "nonempty_answers": 7,
+      "integrity": {
+        "turn_completed": 8,
+        "turn_failed": 0,
+        "contaminated": 0,
+        "stderr_nonempty": 0,
+        "forbidden_prompt_terms_found": []
+      },
+      "tokens": {
+        "input": 265627,
+        "cached_input": 60160,
+        "output": 2068,
+        "reasoning_output": 263,
+        "accepted_total": 267695,
+        "accepted_noncached": 207535
+      },
+      "manifest_sha256": "c377e5a43e5fc4b98f14421fba4c5a789c9a5753000633871ccbf0bb99c86749",
+      "summary_sha256": "cc59608dd074937d6f2a2a77bdd961cc9621d798b35952a9ef74b3b588a7407c"
+    }
+  },
+  "comparisons": {
+    "policy_minus_neutral_correct": 5,
+    "policy_minus_neutral_accepted_tokens": 3667,
+    "policy_minus_neutral_accepted_token_fraction": 0.013888678473495236,
+    "prior_packet_policy_correct": 7,
+    "store_complete_policy_correct": 8,
+    "store_complete_policy_minus_prior_correct": 1,
+    "prior_packet_policy_accepted_tokens": 315369,
+    "store_complete_policy_accepted_tokens": 267695,
+    "store_complete_policy_token_delta": -47674,
+    "store_complete_policy_token_delta_fraction": -0.15116894812108989
+  },
+  "per_question": [
+    {
+      "question_id": "08bd537529e959a773c05e95",
+      "scope": "patient",
+      "retrieved_procedures": 65,
+      "neutral": "correct",
+      "policy": "correct",
+      "finding": "The complete patient inverse search recovered the previously missing exact Procedure root; the policy answer cited it and returned the correct count of one."
+    },
+    {
+      "question_id": "104c93f89e19274578bafb8d",
+      "scope": "encounter_family",
+      "retrieved_procedures": 34,
+      "neutral": "correct",
+      "policy": "correct",
+      "finding": "Named inpatient-coded positive control remained correct."
+    },
+    {
+      "question_id": "19858b1d6157d97c01ffb3cf",
+      "scope": "encounter_family",
+      "retrieved_procedures": 4,
+      "neutral": "wrong",
+      "policy": "correct",
+      "finding": "Complete reachability still selected a later CT event until family semantics chose the exact coded Procedure."
+    },
+    {
+      "question_id": "20db068481b9b06cc4340c25",
+      "scope": "patient",
+      "retrieved_procedures": 98,
+      "neutral": "correct",
+      "policy": "correct",
+      "finding": "Both arms selected the exact earliest coded Procedure."
+    },
+    {
+      "question_id": "2e773c48c344e7f33a29892f",
+      "scope": "patient",
+      "retrieved_procedures": 35,
+      "neutral": "wrong",
+      "policy": "correct",
+      "finding": "Retrieval exposed only future Procedures; the upper-time rule correctly returned no eligible result."
+    },
+    {
+      "question_id": "8a165a892467a3f42aa7f482",
+      "scope": "patient",
+      "retrieved_procedures": 23,
+      "neutral": "wrong",
+      "policy": "correct",
+      "finding": "Neutral retrieval chose a later workflow event; family semantics cited the exact coded Procedure."
+    },
+    {
+      "question_id": "9a53c5a84a90577e106b30ec",
+      "scope": "encounter_family",
+      "retrieved_procedures": 6,
+      "neutral": "wrong",
+      "policy": "correct",
+      "finding": "Neutral retrieval chose a later bedside line event; family semantics cited the exact coded Procedure."
+    },
+    {
+      "question_id": "b71bf47188930e8abb1e562f",
+      "scope": "patient",
+      "retrieved_procedures": 9,
+      "neutral": "wrong",
+      "policy": "correct",
+      "finding": "Neutral retrieval landed on the right date through the wrong family; the policy cited the exact coded resources."
+    }
+  ],
+  "anti_leakage": {
+    "model_visible_builder_inputs": [
+      "question text",
+      "assumption text",
+      "patient FHIR id",
+      "terminal FHIR Encounter and Procedure search results"
+    ],
+    "not_used_by_packet_builder": [
+      "benchmark SQL",
+      "gold answer",
+      "gold FHIR resource ids",
+      "source table labels"
+    ],
+    "dry_run_prompts_checked": 16,
+    "prompt_scan_terms_absent": [
+      "true_answer",
+      "gold_answer",
+      "sql_query",
+      "main_table_name",
+      "procedures_icd"
+    ],
+    "gold_recall_check_timing": "after immutable packet construction and before model calls; gold was used only for the zero-model audit, never by the compiler or prompt"
+  },
+  "claims_supported": [
+    "The complete inverse searches recovered every gold Procedure root on this eight-question burned set.",
+    "Reachability alone remained insufficient: the neutral arm stayed at 3/8 despite complete gold-resource recall.",
+    "Combining source recovery with explicit family and time semantics moved the burned probe from the prior 7/8 to 8/8 and cited the exact gold Procedure in every non-empty case.",
+    "The inverse projection used ordinary FHIR searches; it does not establish a need for a native graph database."
+  ],
+  "claims_not_supported": [
+    "The benchmark-specific family policy generalizes to arbitrary clinical language.",
+    "The result generalizes beyond these eight burned questions, eight patients, or one model episode per arm.",
+    "Graph traversal without a typed semantic plan improves answer correctness.",
+    "The approach is confirmatory, patient-disjoint, or production-ready."
+  ],
+  "conclusion": "The graph contribution is source recovery, not interpretation. Complete inverse search fixed the one missing-root failure; explicit query semantics fixed the five family/time failures. Both are needed for 8/8 on this burned probe."
+}

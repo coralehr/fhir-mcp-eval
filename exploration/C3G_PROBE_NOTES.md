@@ -222,3 +222,41 @@ negative half of traversal.
 The immutable hashes, token reconciliation, excluded zero-call launch errors,
 anti-leakage checks, and claim boundaries are recorded in
 `exploration/C3G_STORE_CURRENT23_RESULTS.json`.
+
+## Store-complete inverse Procedure follow-up
+
+The positive retrieval probe reused the eight burned Procedure questions. Five
+required patient-wide Procedure search and three selected a hospital Encounter
+family first. Twelve terminal FHIR queries recovered 274 Procedure resources
+summed across questions. A post-build audit found every gold Procedure root for
+all seven non-empty questions; the eighth question's gold result is empty
+because all retrieved candidates are after its authoritative time.
+
+Two model arms received identical resources:
+
+| Packet | Answer/mechanism | Accepted tokens |
+|---|---:|---:|
+| Complete inverse retrieval + neutral catalog | 3/8 | 264,028 |
+| Complete inverse retrieval + family/time policy | 8/8 | 267,695 |
+
+The neutral arm did not improve despite complete resource recall. It still
+chose later bedside, workflow, CT, or future events. The explicit policy cited
+the exact gold Procedure in every non-empty case and correctly rejected the
+future-only case. It also recovered the prior 7/8 arm's sole miss: a complete
+patient-level inverse search found the Procedure root that the original packet
+had omitted.
+
+This gives a clean decomposition on burned data:
+
+1. inverse retrieval solves missing source roots;
+2. family semantics resolves what “procedure” means;
+3. time semantics resolves which otherwise valid events are eligible.
+
+Traversal without the semantic plan remained 3/8. Retrieval plus the declared
+benchmark policy reached 8/8, but the policy is still an oracle-style control
+written against burned benchmark vocabulary. The result supports a typed
+context compiler over a graph-shaped FHIR projection; it does not support a
+native graph database or a general production claim.
+
+Full hashes, per-question outcomes, prompt-leakage checks, and token receipts
+are in `exploration/C3G_STORE_PROCEDURE8_RESULTS.json`.
